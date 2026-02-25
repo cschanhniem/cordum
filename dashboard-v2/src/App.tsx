@@ -49,6 +49,7 @@ const SettingsMcpPage = lazy(() => import("./pages/SettingsMcpPage"));
 const InputSafetyPage = lazy(() => import("./pages/InputSafetyPage"));
 const OutputSafetyPage = lazy(() => import("./pages/OutputSafetyPage"));
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage"));
+const SettingsHubPage = lazy(() => import("./pages/SettingsHubPage"));
 
 function ThemeSync() {
   const resolvedTheme = useUiStore((s) => s.resolvedTheme);
@@ -92,7 +93,7 @@ function ProtectedRoutes() {
           <Route path="/dlq" element={<DLQPage />} />
           <Route path="/safety/input" element={<InputSafetyPage />} />
           <Route path="/safety/output" element={<OutputSafetyPage />} />
-          <Route path="/settings" element={<Navigate to="/settings/health" replace />} />
+          <Route path="/settings" element={<SettingsHubPage />} />
           <Route path="/settings/health" element={<SettingsHealthPage />} />
           <Route path="/settings/keys" element={<SettingsKeysPage />} />
           <Route path="/settings/users" element={<SettingsUsersPage />} />

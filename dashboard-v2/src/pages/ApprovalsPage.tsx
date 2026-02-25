@@ -4,7 +4,7 @@
  */
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { get, post } from "@/api/client";
 import { mapApprovalItem, type BackendApprovalItem } from "@/api/transform";
 import type { Approval } from "@/api/types";
@@ -16,6 +16,7 @@ import { SkeletonCard, SkeletonTable } from "@/components/ui/Skeleton";
 import { Search, RefreshCw, UserCheck, CheckCircle2, XCircle, Shield, Clock, X } from "lucide-react";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import { toast } from "sonner";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 
 function approvalStatusVariant(status: string) {
   switch (status) {
@@ -32,6 +33,8 @@ export default function ApprovalsPage() {
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState("pending");
   const [selectedApproval, setSelectedApproval] = useState<Approval | null>(null);
+  const [denyTarget, setDenyTarget] = useState<Approval | null>(null);
+  const [denyReason, setDenyReason] = useState("");
 
   const { data: approvals, isLoading, refetch } = useQuery({
     queryKey: ["approvals"],
@@ -178,11 +181,15 @@ export default function ApprovalsPage() {
         />
       ) : (
         <div className="space-y-3">
+          <AnimatePresence mode="popLayout">
           {filtered.map((approval) => (
             <motion.div
               key={approval.id}
+              layout
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, x: -100, height: 0, marginBottom: 0, overflow: "hidden" }}
+              transition={{ duration: 0.3 }}
               className={cn(
                 "instrument-card p-5 cursor-pointer",
                 approval.status === "pending" && "status-warning",
@@ -210,10 +217,10 @@ export default function ApprovalsPage() {
                     <Button
                       size="sm"
                       variant="danger"
-                      loading={approveMutation.isPending}
                       onClick={(e) => {
                         e.stopPropagation();
-                        approveMutation.mutate({ id: approval.id, decision: "deny" });
+                        setDenyTarget(approval);
+                        setDenyReason("");
                       }}
                     >
                       <XCircle className="w-3.5 h-3.5 mr-1" />
@@ -236,8 +243,18 @@ export default function ApprovalsPage() {
               </div>
             </motion.div>
           ))}
+          </AnimatePresence>
         </div>
       )}
+
+      {/* Deny Confirmation Dialog */}
+      <ConfirmDialog open={!!denyTarget}
+        onClose={() => setDenyTarget(null)}
+        onConfirm={() => { if (denyTarget) { approveMutation.mutate({ id: denyTarget.id, decision: "deny" }); setDenyTarget(null); } }}
+        title="Deny Approval"
+        description="Are you sure you want to deny this approval request?"
+        confirmLabel="Deny"
+        variant="destructive" />
 
       {/* Detail Drawer */}
       {selectedApproval && (

@@ -1,188 +1,152 @@
+/*
+ * DESIGN: "Control Surface" — Packs (Marketplace + Installed)
+ * PRD Section 20: Pack management with install/uninstall
+ */
 import { useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import {
-  Package, Search, Download, CheckCircle2, Settings, Trash2,
-  ExternalLink, Star, ArrowUpRight
-} from "lucide-react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { motion } from "framer-motion";
+import { get, post } from "@/api/client";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { Button } from "@/components/ui/Button";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { SkeletonCard } from "@/components/ui/Skeleton";
+import { Search, Package, Download, Trash2, ExternalLink, RefreshCw, Star, CheckCircle2 } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
-const INSTALLED_PACKS = [
-  { name: "slack", version: "1.2.0", description: "Slack ChatOps notifications and approvals", topics: ["job.slack.send", "job.slack.approve"], workflows: 2, schemas: 3 },
-  { name: "github", version: "2.0.1", description: "GitHub repository management and PR automation", topics: ["job.github.create-pr", "job.github.merge", "job.github.review"], workflows: 4, schemas: 5 },
-  { name: "datadog", version: "1.0.3", description: "Datadog monitoring and alerting integration", topics: ["job.datadog.alert", "job.datadog.metric"], workflows: 1, schemas: 2 },
-  { name: "jira", version: "1.1.0", description: "Jira issue tracking and project management", topics: ["job.jira.create", "job.jira.update", "job.jira.transition"], workflows: 3, schemas: 4 },
-];
-
-const MARKETPLACE_PACKS = [
-  { name: "pagerduty", version: "1.0.0", description: "PagerDuty incident management", installs: 2400, rating: 4.8, installed: false },
-  { name: "aws", version: "3.1.0", description: "AWS service management and automation", installs: 5200, rating: 4.9, installed: false },
-  { name: "kubernetes", version: "2.0.0", description: "Kubernetes cluster management", installs: 3100, rating: 4.7, installed: false },
-  { name: "slack", version: "1.2.0", description: "Slack ChatOps notifications", installs: 8900, rating: 4.9, installed: true },
-  { name: "terraform", version: "1.3.0", description: "Terraform infrastructure as code", installs: 1800, rating: 4.6, installed: false },
-  { name: "github", version: "2.0.1", description: "GitHub repository management", installs: 7200, rating: 4.8, installed: true },
-];
+interface Pack {
+  name: string;
+  version: string;
+  description: string;
+  author: string;
+  installed: boolean;
+  stars?: number;
+  topics?: string[];
+}
 
 export default function PacksPage() {
-  const [tab, setTab] = useState<"installed" | "marketplace">("installed");
+  const queryClient = useQueryClient();
+  const [activeTab, setActiveTab] = useState("installed");
   const [search, setSearch] = useState("");
 
-  const tabs = [
-    { id: "installed" as const, label: "Installed", count: INSTALLED_PACKS.length },
-    { id: "marketplace" as const, label: "Marketplace", count: MARKETPLACE_PACKS.length },
-  ];
+  const { data: packs, isLoading, error } = useQuery({
+    queryKey: ["packs"],
+    queryFn: async () => {
+      const res: any = await get("/api/packs");
+      return (res.data || []) as Pack[];
+    },
+  });
 
-  const filteredInstalled = INSTALLED_PACKS.filter(p =>
-    p.name.toLowerCase().includes(search.toLowerCase()) ||
-    p.description.toLowerCase().includes(search.toLowerCase())
-  );
+  const installMutation = useMutation({
+    mutationFn: async (name: string) => post(`/api/packs/${name}/install`, {}),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["packs"] }); toast.success("Pack installed"); },
+  });
 
-  const filteredMarketplace = MARKETPLACE_PACKS.filter(p =>
-    p.name.toLowerCase().includes(search.toLowerCase()) ||
-    p.description.toLowerCase().includes(search.toLowerCase())
-  );
+  const uninstallMutation = useMutation({
+    mutationFn: async (name: string) => post(`/api/packs/${name}/uninstall`, {}),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["packs"] }); toast.success("Pack uninstalled"); },
+  });
+
+  const tabs = ["installed", "marketplace"];
+  const filtered = (packs || []).filter(p => {
+    const matchTab = activeTab === "installed" ? p.installed : !p.installed;
+    const matchSearch = !search || p.name.toLowerCase().includes(search.toLowerCase()) || p.description.toLowerCase().includes(search.toLowerCase());
+    return matchTab && matchSearch;
+  });
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <p className="text-xs font-mono uppercase tracking-wider text-[var(--cordum)] mb-1">EXTEND / Packs</p>
-        <h1 className="text-2xl font-display font-bold text-[var(--foreground)]">Packs</h1>
-        <p className="text-sm text-[var(--muted-foreground)] mt-1">Browse and install capability packs from the catalog.</p>
-      </div>
+    <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+      <PageHeader title="Packs" subtitle="Extend Cordum with community and custom packs" />
 
       {/* Tabs + Search */}
       <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-1 bg-[var(--surface-0)] rounded-lg p-1">
-          {tabs.map(t => (
+        <div className="flex items-center gap-1 p-1 rounded-lg bg-surface-1">
+          {tabs.map(tab => (
             <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
-                tab === t.id
-                  ? "bg-[var(--cordum)]/10 text-[var(--cordum)]"
-                  : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-              }`}
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={cn(
+                "px-4 py-1.5 text-xs font-medium rounded-md transition-colors capitalize",
+                activeTab === tab ? "bg-cordum/10 text-cordum" : "text-muted-foreground hover:text-foreground",
+              )}
             >
-              {t.label}
-              <span className="ml-2 text-xs font-mono opacity-60">{t.count}</span>
+              {tab}
             </button>
           ))}
         </div>
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--muted-foreground)]" />
+        <div className="relative w-64">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
           <input
             type="text"
-            placeholder="Search packs..."
             value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="pl-9 pr-4 py-2 w-[280px] bg-[var(--surface-0)] border border-[var(--border)] rounded-lg text-sm text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--cordum)]"
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search packs..."
+            className="h-8 w-full pl-9 pr-3 text-xs bg-surface-1 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
           />
         </div>
       </div>
 
-      {/* Installed Tab */}
-      {tab === "installed" && (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          <AnimatePresence>
-            {filteredInstalled.map((pack, i) => (
-              <motion.div
-                key={pack.name}
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.05 }}
-                className="instrument-card"
-              >
-                <div className="p-5 space-y-4">
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-[var(--cordum)]/10 flex items-center justify-center">
-                        <Package className="w-5 h-5 text-[var(--cordum)]" />
-                      </div>
-                      <div>
-                        <h3 className="font-display font-semibold text-[var(--foreground)]">{pack.name}</h3>
-                        <span className="text-xs font-mono text-[var(--muted-foreground)]">v{pack.version}</span>
-                      </div>
-                    </div>
-                    <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded-full">
-                      <CheckCircle2 className="w-3 h-3" /> Installed
-                    </span>
-                  </div>
-                  <p className="text-sm text-[var(--muted-foreground)]">{pack.description}</p>
-                  <div className="space-y-2">
-                    <div className="flex flex-wrap gap-1">
-                      {pack.topics.map(t => (
-                        <span key={t} className="text-xs font-mono bg-[var(--surface-2)] text-[var(--muted-foreground)] px-2 py-0.5 rounded">{t}</span>
-                      ))}
-                    </div>
-                    <div className="flex items-center gap-4 text-xs text-[var(--muted-foreground)]">
-                      <span>Workflows: <span className="font-mono text-[var(--foreground)]">{pack.workflows}</span></span>
-                      <span>Schemas: <span className="font-mono text-[var(--foreground)]">{pack.schemas}</span></span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 pt-2 border-t border-[var(--border)]">
-                    <button className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-[var(--surface-2)] text-[var(--foreground)] rounded-md hover:bg-[var(--surface-3)] transition-colors">
-                      <Settings className="w-3 h-3" /> Configure
-                    </button>
-                    <button className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-400 hover:bg-red-400/10 rounded-md transition-colors">
-                      <Trash2 className="w-3 h-3" /> Uninstall
-                    </button>
-                  </div>
+      {/* Content */}
+      {isLoading ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}
+        </div>
+      ) : error ? (
+        <div className="instrument-card p-8 text-center">
+          <p className="text-sm text-red-400">Failed to load packs</p>
+          <Button variant="outline" size="sm" className="mt-3" onClick={() => queryClient.invalidateQueries({ queryKey: ["packs"] })}>
+            <RefreshCw className="w-3 h-3 mr-1" />Retry
+          </Button>
+        </div>
+      ) : filtered.length === 0 ? (
+        <EmptyState icon={<Package className="w-8 h-8" />}
+          title={activeTab === "installed" ? "No packs installed" : "No packs found"}
+          description={activeTab === "installed" ? "Browse the marketplace to install packs" : "Try a different search term"}
+        />
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {filtered.map((pack, i) => (
+            <motion.div
+              key={pack.name}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.04 }}
+              className="instrument-card p-5 flex flex-col"
+            >
+              <div className="flex items-start justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Package className="w-4 h-4 text-cordum" />
+                  <span className="text-sm font-display font-semibold text-foreground">{pack.name}</span>
                 </div>
-              </motion.div>
-            ))}
-          </AnimatePresence>
+                <StatusBadge variant={pack.installed ? "healthy" : "muted"}>
+                  {pack.installed ? "Installed" : `v${pack.version}`}
+                </StatusBadge>
+              </div>
+              <p className="text-xs text-muted-foreground flex-1 mb-3">{pack.description}</p>
+              {pack.topics && (
+                <div className="flex flex-wrap gap-1 mb-3">
+                  {pack.topics.map(t => (
+                    <span key={t} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-surface-2 text-muted-foreground">{t}</span>
+                  ))}
+                </div>
+              )}
+              <div className="flex items-center justify-between pt-3 border-t border-border">
+                <span className="text-[10px] text-muted-foreground">by {pack.author}</span>
+                {pack.installed ? (
+                  <Button variant="danger" size="sm" onClick={() => uninstallMutation.mutate(pack.name)} loading={uninstallMutation.isPending}>
+                    <Trash2 className="w-3 h-3 mr-1" />Uninstall
+                  </Button>
+                ) : (
+                  <Button variant="primary" size="sm" onClick={() => installMutation.mutate(pack.name)} loading={installMutation.isPending}>
+                    <Download className="w-3 h-3 mr-1" />Install
+                  </Button>
+                )}
+              </div>
+            </motion.div>
+          ))}
         </div>
       )}
-
-      {/* Marketplace Tab */}
-      {tab === "marketplace" && (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          <AnimatePresence>
-            {filteredMarketplace.map((pack, i) => (
-              <motion.div
-                key={pack.name}
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.05 }}
-                className="instrument-card cursor-pointer hover:border-[var(--cordum)]/30 transition-colors"
-              >
-                <div className="p-5 space-y-4">
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-[var(--surface-2)] flex items-center justify-center">
-                        <Package className="w-5 h-5 text-[var(--muted-foreground)]" />
-                      </div>
-                      <div>
-                        <h3 className="font-display font-semibold text-[var(--foreground)]">{pack.name}</h3>
-                        <span className="text-xs font-mono text-[var(--muted-foreground)]">v{pack.version}</span>
-                      </div>
-                    </div>
-                    {pack.installed ? (
-                      <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded-full">
-                        <CheckCircle2 className="w-3 h-3" /> Installed
-                      </span>
-                    ) : (
-                      <button className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-[var(--cordum)] text-[var(--surface-0)] rounded-md hover:bg-[var(--cordum-dim)] transition-colors">
-                        <Download className="w-3 h-3" /> Install
-                      </button>
-                    )}
-                  </div>
-                  <p className="text-sm text-[var(--muted-foreground)]">{pack.description}</p>
-                  <div className="flex items-center gap-4 text-xs text-[var(--muted-foreground)]">
-                    <span className="flex items-center gap-1">
-                      <Download className="w-3 h-3" />
-                      {pack.installs >= 1000 ? `${(pack.installs / 1000).toFixed(1)}k` : pack.installs} installs
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Star className="w-3 h-3 text-amber-400" />
-                      {pack.rating}
-                    </span>
-                  </div>
-                </div>
-              </motion.div>
-            ))}
-          </AnimatePresence>
-        </div>
-      )}
-    </div>
+    </motion.div>
   );
 }

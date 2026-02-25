@@ -1,116 +1,153 @@
+/*
+ * DESIGN: "Control Surface" — Output Safety
+ * PRD Section 36: Output quarantine queue and sensitive data settings
+ */
 import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { ShieldAlert, CheckCircle2, XCircle, Eye, ArrowRight } from "lucide-react";
+import { get, post } from "@/api/client";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { Button } from "@/components/ui/Button";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { SkeletonTable, SkeletonCard } from "@/components/ui/Skeleton";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { ShieldAlert, CheckCircle2, XCircle, Eye, Search, RefreshCw, AlertTriangle, Save } from "lucide-react";
+import { cn, formatRelativeTime } from "@/lib/utils";
+import { toast } from "sonner";
 
-const QUARANTINE_QUEUE = [
-  { jobId: "job-9f2a1e", agent: "DataExporter-02", reason: "Sensitive data detected: API key pattern", quarantinedAt: "5m ago" },
-  { jobId: "job-7b3c4d", agent: "ReportGen-01", reason: "Output exceeds max size (2.1MB > 1MB limit)", quarantinedAt: "22m ago" },
-  { jobId: "job-1e5f8g", agent: "CodeAssist-03", reason: "PII detected: email addresses in output", quarantinedAt: "1h ago" },
-];
+interface QuarantinedOutput {
+  id: string;
+  jobId: string;
+  reason: string;
+  severity: "high" | "medium" | "low";
+  detectedAt: string;
+  preview: string;
+}
 
 export default function OutputSafetyPage() {
-  const [settings, setSettings] = useState({
-    quarantine: true,
-    quarantineMode: "Review Flagged",
-    maxOutputSize: 1024,
-    sensitiveDetection: true,
-    sensitiveAction: "Redact",
-    schemaValidation: true,
+  const queryClient = useQueryClient();
+  const [activeTab, setActiveTab] = useState("quarantine");
+  const [selectedItem, setSelectedItem] = useState<QuarantinedOutput | null>(null);
+  const [releaseTarget, setReleaseTarget] = useState<QuarantinedOutput | null>(null);
+  const [sensitiveDataEnabled, setSensitiveDataEnabled] = useState(true);
+  const [autoQuarantine, setAutoQuarantine] = useState(true);
+
+  const { data: quarantined, isLoading } = useQuery({
+    queryKey: ["output-quarantine"],
+    queryFn: async () => {
+      const res: any = await get("/api/safety/output/quarantine");
+      return (res.data || []) as QuarantinedOutput[];
+    },
   });
 
+  const releaseMutation = useMutation({
+    mutationFn: async (id: string) => post(`/api/safety/output/quarantine/${id}/release`, {}),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["output-quarantine"] }); toast.success("Output released"); setReleaseTarget(null); },
+  });
+
+  const discardMutation = useMutation({
+    mutationFn: async (id: string) => post(`/api/safety/output/quarantine/${id}/discard`, {}),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["output-quarantine"] }); toast.success("Output discarded"); },
+  });
+
+  const tabs = ["quarantine", "settings"];
+  const severityColor = (s: string) => s === "high" ? "danger" : s === "medium" ? "warning" : "info";
+
   return (
-    <div className="space-y-6">
-      <div>
-        <p className="text-xs font-mono uppercase tracking-wider text-[var(--cordum)] mb-1">SETTINGS / Safety</p>
-        <h1 className="text-2xl font-display font-bold text-[var(--foreground)]">Output Safety</h1>
-        <p className="text-sm text-[var(--muted-foreground)] mt-1">Configure output quarantine and validation settings.</p>
+    <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+      <PageHeader title="Output Safety" subtitle="Review quarantined outputs and configure detection settings" />
+
+      <div className="flex items-center gap-1 p-1 rounded-lg bg-surface-1 w-fit">
+        {tabs.map(tab => (
+          <button key={tab} onClick={() => setActiveTab(tab)}
+            className={cn("px-4 py-1.5 text-xs font-medium rounded-md transition-colors capitalize",
+              activeTab === tab ? "bg-cordum/10 text-cordum" : "text-muted-foreground hover:text-foreground")}>
+            {tab}
+          </button>
+        ))}
       </div>
 
-      {/* Settings */}
-      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="instrument-card">
-        <div className="p-5 space-y-5">
-          <h2 className="text-sm font-display font-semibold text-[var(--foreground)] flex items-center gap-2">
-            <ShieldAlert className="w-5 h-5 text-[var(--cordum)]" /> Output Safety Settings
-          </h2>
-          <div className="space-y-4">
-            {[
-              { key: "quarantine", label: "Output Quarantine", desc: "Enable output quarantine for flagged outputs" },
-              { key: "sensitiveDetection", label: "Sensitive Data Detection", desc: "Scan outputs for API keys, passwords, secrets" },
-              { key: "schemaValidation", label: "Output Schema Validation", desc: "Validate outputs against registered schemas" },
-            ].map(item => (
-              <div key={item.key} className="flex items-start justify-between gap-8 py-3 border-b border-[var(--border)]">
-                <div><p className="text-sm font-medium text-[var(--foreground)]">{item.label}</p><p className="text-xs text-[var(--muted-foreground)]">{item.desc}</p></div>
-                <button
-                  onClick={() => setSettings(s => ({ ...s, [item.key]: !s[item.key as keyof typeof s] }))}
-                  className={`relative w-11 h-6 rounded-full transition-colors ${(settings as any)[item.key] ? "bg-[var(--cordum)]" : "bg-[var(--surface-3)]"}`}
-                >
-                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${(settings as any)[item.key] ? "translate-x-5" : ""}`} />
-                </button>
-              </div>
-            ))}
-            {settings.quarantine && (
-              <div className="flex items-start justify-between gap-8 py-3 border-b border-[var(--border)]">
-                <div><p className="text-sm font-medium text-[var(--foreground)]">Quarantine Mode</p><p className="text-xs text-[var(--muted-foreground)]">How quarantined outputs are handled</p></div>
-                <select value={settings.quarantineMode} onChange={e => setSettings(s => ({ ...s, quarantineMode: e.target.value }))} className="px-3 py-2 bg-[var(--surface-0)] border border-[var(--border)] rounded-lg text-sm text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--cordum)]">
-                  <option>Review All</option><option>Review Flagged</option><option>Log Only</option>
-                </select>
-              </div>
-            )}
-            <div className="flex items-start justify-between gap-8 py-3 border-b border-[var(--border)]">
-              <div><p className="text-sm font-medium text-[var(--foreground)]">Max Output Size</p><p className="text-xs text-[var(--muted-foreground)]">Maximum allowed output payload size</p></div>
-              <div className="flex items-center gap-2">
-                <input type="number" value={settings.maxOutputSize} onChange={e => setSettings(s => ({ ...s, maxOutputSize: Number(e.target.value) }))} className="w-24 px-3 py-2 bg-[var(--surface-0)] border border-[var(--border)] rounded-lg text-sm font-mono text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--cordum)]" />
-                <span className="text-xs font-mono text-[var(--muted-foreground)]">KB</span>
-              </div>
-            </div>
-            {settings.sensitiveDetection && (
-              <div className="flex items-start justify-between gap-8 py-3">
-                <div><p className="text-sm font-medium text-[var(--foreground)]">Sensitive Data Action</p><p className="text-xs text-[var(--muted-foreground)]">What to do when sensitive data is detected</p></div>
-                <select value={settings.sensitiveAction} onChange={e => setSettings(s => ({ ...s, sensitiveAction: e.target.value }))} className="px-3 py-2 bg-[var(--surface-0)] border border-[var(--border)] rounded-lg text-sm text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--cordum)]">
-                  <option>Redact</option><option>Block</option><option>Warn</option>
-                </select>
-              </div>
-            )}
-          </div>
-        </div>
-      </motion.div>
-
-      {/* Quarantine Queue */}
-      {settings.quarantine && (
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="instrument-card overflow-hidden">
-          <div className="px-5 py-3 border-b border-[var(--border)]">
-            <h2 className="text-sm font-display font-semibold text-[var(--foreground)]">Quarantine Queue ({QUARANTINE_QUEUE.length})</h2>
-          </div>
-          <table className="w-full">
-            <thead>
-              <tr className="bg-[var(--surface-0)] border-b border-[var(--border)]">
-                <th className="text-left px-4 py-3 text-xs font-mono uppercase tracking-wider text-[var(--muted-foreground)]">Job ID</th>
-                <th className="text-left px-4 py-3 text-xs font-mono uppercase tracking-wider text-[var(--muted-foreground)]">Agent</th>
-                <th className="text-left px-4 py-3 text-xs font-mono uppercase tracking-wider text-[var(--muted-foreground)]">Reason</th>
-                <th className="text-left px-4 py-3 text-xs font-mono uppercase tracking-wider text-[var(--muted-foreground)]">Quarantined</th>
-                <th className="text-left px-4 py-3 text-xs font-mono uppercase tracking-wider text-[var(--muted-foreground)]">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {QUARANTINE_QUEUE.map((item, i) => (
-                <tr key={item.jobId} className="border-b border-[var(--border)] hover:bg-[var(--surface-1)] transition-colors">
-                  <td className="px-4 py-3 text-sm font-mono text-[var(--cordum)]">{item.jobId}</td>
-                  <td className="px-4 py-3 text-sm text-[var(--foreground)]">{item.agent}</td>
-                  <td className="px-4 py-3 text-xs text-[var(--muted-foreground)] max-w-[300px] truncate">{item.reason}</td>
-                  <td className="px-4 py-3 text-xs font-mono text-[var(--muted-foreground)]">{item.quarantinedAt}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <button className="text-xs font-medium text-emerald-400 hover:text-emerald-300 transition-colors">Release</button>
-                      <button className="text-xs font-medium text-red-400 hover:text-red-300 transition-colors">Block</button>
-                      <button className="text-xs font-medium text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors">View</button>
-                    </div>
-                  </td>
+      {/* Quarantine Tab */}
+      {activeTab === "quarantine" && (
+        isLoading ? <SkeletonTable rows={5} /> :
+        !quarantined?.length ? <EmptyState icon={<ShieldAlert className="w-8 h-8" />} title="Quarantine empty" description="No outputs flagged by safety checks" /> : (
+          <div className="instrument-card overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border bg-surface-0">
+                  <th className="text-left px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Job</th>
+                  <th className="text-left px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Reason</th>
+                  <th className="text-left px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Severity</th>
+                  <th className="text-left px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Detected</th>
+                  <th className="text-right px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </motion.div>
+              </thead>
+              <tbody>
+                {quarantined.map((item, i) => (
+                  <motion.tr key={item.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.03 }}
+                    className="border-b border-border last:border-0 hover:bg-surface-1 transition-colors">
+                    <td className="px-4 py-3 font-mono text-xs text-foreground">{item.jobId.slice(0, 8)}</td>
+                    <td className="px-4 py-3 text-xs text-foreground">{item.reason}</td>
+                    <td className="px-4 py-3"><StatusBadge variant={severityColor(item.severity) as any}>{item.severity}</StatusBadge></td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground">{formatRelativeTime(item.detectedAt)}</td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <button onClick={() => setSelectedItem(item)} className="p-1.5 rounded hover:bg-surface-2 transition-colors">
+                          <Eye className="w-3.5 h-3.5 text-muted-foreground" />
+                        </button>
+                        <button onClick={() => setReleaseTarget(item)} className="p-1.5 rounded hover:bg-emerald-500/10 transition-colors">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                        </button>
+                        <button onClick={() => discardMutation.mutate(item.id)} className="p-1.5 rounded hover:bg-red-500/10 transition-colors">
+                          <XCircle className="w-3.5 h-3.5 text-red-400" />
+                        </button>
+                      </div>
+                    </td>
+                  </motion.tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
       )}
-    </div>
+
+      {/* Settings Tab */}
+      {activeTab === "settings" && (
+        <div className="space-y-4">
+          <div className="instrument-card p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-foreground">Sensitive Data Detection</p>
+                <p className="text-xs text-muted-foreground">Scan outputs for PII, credentials, and sensitive data</p>
+              </div>
+              <button onClick={() => setSensitiveDataEnabled(!sensitiveDataEnabled)}
+                className={cn("w-9 h-5 rounded-full relative transition-colors", sensitiveDataEnabled ? "bg-cordum" : "bg-surface-2")}>
+                <div className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform", sensitiveDataEnabled ? "left-[18px]" : "left-0.5")} />
+              </button>
+            </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-foreground">Auto-Quarantine</p>
+                <p className="text-xs text-muted-foreground">Automatically quarantine flagged outputs instead of blocking</p>
+              </div>
+              <button onClick={() => setAutoQuarantine(!autoQuarantine)}
+                className={cn("w-9 h-5 rounded-full relative transition-colors", autoQuarantine ? "bg-cordum" : "bg-surface-2")}>
+                <div className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform", autoQuarantine ? "left-[18px]" : "left-0.5")} />
+              </button>
+            </div>
+          </div>
+          <Button variant="primary" size="sm" onClick={() => toast.success("Settings saved")}>
+            <Save className="w-3 h-3 mr-1" />Save Settings
+          </Button>
+        </div>
+      )}
+
+      {/* Release Confirmation */}
+      <ConfirmDialog open={!!releaseTarget} onClose={() => setReleaseTarget(null)}
+        onConfirm={() => releaseTarget && releaseMutation.mutate(releaseTarget.id)}
+        title="Release Output" description="This will release the quarantined output and deliver it to the requesting agent. Are you sure?"
+        confirmLabel="Release" variant="default" />
+    </motion.div>
   );
 }

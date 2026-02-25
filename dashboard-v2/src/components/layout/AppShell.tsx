@@ -1,9 +1,13 @@
-import { NavLink, useLocation } from "react-router-dom";
-import { type ReactNode, useState, useEffect } from "react";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { type ReactNode, useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { useConfigStore } from "@/state/config";
 import { useUiStore } from "@/state/ui";
+import { CommandPalette } from "@/components/CommandPalette";
+import { NotificationPopover } from "@/components/NotificationPopover";
+import { ConnectionIndicator } from "@/components/ConnectionIndicator";
+import { KeyboardShortcutsDialog } from "@/components/KeyboardShortcuts";
 import {
   LayoutGrid,
   ListChecks,
@@ -21,10 +25,11 @@ import {
   Sun,
   LogOut,
   Search,
-  Bell,
   Monitor,
   Command,
   ExternalLink,
+  ShieldCheck,
+  ShieldAlert,
 } from "lucide-react";
 
 const navSections = [
@@ -42,8 +47,8 @@ const navSections = [
     items: [
       { path: "/approvals", label: "Approvals", icon: UserCheck, badge: true },
       { path: "/policies", label: "Policy Studio", icon: Shield },
-      { path: "/safety/input", label: "Input Safety", icon: Shield },
-      { path: "/safety/output", label: "Output Safety", icon: Shield },
+      { path: "/safety/input", label: "Input Safety", icon: ShieldCheck },
+      { path: "/safety/output", label: "Output Safety", icon: ShieldAlert },
     ],
   },
   {
@@ -61,33 +66,80 @@ const navSections = [
   },
 ];
 
+// g+key navigation map
+const gKeyMap: Record<string, string> = {
+  h: "/",
+  j: "/jobs",
+  w: "/workflows",
+  a: "/agents",
+  p: "/policies",
+  s: "/settings",
+  d: "/dlq",
+  l: "/audit",
+};
+
 interface AppShellProps {
   children: ReactNode;
 }
 
 export function AppShell({ children }: AppShellProps) {
   const location = useLocation();
+  const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(false);
   const theme = useUiStore((s) => s.resolvedTheme);
   const toggleTheme = useUiStore((s) => s.toggleTheme);
   const user = useConfigStore((s) => s.user);
   const logout = useConfigStore((s) => s.logout);
+  const gPressedRef = useRef(false);
+  const gTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
-  // Keyboard shortcut: Cmd/Ctrl + B to toggle sidebar
+  // Keyboard shortcuts: Cmd+B sidebar, Cmd+/ sidebar, g+key navigation
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "b") {
+      const target = e.target as HTMLElement;
+      const isInput = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
+
+      // Cmd/Ctrl + B or Cmd/Ctrl + / to toggle sidebar
+      if ((e.metaKey || e.ctrlKey) && (e.key === "b" || e.key === "/")) {
         e.preventDefault();
         setCollapsed((c) => !c);
+        return;
+      }
+
+      // g+key navigation (only when not in input)
+      if (!isInput && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        if (e.key === "g") {
+          gPressedRef.current = true;
+          clearTimeout(gTimerRef.current);
+          gTimerRef.current = setTimeout(() => {
+            gPressedRef.current = false;
+          }, 500);
+          return;
+        }
+        if (gPressedRef.current && gKeyMap[e.key]) {
+          e.preventDefault();
+          navigate(gKeyMap[e.key]);
+          gPressedRef.current = false;
+          clearTimeout(gTimerRef.current);
+          return;
+        }
       }
     };
     window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, []);
+    return () => {
+      window.removeEventListener("keydown", handler);
+      clearTimeout(gTimerRef.current);
+    };
+  }, [navigate]);
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      {/* Sidebar — matches showcase Layout */}
+      {/* Command Palette (Cmd+K) */}
+      <CommandPalette />
+      {/* Keyboard Shortcuts Dialog (?) */}
+      <KeyboardShortcutsDialog />
+
+      {/* Sidebar */}
       <aside
         className={cn(
           "fixed top-0 left-0 h-screen z-50 flex flex-col border-r border-border bg-surface-0 transition-all duration-300",
@@ -192,7 +244,7 @@ export function AppShell({ children }: AppShellProps) {
           </button>
         </div>
 
-        {/* Collapse toggle — floating button like showcase */}
+        {/* Collapse toggle */}
         <button
           onClick={() => setCollapsed(!collapsed)}
           className="absolute -right-3 top-20 w-6 h-6 rounded-full bg-surface-2 border border-border flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-surface-3 transition-colors"
@@ -212,30 +264,30 @@ export function AppShell({ children }: AppShellProps) {
           collapsed ? "ml-16" : "ml-60",
         )}
       >
-        {/* Top bar — matches showcase */}
+        {/* Top bar */}
         <header className="sticky top-0 z-40 flex items-center justify-between h-14 px-6 border-b border-border bg-background/80 backdrop-blur-xl shrink-0">
           <div className="flex items-center gap-4">
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-              <input
-                type="text"
-                placeholder="Search..."
-                className="h-8 w-56 pl-8 pr-3 text-xs bg-surface-1 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
-              />
-              <kbd className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-mono px-1.5 py-0.5 rounded bg-background border border-border text-muted-foreground">
+            {/* Search bar — opens Command Palette on click */}
+            <button
+              onClick={() => {
+                // Dispatch Cmd+K to open command palette
+                window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
+              }}
+              className="relative flex items-center h-8 w-56 pl-8 pr-3 text-xs bg-surface-1 border border-border rounded-md text-muted-foreground hover:border-cordum/30 transition-colors"
+            >
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5" />
+              <span>Search...</span>
+              <kbd className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-mono px-1.5 py-0.5 rounded bg-background border border-border">
                 <Command className="w-2.5 h-2.5 inline" />K
               </kbd>
-            </div>
+            </button>
           </div>
           <div className="flex items-center gap-3">
-            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-mono font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 status-pulse" />
-              All Systems Nominal
-            </span>
-            <button className="relative p-2 rounded-md hover:bg-surface-2 transition-colors">
-              <Bell className="w-4 h-4 text-muted-foreground" />
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-amber-400" />
-            </button>
+            {/* Connection indicator */}
+            <ConnectionIndicator />
+            {/* Notifications */}
+            <NotificationPopover />
+            {/* User */}
             {user ? (
               <div className="flex items-center gap-2 pl-3 border-l border-border">
                 <div className="w-8 h-8 rounded-full bg-cordum/20 border border-cordum/30 flex items-center justify-center">
@@ -243,9 +295,15 @@ export function AppShell({ children }: AppShellProps) {
                     {(user.display_name || user.username || "U").charAt(0).toUpperCase()}
                   </span>
                 </div>
+                {!collapsed && (
+                  <span className="text-xs text-foreground font-medium hidden lg:inline">
+                    {user.display_name || user.username}
+                  </span>
+                )}
                 <button
                   onClick={logout}
                   className="p-1.5 rounded-md text-muted-foreground hover:text-red-400 transition-colors"
+                  title="Logout"
                 >
                   <LogOut className="w-3.5 h-3.5" />
                 </button>

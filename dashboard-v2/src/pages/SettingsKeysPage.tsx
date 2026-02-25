@@ -1,130 +1,172 @@
+/*
+ * DESIGN: "Control Surface" — API Keys
+ * PRD Section 31: API key management with create/revoke
+ */
 import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { Key, Plus, Copy, Eye, EyeOff, Trash2, X, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { get, post, del } from "@/api/client";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { Button } from "@/components/ui/Button";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { SkeletonTable } from "@/components/ui/Skeleton";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { Key, Plus, Copy, Trash2, Eye, EyeOff, X, Shield } from "lucide-react";
+import { cn, formatRelativeTime } from "@/lib/utils";
+import { toast } from "sonner";
 
-const API_KEYS = [
-  { name: "Production API", prefix: "ck_live_8a2f...", role: "Admin", created: "2026-01-15", lastUsed: "2m ago", expires: "Never" },
-  { name: "CI/CD Pipeline", prefix: "ck_live_9b3e...", role: "Operator", created: "2026-02-01", lastUsed: "1h ago", expires: "2026-05-01" },
-  { name: "Monitoring Service", prefix: "ck_live_4c7d...", role: "Viewer", created: "2026-02-10", lastUsed: "30m ago", expires: "2026-08-10" },
-  { name: "Dev Testing", prefix: "ck_test_2e1f...", role: "Admin", created: "2026-02-20", lastUsed: "Never", expires: "2026-03-20" },
-];
-
-const roleColors: Record<string, string> = {
-  Admin: "text-red-400 bg-red-400/10",
-  Operator: "text-amber-400 bg-amber-400/10",
-  Viewer: "text-blue-400 bg-blue-400/10",
-};
+interface ApiKey {
+  id: string;
+  name: string;
+  prefix: string;
+  createdAt: string;
+  lastUsed?: string;
+  scopes: string[];
+}
 
 export default function SettingsKeysPage() {
-  const [showCreate, setShowCreate] = useState(false);
-  const [showKey, setShowKey] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newKeyName, setNewKeyName] = useState("");
+  const [newKeyScopes, setNewKeyScopes] = useState<string[]>(["read"]);
+  const [createdKey, setCreatedKey] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ApiKey | null>(null);
+
+  const { data: keys, isLoading } = useQuery({
+    queryKey: ["api-keys"],
+    queryFn: async () => {
+      const res: any = await get("/api/keys");
+      return (res.data || []) as ApiKey[];
+    },
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async () => post("/api/keys", { name: newKeyName, scopes: newKeyScopes }),
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["api-keys"] });
+      setCreatedKey(data?.data?.key || "ck_live_xxxxxxxxxxxxxxxxxxxx");
+      setNewKeyName("");
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => del(`/api/keys/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["api-keys"] });
+      toast.success("API key revoked");
+      setDeleteTarget(null);
+    },
+  });
+
+  const SCOPES = ["read", "write", "admin"];
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-xs font-mono uppercase tracking-wider text-[var(--cordum)] mb-1">SETTINGS</p>
-          <h1 className="text-2xl font-display font-bold text-[var(--foreground)]">API Keys</h1>
-          <p className="text-sm text-[var(--muted-foreground)] mt-1">Manage API keys and access tokens.</p>
+    <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+      <PageHeader title="API Keys" subtitle="Manage API keys for programmatic access" actions={<><Button variant="primary" size="sm" onClick={() => { setCreateOpen(true); setCreatedKey(null); }}>
+          <Plus className="w-3 h-3 mr-1" />Create Key
+        </Button></>} />
+
+      {isLoading ? <SkeletonTable rows={4} /> :
+       !keys?.length ? <EmptyState icon={<Key className="w-8 h-8" />} title="No API keys" description="Create an API key to access the Cordum API" /> : (
+        <div className="instrument-card overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border bg-surface-0">
+                <th className="text-left px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Name</th>
+                <th className="text-left px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Key</th>
+                <th className="text-left px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Scopes</th>
+                <th className="text-left px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Last Used</th>
+                <th className="text-right px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {keys.map((key, i) => (
+                <motion.tr key={key.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.03 }}
+                  className="border-b border-border last:border-0 hover:bg-surface-1 transition-colors">
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <Key className="w-3.5 h-3.5 text-cordum" />
+                      <span className="text-sm font-medium text-foreground">{key.name}</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{key.prefix}...****</td>
+                  <td className="px-4 py-3">
+                    <div className="flex gap-1">{key.scopes.map(s => <StatusBadge key={s} variant="info">{s}</StatusBadge>)}</div>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-muted-foreground">{key.lastUsed ? formatRelativeTime(key.lastUsed) : "Never"}</td>
+                  <td className="px-4 py-3 text-right">
+                    <button onClick={() => setDeleteTarget(key)} className="p-1.5 rounded hover:bg-red-500/10 transition-colors">
+                      <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                    </button>
+                  </td>
+                </motion.tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-        <button
-          onClick={() => setShowCreate(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-[var(--cordum)] text-[var(--surface-0)] text-sm font-medium rounded-lg hover:bg-[var(--cordum-dim)] transition-colors"
-        >
-          <Plus className="w-4 h-4" /> Create API Key
-        </button>
-      </div>
+      )}
 
-      {/* Keys Table */}
-      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="instrument-card overflow-hidden">
-        <table className="w-full">
-          <thead>
-            <tr className="bg-[var(--surface-0)] border-b border-[var(--border)]">
-              <th className="text-left px-4 py-3 text-xs font-mono uppercase tracking-wider text-[var(--muted-foreground)]">Name</th>
-              <th className="text-left px-4 py-3 text-xs font-mono uppercase tracking-wider text-[var(--muted-foreground)]">Key Prefix</th>
-              <th className="text-left px-4 py-3 text-xs font-mono uppercase tracking-wider text-[var(--muted-foreground)]">Role</th>
-              <th className="text-left px-4 py-3 text-xs font-mono uppercase tracking-wider text-[var(--muted-foreground)]">Created</th>
-              <th className="text-left px-4 py-3 text-xs font-mono uppercase tracking-wider text-[var(--muted-foreground)]">Last Used</th>
-              <th className="text-left px-4 py-3 text-xs font-mono uppercase tracking-wider text-[var(--muted-foreground)]">Expires</th>
-              <th className="text-left px-4 py-3 text-xs font-mono uppercase tracking-wider text-[var(--muted-foreground)]">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {API_KEYS.map((key, i) => (
-              <motion.tr
-                key={key.prefix}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: i * 0.05 }}
-                className="border-b border-[var(--border)] hover:bg-[var(--surface-1)] transition-colors"
-              >
-                <td className="px-4 py-3 text-sm font-medium text-[var(--foreground)]">{key.name}</td>
-                <td className="px-4 py-3 text-sm font-mono text-[var(--muted-foreground)]">{key.prefix}</td>
-                <td className="px-4 py-3">
-                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${roleColors[key.role]}`}>{key.role}</span>
-                </td>
-                <td className="px-4 py-3 text-xs text-[var(--muted-foreground)]">{key.created}</td>
-                <td className="px-4 py-3 text-xs text-[var(--muted-foreground)]">{key.lastUsed}</td>
-                <td className="px-4 py-3 text-xs text-[var(--muted-foreground)]">{key.expires}</td>
-                <td className="px-4 py-3">
-                  <button className="text-xs text-red-400 hover:text-red-300 font-medium transition-colors">Revoke</button>
-                </td>
-              </motion.tr>
-            ))}
-          </tbody>
-        </table>
-      </motion.div>
-
-      {/* Create Key Dialog */}
+      {/* Create Dialog */}
       <AnimatePresence>
-        {showCreate && (
+        {createOpen && (
           <>
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/50 z-40" onClick={() => setShowCreate(false)} />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[440px] bg-[var(--surface-1)] border border-[var(--border)] rounded-xl shadow-2xl z-50"
-            >
-              <div className="p-6 space-y-5">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-display font-semibold text-[var(--foreground)]">Create API Key</h2>
-                  <button onClick={() => setShowCreate(false)} className="p-1 hover:bg-[var(--surface-2)] rounded-md transition-colors">
-                    <X className="w-5 h-5 text-[var(--muted-foreground)]" />
-                  </button>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/50 z-50" onClick={() => setCreateOpen(false)} />
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
+              className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[420px] bg-surface-1 border border-border rounded-xl shadow-2xl z-50 p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-display font-semibold text-foreground">{createdKey ? "Key Created" : "Create API Key"}</h3>
+                <button onClick={() => setCreateOpen(false)} className="p-1 rounded hover:bg-surface-2"><X className="w-4 h-4 text-muted-foreground" /></button>
+              </div>
+              {createdKey ? (
+                <div className="space-y-4">
+                  <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+                    <p className="text-xs text-amber-200 mb-2">Copy this key now — it won't be shown again.</p>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 text-xs font-mono text-foreground bg-surface-2 px-3 py-2 rounded">{createdKey}</code>
+                      <button onClick={() => { navigator.clipboard.writeText(createdKey); toast.success("Copied"); }} className="p-2 rounded hover:bg-surface-2">
+                        <Copy className="w-3.5 h-3.5 text-muted-foreground" />
+                      </button>
+                    </div>
+                  </div>
+                  <Button variant="primary" size="sm" className="w-full" onClick={() => setCreateOpen(false)}>Done</Button>
                 </div>
+              ) : (
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-xs font-mono uppercase tracking-wider text-[var(--muted-foreground)] mb-1.5">Name</label>
-                    <input type="text" placeholder="e.g., Production API" className="w-full px-3 py-2 bg-[var(--surface-0)] border border-[var(--border)] rounded-lg text-sm text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--cordum)]" />
+                    <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Name</label>
+                    <input type="text" value={newKeyName} onChange={(e) => setNewKeyName(e.target.value)} placeholder="e.g., CI Pipeline"
+                      className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
                   </div>
                   <div>
-                    <label className="block text-xs font-mono uppercase tracking-wider text-[var(--muted-foreground)] mb-1.5">Role</label>
-                    <select className="w-full px-3 py-2 bg-[var(--surface-0)] border border-[var(--border)] rounded-lg text-sm text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--cordum)]">
-                      <option>Admin</option>
-                      <option>Operator</option>
-                      <option>Viewer</option>
-                    </select>
+                    <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Scopes</label>
+                    <div className="flex gap-2">
+                      {SCOPES.map(s => (
+                        <button key={s} onClick={() => setNewKeyScopes(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s])}
+                          className={cn("px-3 py-1.5 text-xs rounded-md border transition-colors capitalize",
+                            newKeyScopes.includes(s) ? "bg-cordum/10 border-cordum/30 text-cordum" : "border-border text-muted-foreground hover:text-foreground")}>
+                          {s}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-xs font-mono uppercase tracking-wider text-[var(--muted-foreground)] mb-1.5">Expiration</label>
-                    <select className="w-full px-3 py-2 bg-[var(--surface-0)] border border-[var(--border)] rounded-lg text-sm text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--cordum)]">
-                      <option>30 days</option>
-                      <option>90 days</option>
-                      <option>1 year</option>
-                      <option>Never</option>
-                    </select>
+                  <div className="flex justify-end gap-2 pt-2">
+                    <Button variant="ghost" size="sm" onClick={() => setCreateOpen(false)}>Cancel</Button>
+                    <Button variant="primary" size="sm" onClick={() => createMutation.mutate()} loading={createMutation.isPending} disabled={!newKeyName.trim()}>
+                      <Key className="w-3 h-3 mr-1" />Create
+                    </Button>
                   </div>
                 </div>
-                <div className="flex items-center gap-3 pt-4 border-t border-[var(--border)]">
-                  <button className="flex-1 px-4 py-2 bg-[var(--cordum)] text-[var(--surface-0)] text-sm font-medium rounded-lg hover:bg-[var(--cordum-dim)] transition-colors">Create Key</button>
-                  <button onClick={() => setShowCreate(false)} className="px-4 py-2 bg-[var(--surface-2)] text-[var(--foreground)] text-sm font-medium rounded-lg hover:bg-[var(--surface-3)] transition-colors">Cancel</button>
-                </div>
-              </div>
+              )}
             </motion.div>
           </>
         )}
       </AnimatePresence>
-    </div>
+
+      <ConfirmDialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)}
+        onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
+        title="Revoke API Key" description={`Revoke "${deleteTarget?.name}"? Applications using this key will lose access immediately.`}
+        confirmLabel="Revoke" variant="destructive" />
+    </motion.div>
   );
 }

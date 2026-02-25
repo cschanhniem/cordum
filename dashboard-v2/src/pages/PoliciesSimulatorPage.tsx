@@ -1,148 +1,131 @@
 /*
  * DESIGN: "Control Surface" — Policy Simulator
- * PRD Section 18: Test policies against job data
+ * PRD Section 18: Test payloads against policy rules
  */
 import { useState } from "react";
-import { motion } from "framer-motion";
+import { useMutation } from "@tanstack/react-query";
+import { motion, AnimatePresence } from "framer-motion";
+import { post } from "@/api/client";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import {
-  FlaskConical, Play, AlertTriangle, CheckCircle2, XCircle, Clock,
-} from "lucide-react";
+import { Play, RotateCcw, CheckCircle2, XCircle, AlertTriangle, Code, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
-const MOCK_RESULTS = [
-  { jobId: "job-001", action: "service.restart", current: "ALLOW", draft: "DENY", changed: true },
-  { jobId: "job-002", action: "data.read", current: "ALLOW", draft: "ALLOW", changed: false },
-  { jobId: "job-003", action: "service.deploy", current: "ALLOW", draft: "REQUIRE_APPROVAL", changed: true },
-  { jobId: "job-004", action: "data.transform", current: "DENY", draft: "DENY", changed: false },
-  { jobId: "job-005", action: "service.restart", current: "ALLOW", draft: "DENY", changed: true },
-  { jobId: "job-006", action: "data.export", current: "ALLOW", draft: "ALLOW", changed: false },
-];
-
-function decisionVariant(d: string) {
-  if (d === "ALLOW") return "healthy" as const;
-  if (d === "DENY") return "danger" as const;
-  return "warning" as const;
+interface SimResult {
+  decision: "allow" | "deny" | "warn";
+  rules: { name: string; result: "pass" | "fail" | "warn"; reason?: string }[];
+  latency: string;
 }
 
-export default function PolicySimulatorPage() {
-  const [hasRun, setHasRun] = useState(false);
-  const [dataSource, setDataSource] = useState("historical");
-  const [timeRange, setTimeRange] = useState("24h");
-  const [sampleSize, setSampleSize] = useState(100);
+const SAMPLE_PAYLOADS = [
+  { label: "Normal Request", value: JSON.stringify({ topic: "service.restart", payload: { service: "api", reason: "deploy" } }, null, 2) },
+  { label: "High Risk", value: JSON.stringify({ topic: "db.drop-table", payload: { table: "users", confirm: true } }, null, 2) },
+  { label: "PII Content", value: JSON.stringify({ topic: "email.send", payload: { to: "john@example.com", body: "SSN: 123-45-6789" } }, null, 2) },
+];
 
-  const changedCount = MOCK_RESULTS.filter(r => r.changed).length;
-  const allowCount = MOCK_RESULTS.filter(r => r.draft === "ALLOW").length;
-  const denyCount = MOCK_RESULTS.filter(r => r.draft === "DENY").length;
-  const approvalCount = MOCK_RESULTS.filter(r => r.draft === "REQUIRE_APPROVAL").length;
+export default function PoliciesSimulatorPage() {
+  const [payload, setPayload] = useState(SAMPLE_PAYLOADS[0].value);
+  const [result, setResult] = useState<SimResult | null>(null);
+
+  const simulateMutation = useMutation({
+    mutationFn: async () => {
+      const res: any = await post("/api/policies/simulate", JSON.parse(payload));
+      return res.data as SimResult;
+    },
+    onSuccess: (data) => setResult(data),
+    onError: () => toast.error("Invalid payload"),
+  });
+
+  const decisionIcon = (d: string) => {
+    switch (d) {
+      case "allow": return <CheckCircle2 className="w-5 h-5 text-emerald-400" />;
+      case "deny": return <XCircle className="w-5 h-5 text-red-400" />;
+      case "warn": return <AlertTriangle className="w-5 h-5 text-amber-400" />;
+      default: return null;
+    }
+  };
 
   return (
-    <div className="space-y-6">
-      <PageHeader label="Govern" title="Policy Simulator" subtitle="Test your policies against real or synthetic job data" />
+    <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+      <PageHeader title="Policy Simulator" subtitle="Test payloads against active policy rules" />
 
-      {/* Input Panel */}
-      <div className="instrument-card p-5">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div>
-            <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Data Source</label>
-            <select value={dataSource} onChange={(e) => setDataSource(e.target.value)} className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum">
-              <option value="historical">Historical</option>
-              <option value="custom">Custom JSON</option>
-              <option value="single">Single Job</option>
-            </select>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Input Panel */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Test Payload</p>
+            <div className="flex gap-1">
+              {SAMPLE_PAYLOADS.map(sp => (
+                <button key={sp.label} onClick={() => { setPayload(sp.value); setResult(null); }}
+                  className="px-2 py-1 text-[10px] font-mono rounded bg-surface-1 text-muted-foreground hover:text-foreground transition-colors">
+                  {sp.label}
+                </button>
+              ))}
+            </div>
           </div>
-          <div>
-            <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Time Range</label>
-            <select value={timeRange} onChange={(e) => setTimeRange(e.target.value)} className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum">
-              <option value="1h">Last 1 hour</option>
-              <option value="24h">Last 24 hours</option>
-              <option value="7d">Last 7 days</option>
-              <option value="30d">Last 30 days</option>
-            </select>
+          <div className="instrument-card p-0 overflow-hidden">
+            <textarea
+              value={payload}
+              onChange={(e) => setPayload(e.target.value)}
+              className="w-full h-64 p-4 text-xs font-mono bg-transparent text-foreground resize-none focus:outline-none"
+              spellCheck={false}
+            />
           </div>
-          <div>
-            <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Sample Size</label>
-            <input type="number" value={sampleSize} onChange={(e) => setSampleSize(Number(e.target.value))} className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
-          </div>
-          <div className="flex items-end">
-            <Button variant="primary" size="sm" className="w-full" onClick={() => setHasRun(true)}>
-              <Play className="w-3 h-3 mr-1" />Run Simulation
+          <div className="flex gap-2">
+            <Button variant="primary" size="sm" onClick={() => simulateMutation.mutate()} loading={simulateMutation.isPending}>
+              <Play className="w-3 h-3 mr-1" />Simulate
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => { setPayload(SAMPLE_PAYLOADS[0].value); setResult(null); }}>
+              <RotateCcw className="w-3 h-3 mr-1" />Reset
             </Button>
           </div>
         </div>
+
+        {/* Result Panel */}
+        <div className="space-y-4">
+          <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Result</p>
+          <AnimatePresence mode="wait">
+            {result ? (
+              <motion.div key="result" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="space-y-4">
+                <div className={cn("instrument-card p-5",
+                  result.decision === "allow" ? "status-healthy" : result.decision === "deny" ? "status-danger" : "status-warning")}>
+                  <div className="flex items-center gap-3">
+                    {decisionIcon(result.decision)}
+                    <div>
+                      <span className="text-lg font-display font-bold text-foreground capitalize">{result.decision}</span>
+                      <p className="text-xs text-muted-foreground font-mono">Evaluated in {result.latency}</p>
+                    </div>
+                  </div>
+                </div>
+                <div className="instrument-card overflow-hidden">
+                  <div className="px-4 py-3 bg-surface-0 border-b border-border">
+                    <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Rule Results</p>
+                  </div>
+                  <div className="divide-y divide-border">
+                    {result.rules.map(rule => (
+                      <div key={rule.name} className="flex items-center justify-between px-4 py-3">
+                        <div>
+                          <span className="text-xs font-mono text-foreground">{rule.name}</span>
+                          {rule.reason && <p className="text-[10px] text-muted-foreground">{rule.reason}</p>}
+                        </div>
+                        <StatusBadge variant={rule.result === "pass" ? "healthy" : rule.result === "fail" ? "danger" : "warning"}>{rule.result}</StatusBadge>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </motion.div>
+            ) : (
+              <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                className="instrument-card p-12 text-center">
+                <Code className="w-8 h-8 text-muted-foreground/30 mx-auto mb-3" />
+                <p className="text-sm text-muted-foreground">Click "Simulate" to test your payload</p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
       </div>
-
-      {/* Results */}
-      {hasRun && (
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
-          {/* KPIs */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="instrument-card p-5">
-              <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Allowed</span>
-              <p className="font-mono text-2xl font-bold text-emerald-400 mt-2">{allowCount}</p>
-            </div>
-            <div className="instrument-card p-5">
-              <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Denied</span>
-              <p className="font-mono text-2xl font-bold text-red-400 mt-2">{denyCount}</p>
-            </div>
-            <div className="instrument-card p-5">
-              <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Approval Req.</span>
-              <p className="font-mono text-2xl font-bold text-amber-400 mt-2">{approvalCount}</p>
-            </div>
-            <div className={cn("instrument-card p-5", changedCount > 0 && "status-warning")}>
-              <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Changed</span>
-              <p className={cn("font-mono text-2xl font-bold mt-2", changedCount > 0 ? "text-amber-400" : "text-foreground")}>{changedCount}</p>
-            </div>
-          </div>
-
-          {/* Comparison Table */}
-          <div className="instrument-card overflow-hidden">
-            <div className="px-5 py-3 border-b border-border">
-              <h3 className="font-display font-semibold text-sm text-foreground">Comparison: Current vs Draft</h3>
-            </div>
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-border bg-surface-0">
-                  <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Job ID</th>
-                  <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Action</th>
-                  <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Current</th>
-                  <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Draft</th>
-                  <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Changed?</th>
-                </tr>
-              </thead>
-              <tbody>
-                {MOCK_RESULTS.map((r) => (
-                  <tr key={r.jobId} className={cn("border-b border-border transition-colors", r.changed ? "bg-amber-500/5" : "hover:bg-surface-1")}>
-                    <td className="px-5 py-3 font-mono text-sm text-cordum">{r.jobId}</td>
-                    <td className="px-5 py-3 text-sm text-foreground font-mono">{r.action}</td>
-                    <td className="px-5 py-3"><StatusBadge variant={decisionVariant(r.current)}>{r.current}</StatusBadge></td>
-                    <td className="px-5 py-3"><StatusBadge variant={decisionVariant(r.draft)}>{r.draft}</StatusBadge></td>
-                    <td className="px-5 py-3">
-                      {r.changed ? (
-                        <span className="flex items-center gap-1 text-xs text-amber-400 font-mono"><AlertTriangle className="w-3 h-3" />CHANGED</span>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">No</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Impact Analysis */}
-          <div className="instrument-card p-5">
-            <h3 className="font-display font-semibold text-sm text-foreground mb-2">Impact Analysis</h3>
-            <p className="text-sm text-muted-foreground">
-              Deploying the draft policy would change the decision for <span className="text-amber-400 font-mono font-semibold">{changedCount}</span> out of <span className="font-mono">{MOCK_RESULTS.length}</span> jobs ({Math.round(changedCount / MOCK_RESULTS.length * 100)}%).
-              <span className="text-red-400 font-mono"> {MOCK_RESULTS.filter(r => r.changed && r.draft === "DENY").length}</span> jobs would be newly denied.
-              <span className="text-amber-400 font-mono"> {MOCK_RESULTS.filter(r => r.changed && r.draft === "REQUIRE_APPROVAL").length}</span> jobs would require approval.
-            </p>
-          </div>
-        </motion.div>
-      )}
-    </div>
+    </motion.div>
   );
 }

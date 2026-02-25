@@ -1,15 +1,15 @@
 /*
  * DESIGN: "Control Surface" — Policy Builder
- * PRD Section 17: Visual policy builder with YAML preview
+ * PRD Section 17: Visual rule builder with conditions
  */
-import { useState, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { useMutation } from "@tanstack/react-query";
 import { motion } from "framer-motion";
+import { post } from "@/api/client";
 import { Button } from "@/components/ui/Button";
-import { PageHeader } from "@/components/layout/PageHeader";
-import {
-  Save, Rocket, Plus, Trash2, ArrowLeft, Code, Eye,
-} from "lucide-react";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { ArrowLeft, Save, Plus, Trash2, GripVertical, Shield, AlertTriangle, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -20,154 +20,169 @@ interface Condition {
   value: string;
 }
 
-const FIELDS = ["environment", "agent_id", "action", "pool", "risk_score", "priority", "source_ip"];
-const OPERATORS = ["equals", "not_equals", "contains", "starts_with", "greater_than", "less_than", "in", "not_in", "matches"];
-const DECISIONS = ["ALLOW", "DENY", "REQUIRE_APPROVAL", "ALLOW_WITH_CONSTRAINTS", "THROTTLE"];
+interface RuleBlock {
+  id: string;
+  name: string;
+  action: "allow" | "deny" | "warn";
+  conditions: Condition[];
+}
 
-let conditionCounter = 0;
+let counter = 0;
 
-export default function PolicyBuilderPage() {
+export default function PoliciesBuilderPage() {
   const navigate = useNavigate();
-  const [name, setName] = useState("");
+  const { id } = useParams();
+  const isEdit = !!id;
+
+  const [ruleName, setRuleName] = useState(isEdit ? "production-safety" : "");
   const [description, setDescription] = useState("");
-  const [actionPattern, setActionPattern] = useState("");
-  const [decision, setDecision] = useState("DENY");
-  const [priority, setPriority] = useState(100);
-  const [conditions, setConditions] = useState<Condition[]>([]);
-  const [conditionLogic, setConditionLogic] = useState<"AND" | "OR">("AND");
+  const [blocks, setBlocks] = useState<RuleBlock[]>([
+    {
+      id: "block-1",
+      name: "Default Block",
+      action: "allow",
+      conditions: [{ id: "cond-1", field: "topic", operator: "equals", value: "" }],
+    },
+  ]);
 
-  const addCondition = () => {
-    conditionCounter++;
-    setConditions(prev => [...prev, { id: `c-${conditionCounter}`, field: "environment", operator: "equals", value: "" }]);
+  const FIELDS = ["topic", "payload.size", "agent.role", "agent.name", "risk_score", "source_ip"];
+  const OPERATORS = ["equals", "not_equals", "contains", "greater_than", "less_than", "matches"];
+  const ACTIONS = ["allow", "deny", "warn"];
+
+  const addBlock = () => {
+    counter++;
+    setBlocks(prev => [...prev, {
+      id: `block-${counter}`,
+      name: `Rule ${prev.length + 1}`,
+      action: "deny",
+      conditions: [{ id: `cond-${counter}`, field: "topic", operator: "equals", value: "" }],
+    }]);
   };
 
-  const removeCondition = (id: string) => {
-    setConditions(prev => prev.filter(c => c.id !== id));
+  const removeBlock = (blockId: string) => {
+    setBlocks(prev => prev.filter(b => b.id !== blockId));
   };
 
-  const updateCondition = (id: string, field: keyof Condition, value: string) => {
-    setConditions(prev => prev.map(c => c.id === id ? { ...c, [field]: value } : c));
+  const addCondition = (blockId: string) => {
+    counter++;
+    setBlocks(prev => prev.map(b =>
+      b.id === blockId ? { ...b, conditions: [...b.conditions, { id: `cond-${counter}`, field: "topic", operator: "equals", value: "" }] } : b
+    ));
   };
 
-  const yamlPreview = useMemo(() => {
-    let yaml = `name: ${name || "<rule-name>"}\n`;
-    yaml += `description: "${description || ""}"\n`;
-    yaml += `action: "${actionPattern || "*"}"\n`;
-    yaml += `decision: ${decision}\n`;
-    yaml += `priority: ${priority}\n`;
-    if (conditions.length > 0) {
-      yaml += `conditions:\n`;
-      yaml += `  logic: ${conditionLogic}\n`;
-      yaml += `  rules:\n`;
-      conditions.forEach(c => {
-        yaml += `    - field: ${c.field}\n`;
-        yaml += `      op: ${c.operator}\n`;
-        yaml += `      value: "${c.value}"\n`;
-      });
-    }
-    return yaml;
-  }, [name, description, actionPattern, decision, priority, conditions, conditionLogic]);
+  const removeCondition = (blockId: string, condId: string) => {
+    setBlocks(prev => prev.map(b =>
+      b.id === blockId ? { ...b, conditions: b.conditions.filter(c => c.id !== condId) } : b
+    ));
+  };
+
+  const updateCondition = (blockId: string, condId: string, field: string, value: string) => {
+    setBlocks(prev => prev.map(b =>
+      b.id === blockId ? { ...b, conditions: b.conditions.map(c => c.id === condId ? { ...c, [field]: value } : c) } : b
+    ));
+  };
+
+  const updateBlock = (blockId: string, field: string, value: string) => {
+    setBlocks(prev => prev.map(b => b.id === blockId ? { ...b, [field]: value } : b));
+  };
+
+  const saveMutation = useMutation({
+    mutationFn: async () => post("/api/policies/rules", { name: ruleName, description, blocks }),
+    onSuccess: () => { toast.success("Policy rule saved"); navigate("/policies/rules"); },
+  });
+
+  const actionColor = (a: string) => a === "allow" ? "healthy" : a === "deny" ? "danger" : "warning";
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <button onClick={() => navigate("/policies/rules")} className="p-2 rounded-md hover:bg-surface-2 transition-colors">
-          <ArrowLeft className="w-4 h-4 text-muted-foreground" />
-        </button>
-        <PageHeader label="Govern" title="Policy Builder" subtitle="Build policy rules visually" />
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Visual Builder — 2/3 */}
-        <div className="lg:col-span-2 space-y-4">
-          <div className="instrument-card p-5 space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Rule Name</label>
-                <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g., block-prod-writes" className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
-              </div>
-              <div>
-                <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Action Pattern</label>
-                <input type="text" value={actionPattern} onChange={(e) => setActionPattern(e.target.value)} placeholder="e.g., service.*" className="h-8 w-full px-3 text-xs font-mono bg-surface-1 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
-              </div>
-            </div>
-            <div>
-              <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Description</label>
-              <textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Human-readable description..." className="w-full px-3 py-2 text-xs bg-surface-1 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum resize-none" />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Decision</label>
-                <select value={decision} onChange={(e) => setDecision(e.target.value)} className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum">
-                  {DECISIONS.map(d => <option key={d} value={d}>{d}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Priority</label>
-                <input type="number" value={priority} onChange={(e) => setPriority(Number(e.target.value))} min={1} max={1000} className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
-              </div>
-            </div>
-          </div>
-
-          {/* Conditions */}
-          <div className="instrument-card p-5">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <h3 className="font-display font-semibold text-sm text-foreground">WHEN</h3>
-                <div className="flex items-center gap-1 bg-surface-1 border border-border rounded-md p-0.5">
-                  {(["AND", "OR"] as const).map(l => (
-                    <button key={l} onClick={() => setConditionLogic(l)} className={cn("px-2 py-0.5 text-[10px] font-mono rounded transition-colors", conditionLogic === l ? "bg-cordum/10 text-cordum" : "text-muted-foreground")}>
-                      {l}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <Button variant="outline" size="sm" onClick={addCondition}><Plus className="w-3 h-3 mr-1" />Add Condition</Button>
-            </div>
-            {conditions.length === 0 ? (
-              <p className="text-xs text-muted-foreground italic py-4 text-center">No conditions — rule will match all jobs matching the action pattern</p>
-            ) : (
-              <div className="space-y-2">
-                {conditions.map((c, i) => (
-                  <div key={c.id} className="flex items-center gap-2">
-                    {i > 0 && <span className="text-[10px] font-mono text-cordum w-8 text-center">{conditionLogic}</span>}
-                    {i === 0 && <span className="w-8" />}
-                    <select value={c.field} onChange={(e) => updateCondition(c.id, "field", e.target.value)} className="h-7 px-2 text-xs bg-surface-1 border border-border rounded text-foreground focus:outline-none focus:ring-1 focus:ring-cordum">
-                      {FIELDS.map(f => <option key={f}>{f}</option>)}
-                    </select>
-                    <select value={c.operator} onChange={(e) => updateCondition(c.id, "operator", e.target.value)} className="h-7 px-2 text-xs bg-surface-1 border border-border rounded text-foreground focus:outline-none focus:ring-1 focus:ring-cordum">
-                      {OPERATORS.map(o => <option key={o}>{o}</option>)}
-                    </select>
-                    <input type="text" value={c.value} onChange={(e) => updateCondition(c.id, "value", e.target.value)} placeholder="value" className="h-7 flex-1 px-2 text-xs bg-surface-1 border border-border rounded text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
-                    <button onClick={() => removeCondition(c.id)} className="p-1 rounded hover:bg-surface-2 text-muted-foreground hover:text-red-400 transition-colors">
-                      <Trash2 className="w-3 h-3" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Actions */}
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => toast.success("Draft saved")}><Save className="w-3 h-3 mr-1" />Save Draft</Button>
-            <Button variant="primary" size="sm" onClick={() => { toast.success("Policy deployed"); navigate("/policies/rules"); }}><Rocket className="w-3 h-3 mr-1" />Deploy</Button>
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button onClick={() => navigate("/policies/rules")} className="p-1.5 rounded-md hover:bg-surface-2 transition-colors">
+            <ArrowLeft className="w-4 h-4 text-muted-foreground" />
+          </button>
+          <div>
+            <h1 className="text-lg font-display font-bold text-foreground">{isEdit ? "Edit Rule" : "Create Rule"}</h1>
+            <p className="text-xs text-muted-foreground">Define conditions and actions for policy enforcement</p>
           </div>
         </div>
-
-        {/* YAML Preview — 1/3 */}
-        <div className="instrument-card p-5 h-fit sticky top-6">
-          <div className="flex items-center gap-2 mb-4">
-            <Code className="w-4 h-4 text-cordum" />
-            <h3 className="font-display font-semibold text-sm text-foreground">YAML Preview</h3>
-          </div>
-          <div className="rounded-md bg-surface-0 border border-border p-4 font-mono text-xs text-foreground overflow-auto max-h-[500px]">
-            <pre className="whitespace-pre-wrap">{yamlPreview}</pre>
-          </div>
-          <Button variant="ghost" size="sm" className="mt-3 w-full" onClick={() => { navigator.clipboard.writeText(yamlPreview); toast.success("YAML copied"); }}>
-            Copy YAML
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="sm" onClick={() => navigate("/policies/rules")}>Cancel</Button>
+          <Button variant="primary" size="sm" onClick={() => saveMutation.mutate()} loading={saveMutation.isPending}>
+            <Save className="w-3 h-3 mr-1" />Save Rule
           </Button>
         </div>
+      </div>
+
+      {/* Rule Meta */}
+      <div className="instrument-card p-5 space-y-4">
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Rule Name</label>
+            <input type="text" value={ruleName} onChange={(e) => setRuleName(e.target.value)} placeholder="e.g., block-dangerous-topics"
+              className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
+          </div>
+          <div>
+            <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Description</label>
+            <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What does this rule do?"
+              className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
+          </div>
+        </div>
+      </div>
+
+      {/* Rule Blocks */}
+      <div className="space-y-4">
+        {blocks.map((block, bi) => (
+          <motion.div key={block.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+            className={cn("instrument-card overflow-hidden", `status-${actionColor(block.action) === "healthy" ? "healthy" : actionColor(block.action) === "danger" ? "danger" : "warning"}`)}>
+            <div className="p-4 border-b border-border flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <GripVertical className="w-4 h-4 text-muted-foreground cursor-grab" />
+                <input type="text" value={block.name} onChange={(e) => updateBlock(block.id, "name", e.target.value)}
+                  className="text-sm font-display font-semibold bg-transparent border-none outline-none text-foreground w-48" />
+                <select value={block.action} onChange={(e) => updateBlock(block.id, "action", e.target.value)}
+                  className="h-7 px-2 text-xs bg-surface-1 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum">
+                  {ACTIONS.map(a => <option key={a} value={a}>{a.toUpperCase()}</option>)}
+                </select>
+              </div>
+              {blocks.length > 1 && (
+                <button onClick={() => removeBlock(block.id)} className="p-1.5 rounded hover:bg-red-500/10 transition-colors">
+                  <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                </button>
+              )}
+            </div>
+            <div className="p-4 space-y-3">
+              <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Conditions (all must match)</p>
+              {block.conditions.map((cond, ci) => (
+                <div key={cond.id} className="flex items-center gap-2">
+                  {ci > 0 && <span className="text-[10px] font-mono text-cordum w-8">AND</span>}
+                  {ci === 0 && <span className="text-[10px] font-mono text-muted-foreground w-8">IF</span>}
+                  <select value={cond.field} onChange={(e) => updateCondition(block.id, cond.id, "field", e.target.value)}
+                    className="h-8 px-2 text-xs bg-surface-1 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum">
+                    {FIELDS.map(f => <option key={f} value={f}>{f}</option>)}
+                  </select>
+                  <select value={cond.operator} onChange={(e) => updateCondition(block.id, cond.id, "operator", e.target.value)}
+                    className="h-8 px-2 text-xs bg-surface-1 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum">
+                    {OPERATORS.map(o => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                  <input type="text" value={cond.value} onChange={(e) => updateCondition(block.id, cond.id, "value", e.target.value)}
+                    placeholder="value" className="h-8 flex-1 px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
+                  {block.conditions.length > 1 && (
+                    <button onClick={() => removeCondition(block.id, cond.id)} className="p-1 rounded hover:bg-red-500/10">
+                      <Trash2 className="w-3 h-3 text-red-400" />
+                    </button>
+                  )}
+                </div>
+              ))}
+              <button onClick={() => addCondition(block.id)} className="text-xs text-cordum hover:text-cordum/80 transition-colors flex items-center gap-1">
+                <Plus className="w-3 h-3" />Add Condition
+              </button>
+            </div>
+          </motion.div>
+        ))}
+        <Button variant="outline" size="sm" onClick={addBlock}>
+          <Plus className="w-3 h-3 mr-1" />Add Rule Block
+        </Button>
       </div>
     </div>
   );

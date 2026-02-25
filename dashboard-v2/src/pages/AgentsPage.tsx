@@ -47,7 +47,11 @@ export default function AgentsPage() {
   const busyCount = allWorkers.filter((w) => w.status === "busy").length;
   const offlineCount = allWorkers.filter((w) => w.status === "offline").length;
 
-  const filtered = allWorkers.filter((w) => {
+  // Sort: offline agents go to the bottom
+  const statusOrder: Record<string, number> = { busy: 0, idle: 1, draining: 2, offline: 3 };
+  const sorted = [...allWorkers].sort((a, b) => (statusOrder[a.status] ?? 99) - (statusOrder[b.status] ?? 99));
+
+  const filtered = sorted.filter((w) => {
     if (statusFilter !== "all" && w.status !== statusFilter) return false;
     if (search) {
       const q = search.toLowerCase();
@@ -197,7 +201,10 @@ export default function AgentsPage() {
                 <tr
                   key={w.id}
                   onClick={() => setSelectedWorker(w)}
-                  className="border-b border-border hover:bg-surface-1 transition-colors cursor-pointer"
+                  className={cn(
+                    "border-b border-border hover:bg-surface-1 transition-colors cursor-pointer",
+                    w.status === "offline" && "opacity-50"
+                  )}
                 >
                   <td className="px-5 py-3">
                     <div className="flex items-center gap-2">

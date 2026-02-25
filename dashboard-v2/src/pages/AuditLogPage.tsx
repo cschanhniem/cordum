@@ -12,6 +12,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonTable } from "@/components/ui/Skeleton";
 import { Search, RefreshCw, FileText, Download } from "lucide-react";
 import { cn, formatRelativeTime } from "@/lib/utils";
+import { toast } from "sonner";
 
 interface AuditEvent {
   id: string;
@@ -63,9 +64,20 @@ export default function AuditLogPage() {
               <RefreshCw className="w-3 h-3 mr-1" />
               Refresh
             </Button>
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="sm" onClick={() => {
+              const rows = events.map((e) => [e.timestamp, e.action, e.actor, e.resource, e.resourceId ?? "", e.detail ?? ""].join(","));
+              const csv = ["timestamp,action,actor,resource,resourceId,detail", ...rows].join("\n");
+              const blob = new Blob([csv], { type: "text/csv" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `audit-export-${new Date().toISOString().slice(0, 10)}.csv`;
+              a.click();
+              URL.revokeObjectURL(url);
+              toast.success(`Exported ${events.length} events`);
+            }}>
               <Download className="w-3 h-3 mr-1" />
-              Export
+              Export CSV
             </Button>
           </div>
         }

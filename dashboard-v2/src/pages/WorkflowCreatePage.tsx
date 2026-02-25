@@ -55,7 +55,51 @@ export default function WorkflowBuilderPage() {
   const [edges, setEdges] = useState<BuilderEdge[]>([]);
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
+  const [connecting, setConnecting] = useState<string | null>(null);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const canvasRef = useRef<HTMLDivElement>(null);
+
+  const handleCanvasMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!dragging || !canvasRef.current) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left - dragOffset.x + canvasRef.current.scrollLeft;
+    const y = e.clientY - rect.top - dragOffset.y + canvasRef.current.scrollTop;
+    setNodes(prev => prev.map(n => n.id === dragging ? { ...n, x: Math.max(0, x), y: Math.max(0, y) } : n));
+  }, [dragging, dragOffset]);
+
+  const handleCanvasMouseUp = useCallback(() => {
+    setDragging(null);
+  }, []);
+
+  const startDrag = useCallback((nodeId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const node = nodes.find(n => n.id === nodeId);
+    if (!node || !canvasRef.current) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    setDragOffset({
+      x: e.clientX - rect.left - node.x + canvasRef.current.scrollLeft,
+      y: e.clientY - rect.top - node.y + canvasRef.current.scrollTop,
+    });
+    setDragging(nodeId);
+  }, [nodes]);
+
+  const handleNodeClick = useCallback((nodeId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (connecting) {
+      if (connecting !== nodeId && !edges.find(ed => ed.source === connecting && ed.target === nodeId)) {
+        setEdges(prev => [...prev, { id: `edge-${connecting}-${nodeId}`, source: connecting, target: nodeId }]);
+      }
+      setConnecting(null);
+    } else {
+      setSelectedNode(nodeId);
+    }
+  }, [connecting, edges]);
+
+  const startConnect = useCallback((nodeId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setConnecting(nodeId);
+    toast.info("Click another node to connect");
+  }, []);
 
   const addNode = useCallback((type: NodeType) => {
     nodeCounter++;
@@ -173,7 +217,9 @@ export default function WorkflowBuilderPage() {
           ref={canvasRef}
           className="flex-1 relative overflow-auto"
           style={{ backgroundImage: "radial-gradient(circle, rgba(255,255,255,0.05) 1px, transparent 1px)", backgroundSize: "20px 20px" }}
-          onClick={() => setSelectedNode(null)}
+          onClick={() => { setSelectedNode(null); setConnecting(null); }}
+          onMouseMove={handleCanvasMouseMove}
+          onMouseUp={handleCanvasMouseUp}
         >
           {nodes.length === 0 && (
             <div className="absolute inset-0 flex items-center justify-center">
@@ -215,7 +261,8 @@ export default function WorkflowBuilderPage() {
                 initial={{ opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: 1 }}
                 style={{ position: "absolute", left: node.x, top: node.y }}
-                onClick={(e) => { e.stopPropagation(); setSelectedNode(node.id); }}
+                onMouseDown={(e) => startDrag(node.id, e)}
+                onClick={(e) => handleNodeClick(node.id, e)}
                 className={cn(
                   "w-40 rounded-lg border bg-surface-1 shadow-lg cursor-pointer transition-all",
                   isSelected ? "ring-2 ring-cordum border-cordum/40" : "border-border hover:border-cordum/20",
@@ -228,6 +275,12 @@ export default function WorkflowBuilderPage() {
                     <span className="text-xs font-medium text-foreground truncate">{node.label}</span>
                   </div>
                   <p className="text-[10px] text-muted-foreground">{nt.desc}</p>
+                  <button
+                    onClick={(e) => startConnect(node.id, e)}
+                    className="mt-1.5 w-full text-[9px] font-mono text-muted-foreground hover:text-cordum bg-surface-2 rounded px-2 py-0.5 transition-colors"
+                  >
+                    Connect &rarr;
+                  </button>
                 </div>
               </motion.div>
             );
