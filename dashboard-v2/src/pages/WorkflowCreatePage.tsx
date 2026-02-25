@@ -275,6 +275,19 @@ export default function WorkflowBuilderPage() {
                     <span className="text-xs font-medium text-foreground truncate">{node.label}</span>
                   </div>
                   <p className="text-[10px] text-muted-foreground">{nt.desc}</p>
+                  {/* Policy badge — shows which bundle governs this step */}
+                  {node.type === "worker" && (
+                    <div className="mt-1.5 flex items-center gap-1">
+                      <Shield className="w-2.5 h-2.5 text-cordum" />
+                      <span className="text-[9px] font-mono text-cordum">default/global</span>
+                    </div>
+                  )}
+                  {node.type === "approval" && (
+                    <div className="mt-1.5 flex items-center gap-1">
+                      <Shield className="w-2.5 h-2.5 text-amber-400" />
+                      <span className="text-[9px] font-mono text-amber-400">human-gate</span>
+                    </div>
+                  )}
                   <button
                     onClick={(e) => startConnect(node.id, e)}
                     className="mt-1.5 w-full text-[9px] font-mono text-muted-foreground hover:text-cordum bg-surface-2 rounded px-2 py-0.5 transition-colors"
@@ -330,6 +343,19 @@ export default function WorkflowBuilderPage() {
                       <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Retries</label>
                       <input type="number" defaultValue={0} min={0} max={5} className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
                     </div>
+                  </div>
+                  {/* Policy Binding */}
+                  <div>
+                    <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5 flex items-center gap-1">
+                      <Shield className="w-3 h-3 text-cordum" /> Policy Bundle
+                    </label>
+                    <select className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum">
+                      <option value="default/global">default/global</option>
+                      <option value="secops/workflows">secops/workflows</option>
+                      <option value="compliance/pii">compliance/pii</option>
+                      <option value="none">No policy</option>
+                    </select>
+                    <p className="text-[9px] text-muted-foreground mt-1">Safety Kernel evaluates this bundle before dispatch</p>
                   </div>
                 </>
               )}

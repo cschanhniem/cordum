@@ -1069,15 +1069,20 @@ export function mapPolicyRule(raw: Record<string, unknown>): PolicyRule {
   const match = (raw.match as Record<string, unknown>) ?? {};
   const priority = typeof raw.priority === "number" ? raw.priority : undefined;
   const logic = typeof raw.logic === "string" ? raw.logic : undefined;
+  const name = typeof raw.name === "string" ? raw.name : id;
+  const normalizedDecision = normalizeDecisionType(decision);
   return {
     id,
+    name,
+    match: normalizeMatchCriteria(match) as unknown as import("../api/types").PolicyRuleMatch,
+    decision: normalizedDecision,
     matchCriteria: normalizeMatchCriteria(match),
-    decisionType: normalizeDecisionType(decision),
+    decisionType: normalizedDecision,
     reason,
-    priority,
+    priority: priority ?? 0,
     logic,
     source: typeof raw.source === "object" && raw.source ? (raw.source as Record<string, unknown>) : undefined,
-    enabled: typeof raw.enabled === "boolean" ? raw.enabled : undefined,
+    enabled: typeof raw.enabled === "boolean" ? raw.enabled : true,
   };
 }
 

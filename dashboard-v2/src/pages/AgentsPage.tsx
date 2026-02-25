@@ -14,8 +14,9 @@ import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonCard, SkeletonTable } from "@/components/ui/Skeleton";
 import {
-  Cpu, Search, RefreshCw, Zap, Filter, X,
+  Cpu, Search, RefreshCw, Zap, Filter, X, Shield,
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { cn, formatRelativeTime } from "@/lib/utils";
 
 function workerStatusVariant(status: string) {
@@ -32,6 +33,8 @@ export default function AgentsPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [selectedWorker, setSelectedWorker] = useState<Worker | null>(null);
+  const [tab, setTab] = useState<"fleet" | "registry">("fleet");
+  const navigate = useNavigate();
 
   const { data: workers, isLoading, refetch } = useQuery({
     queryKey: ["workers"],
@@ -78,6 +81,29 @@ export default function AgentsPage() {
         }
       />
 
+      {/* Tabs */}
+      <div className="flex items-center gap-4 border-b border-border">
+        <button
+          onClick={() => setTab("fleet")}
+          className={cn(
+            "pb-2 text-sm font-medium border-b-2 transition-colors",
+            tab === "fleet" ? "border-cordum text-cordum" : "border-transparent text-muted-foreground hover:text-foreground"
+          )}
+        >
+          Fleet Overview
+        </button>
+        <button
+          onClick={() => setTab("registry")}
+          className={cn(
+            "pb-2 text-sm font-medium border-b-2 transition-colors",
+            tab === "registry" ? "border-cordum text-cordum" : "border-transparent text-muted-foreground hover:text-foreground"
+          )}
+        >
+          Agent Registry
+        </button>
+      </div>
+
+      {tab === "fleet" && (<>
       {/* KPI Row — showcase style */}
       <motion.div
         initial={{ opacity: 0, y: 12 }}
@@ -241,93 +267,75 @@ export default function AgentsPage() {
         </div>
       )}
 
-      {/* Worker Detail Drawer */}
-      {selectedWorker && (
-        <>
-          <div className="fixed inset-0 bg-black/40 z-40" onClick={() => setSelectedWorker(null)} />
-          <motion.div
-            initial={{ x: 400 }}
-            animate={{ x: 0 }}
-            exit={{ x: 400 }}
-            transition={{ type: "spring", stiffness: 300, damping: 30 }}
-            className="fixed inset-y-0 right-0 w-[400px] bg-surface-1 border-l border-border shadow-2xl z-50 overflow-y-auto"
-          >
-            <div className="p-5 border-b border-border flex items-center justify-between">
-              <div>
-                <h2 className="font-display font-semibold text-sm text-foreground">Agent Detail</h2>
-                <p className="text-xs text-muted-foreground font-mono mt-0.5">{selectedWorker.id}</p>
-              </div>
-              <button
-                onClick={() => setSelectedWorker(null)}
-                className="p-1.5 rounded-md hover:bg-surface-2 text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="p-5 space-y-5">
-              <div className="flex items-center gap-2">
-                <StatusBadge variant={workerStatusVariant(selectedWorker.status)} dot pulse={selectedWorker.status === "busy"}>
-                  {selectedWorker.status}
-                </StatusBadge>
-                <span className="text-xs text-muted-foreground">Pool: {selectedWorker.pool || "default"}</span>
-              </div>
-              <div>
-                <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Capabilities</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {(selectedWorker.capabilities ?? []).map((t: string) => (
-                    <span key={t} className="text-xs font-mono px-2 py-1 rounded bg-surface-2 text-foreground border border-border">{t}</span>
-                  ))}
-                  {(selectedWorker.capabilities ?? []).length === 0 && (
-                    <span className="text-xs text-muted-foreground">None</span>
-                  )}
-                </div>
-              </div>
-              {/* CPU & MEM — PRD 8.2 */}
-              <div className="space-y-3">
-                <div>
-                  <div className="flex justify-between text-xs mb-1">
-                    <span className="text-muted-foreground">CPU Usage</span>
-                    <span className="font-mono text-foreground">{selectedWorker.cpuLoad ?? 0}%</span>
-                  </div>
-                  <div className="w-full h-2 rounded-full bg-surface-2 overflow-hidden">
-                    <div className="h-full rounded-full bg-cordum transition-all" style={{ width: `${selectedWorker.cpuLoad ?? 0}%` }} />
-                  </div>
-                </div>
-                <div>
-                  <div className="flex justify-between text-xs mb-1">
-                    <span className="text-muted-foreground">Memory Usage</span>
-                    <span className="font-mono text-foreground">{selectedWorker.memoryLoad ?? 0}%</span>
-                  </div>
-                  <div className="w-full h-2 rounded-full bg-surface-2 overflow-hidden">
-                    <div className="h-full rounded-full bg-blue-400 transition-all" style={{ width: `${selectedWorker.memoryLoad ?? 0}%` }} />
-                  </div>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1">Active Jobs</p>
-                  <p className="text-lg font-mono font-bold text-cordum">{selectedWorker.activeJobs} / {selectedWorker.capacity}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1">Last Heartbeat</p>
-                  <p className="text-sm text-foreground">
-                    {selectedWorker.lastHeartbeat ? formatRelativeTime(selectedWorker.lastHeartbeat) : "—"}
-                  </p>
-                </div>
-              </div>
-              {/* Actions — PRD 8.3 */}
-              <div className="flex gap-2 pt-2 border-t border-border">
-                <Button variant="outline" size="sm" className="flex-1">
-                  View Jobs
-                </Button>
-                <Button variant="danger" size="sm" className="flex-1">
-                  Drain Worker
-                </Button>
-              </div>
-            </div>
-          </motion.div>
-        </>
+      </>)}
+
+      {tab === "registry" && (
+        <AgentRegistryTab />
       )}
+    </div>
+  );
+}
+
+/* --- Agent Registry Tab --- */
+const mockRegistry = [
+  { agent_id: "agent-alpha-001", name: "Alpha Agent", total_jobs: 1842, safety_breakdown: { allow: 1680, deny: 23, require_approval: 45, allow_with_constraints: 89, throttle: 5 }, active_policy_bindings: ["default/global", "secops/workflows"], last_activity: new Date(Date.now() - 60000).toISOString() },
+  { agent_id: "agent-beta-002", name: "Beta Agent", total_jobs: 956, safety_breakdown: { allow: 890, deny: 12, require_approval: 20, allow_with_constraints: 30, throttle: 4 }, active_policy_bindings: ["default/global", "compliance/pii"], last_activity: new Date(Date.now() - 300000).toISOString() },
+  { agent_id: "agent-gamma-003", name: "Gamma Agent", total_jobs: 412, safety_breakdown: { allow: 350, deny: 40, require_approval: 10, allow_with_constraints: 10, throttle: 2 }, active_policy_bindings: ["default/global"], last_activity: new Date(Date.now() - 900000).toISOString() },
+];
+
+function AgentRegistryTab() {
+  const navigate = useNavigate();
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-muted-foreground">Agents that have submitted jobs, with their safety decision breakdown and policy bindings.</p>
+      <div className="instrument-card overflow-hidden">
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-border bg-surface-0">
+              <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Agent</th>
+              <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Total Jobs</th>
+              <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Allow</th>
+              <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Deny</th>
+              <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Approval</th>
+              <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Constrained</th>
+              <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Bindings</th>
+              <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Last Active</th>
+            </tr>
+          </thead>
+          <tbody>
+            {mockRegistry.map((a) => (
+              <tr
+                key={a.agent_id}
+                onClick={() => navigate(`/agents/${a.agent_id}`)}
+                className="border-b border-border hover:bg-surface-1 transition-colors cursor-pointer"
+              >
+                <td className="px-5 py-3">
+                  <div className="flex items-center gap-2">
+                    <Shield className="w-3.5 h-3.5 text-cordum" />
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{a.name || a.agent_id}</p>
+                      <p className="text-[10px] font-mono text-muted-foreground">{a.agent_id}</p>
+                    </div>
+                  </div>
+                </td>
+                <td className="px-5 py-3 font-mono text-sm text-foreground">{a.total_jobs.toLocaleString()}</td>
+                <td className="px-5 py-3 font-mono text-sm text-emerald-400">{a.safety_breakdown.allow}</td>
+                <td className="px-5 py-3 font-mono text-sm text-red-400">{a.safety_breakdown.deny}</td>
+                <td className="px-5 py-3 font-mono text-sm text-amber-400">{a.safety_breakdown.require_approval}</td>
+                <td className="px-5 py-3 font-mono text-sm text-blue-400">{a.safety_breakdown.allow_with_constraints}</td>
+                <td className="px-5 py-3">
+                  <div className="flex flex-wrap gap-1">
+                    {a.active_policy_bindings?.map((b) => (
+                      <span key={b} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cordum/10 text-cordum">{b}</span>
+                    ))}
+                  </div>
+                </td>
+                <td className="px-5 py-3 text-sm text-muted-foreground">{a.last_activity ? formatRelativeTime(a.last_activity) : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

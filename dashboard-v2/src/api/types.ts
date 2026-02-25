@@ -62,12 +62,67 @@ export interface OutputPolicyRule {
   enabled?: boolean;
 }
 
+export type SafetyDecisionType = "allow" | "deny" | "require_approval" | "allow_with_constraints" | "throttle";
+
+export interface MatchedRule {
+  rule_id: string;
+  name: string;
+  bundle_id?: string;
+  priority: number;
+  match_reason?: string;
+  decision: SafetyDecisionType;
+}
+
+export interface PolicyConstraints {
+  budgets?: {
+    max_runtime_ms?: number;
+    max_retries?: number;
+    max_artifact_bytes?: number;
+    max_concurrent_jobs?: number;
+  };
+  sandbox?: {
+    isolated?: boolean;
+    network_allowlist?: string[];
+    fs_read_only?: string[];
+    fs_read_write?: string[];
+  };
+  toolchain?: {
+    allowed_tools?: string[];
+    allowed_commands?: string[];
+  };
+  diff?: {
+    max_files?: number;
+    max_lines?: number;
+    deny_path_globs?: string[];
+  };
+  redaction_level?: string;
+}
+
+export interface McpPolicyResult {
+  server?: string;
+  tool?: string;
+  resource?: string;
+  action?: string;
+  decision: SafetyDecisionType;
+  matched_rules?: string[];
+}
+
 export interface SafetyDecision {
-  type: "allow" | "deny" | "require_approval" | "throttle";
+  type: SafetyDecisionType;
   reason: string;
   matchedRule?: string;
   evalTimeMs?: number;
   evalPath?: string[];
+}
+
+export interface SafetyResult {
+  decision: SafetyDecisionType;
+  matched_rules: MatchedRule[];
+  evaluation_ms: number;
+  constraints?: PolicyConstraints;
+  mcp_context?: McpPolicyResult;
+  approval_required: boolean;
+  approval_ref?: string;
 }
 
 export interface Job {
@@ -379,24 +434,75 @@ export interface WorkflowRun {
 // Policies
 // ---------------------------------------------------------------------------
 
+export interface McpMatchConfig {
+  allow_servers?: string[];
+  deny_servers?: string[];
+  allow_tools?: string[];
+  deny_tools?: string[];
+  allow_resources?: string[];
+  deny_resources?: string[];
+  allow_actions?: string[];
+  deny_actions?: string[];
+}
+
+export interface PolicyRuleMatch {
+  tenants?: string[];
+  topics?: string[];              // Glob patterns
+  capabilities?: string[];
+  risk_tags?: string[];
+  requires?: string[];
+  pack_ids?: string[];
+  actor_ids?: string[];
+  actor_types?: string[];
+  labels?: Record<string, string>;
+  secrets_present?: boolean;
+  mcp?: McpMatchConfig;
+}
+
 export interface PolicyRule {
   id: string;
-  matchCriteria: Record<string, unknown>;
-  decisionType: "allow" | "deny" | "require_approval" | "throttle";
+  rule_id?: string;
+  name: string;
+  description?: string;
+  bundle_id?: string;
+  match: PolicyRuleMatch;
+  decision: SafetyDecisionType;
+  constraints?: PolicyConstraints;
+  priority: number;
+  enabled: boolean;
+  version?: number;
+  created_by?: string;
+  created_at?: string;
+  updated_at?: string;
+  // Legacy compat
+  matchCriteria?: Record<string, unknown>;
+  decisionType?: SafetyDecisionType;
   reason?: string;
   hitCount24h?: number;
   lastTriggered?: string;
-  priority?: number;
   logic?: string;
   source?: Record<string, unknown>;
-  enabled?: boolean;
+}
+
+export type BundleStatus = "published" | "draft" | "archived";
+
+export interface BundleSnapshot {
+  snapshot_id: string;
+  bundle_id: string;
+  note: string;
+  created_at: string;
+  created_by: string;
+  version?: number;
+  rule_count?: number;
 }
 
 export interface PolicyBundle {
   id: string;
+  bundle_id?: string;
   name: string;
   rules: PolicyRule[];
   version?: number;
+  status?: BundleStatus;
   enabled?: boolean;
   content?: string;
   source?: string;
@@ -407,7 +513,35 @@ export interface PolicyBundle {
   installedAt?: string;
   sha256?: string;
   publishedAt?: string;
+  published_by?: string;
   healthStatus?: string;
+  snapshots?: BundleSnapshot[];
+  rule_count?: number;
+  eval_count_24h?: number;
+  last_triggered?: string;
+}
+
+export interface PolicyPublishRequest {
+  note?: string;
+  dry_run?: boolean;
+}
+
+export interface PolicyPublishResult {
+  version: number;
+  published_at: string;
+  published_by: string;
+  rule_count: number;
+  bundle_count: number;
+  diff?: {
+    added: number;
+    removed: number;
+    modified: number;
+  };
+}
+
+export interface PolicyRollbackRequest {
+  target_version: number;
+  note?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -854,4 +988,68 @@ export interface StreamEvent {
   type: string;
   timestamp: string;
   payload: Record<string, unknown>;
+}
+
+// ---------------------------------------------------------------------------
+// Traces
+// ---------------------------------------------------------------------------
+
+export interface TraceSpan {
+  span_id: string;
+  parent_span_id?: string;
+  operation: string;
+  service: string;
+  start_time: string;
+  end_time?: string;
+  duration_ms?: number;
+  status: "ok" | "error" | "timeout";
+  attributes?: Record<string, unknown>;
+  safety_decision?: SafetyDecisionType;
+  error_message?: string;
+}
+
+export interface Trace {
+  trace_id: string;
+  job_id?: string;
+  agent_id?: string;
+  spans: TraceSpan[];
+  start_time: string;
+  end_time?: string;
+  total_duration_ms?: number;
+  service_count?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Agent Registry
+// ---------------------------------------------------------------------------
+
+export interface AgentRegistryEntry {
+  agent_id: string;
+  name?: string;
+  total_jobs: number;
+  safety_breakdown: {
+    allow: number;
+    deny: number;
+    require_approval: number;
+    allow_with_constraints: number;
+    throttle: number;
+  };
+  active_policy_bindings?: string[];
+  last_activity?: string;
+  metadata?: Record<string, unknown>;
+}
+
+// ---------------------------------------------------------------------------
+// Setup Wizard
+// ---------------------------------------------------------------------------
+
+export interface SetupStatus {
+  setup_complete: boolean;
+  steps: {
+    admin_created: boolean;
+    api_key_configured: boolean;
+    safety_kernel_connected: boolean;
+    first_agent_registered: boolean;
+    first_job_submitted: boolean;
+  };
 }

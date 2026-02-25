@@ -23,22 +23,26 @@ const HomePage = lazy(() => import("./pages/HomePage"));
 const JobsPage = lazy(() => import("./pages/JobsPage"));
 const JobDetailPage = lazy(() => import("./pages/JobDetailPage"));
 const AgentsPage = lazy(() => import("./pages/AgentsPage"));
+const AgentDetailPage = lazy(() => import("./pages/AgentDetailPage"));
 const ApprovalsPage = lazy(() => import("./pages/ApprovalsPage"));
 const WorkflowsPage = lazy(() => import("./pages/WorkflowsPage"));
 const WorkflowDetailPage = lazy(() => import("./pages/WorkflowDetailPage"));
 const WorkflowCreatePage = lazy(() => import("./pages/WorkflowCreatePage"));
 const RunDetailPage = lazy(() => import("./pages/RunDetailPage"));
 const PoliciesOverviewPage = lazy(() => import("./pages/PoliciesOverviewPage"));
+const PoliciesBundlesPage = lazy(() => import("./pages/PoliciesBundlesPage"));
 const PoliciesRulesPage = lazy(() => import("./pages/PoliciesRulesPage"));
 const PoliciesBuilderPage = lazy(() => import("./pages/PoliciesBuilderPage"));
 const PoliciesSimulatorPage = lazy(() => import("./pages/PoliciesSimulatorPage"));
 const PoliciesHistoryPage = lazy(() => import("./pages/PoliciesHistoryPage"));
 const PoliciesAnalyticsPage = lazy(() => import("./pages/PoliciesAnalyticsPage"));
+const PoliciesPublishPage = lazy(() => import("./pages/PoliciesPublishPage"));
 const PacksPage = lazy(() => import("./pages/PacksPage"));
 const SchemasPage = lazy(() => import("./pages/SchemasPage"));
 const SchemaDetailPage = lazy(() => import("./pages/SchemaDetailPage"));
 const AuditLogPage = lazy(() => import("./pages/AuditLogPage"));
 const DLQPage = lazy(() => import("./pages/DLQPage"));
+const TracesPage = lazy(() => import("./pages/TracesPage"));
 const SettingsHealthPage = lazy(() => import("./pages/SettingsHealthPage"));
 const SettingsKeysPage = lazy(() => import("./pages/SettingsKeysPage"));
 const SettingsUsersPage = lazy(() => import("./pages/SettingsUsersPage"));
@@ -69,28 +73,44 @@ function ProtectedRoutes() {
     <AppShell>
       <Suspense fallback={<LoadingScreen />}>
         <Routes>
+          {/* OPERATE */}
           <Route path="/" element={<HomePage />} />
+          <Route path="/agents" element={<AgentsPage />} />
+          <Route path="/agents/:id" element={<AgentDetailPage />} />
           <Route path="/jobs" element={<JobsPage />} />
           <Route path="/jobs/:id" element={<JobDetailPage />} />
-          <Route path="/agents" element={<AgentsPage />} />
-          <Route path="/approvals" element={<ApprovalsPage />} />
+
+          {/* ORCHESTRATE */}
           <Route path="/workflows" element={<WorkflowsPage />} />
           <Route path="/workflows/new" element={<WorkflowCreatePage />} />
           <Route path="/workflows/:id/edit" element={<WorkflowCreatePage />} />
           <Route path="/workflows/:id" element={<WorkflowDetailPage />} />
           <Route path="/workflows/:id/runs/:runId" element={<RunDetailPage />} />
+          <Route path="/approvals" element={<ApprovalsPage />} />
+
+          {/* GOVERN */}
           <Route path="/policies" element={<PoliciesOverviewPage />} />
+          <Route path="/policies/bundles" element={<PoliciesBundlesPage />} />
           <Route path="/policies/rules" element={<PoliciesRulesPage />} />
           <Route path="/policies/rules/new" element={<PoliciesBuilderPage />} />
           <Route path="/policies/rules/:id" element={<PoliciesBuilderPage />} />
+          <Route path="/policies/builder" element={<PoliciesBuilderPage />} />
           <Route path="/policies/simulator" element={<PoliciesSimulatorPage />} />
           <Route path="/policies/history" element={<PoliciesHistoryPage />} />
           <Route path="/policies/analytics" element={<PoliciesAnalyticsPage />} />
+          <Route path="/policies/publish" element={<PoliciesPublishPage />} />
+
+          {/* EXTEND */}
           <Route path="/packs" element={<PacksPage />} />
           <Route path="/schemas" element={<SchemasPage />} />
           <Route path="/schemas/:id" element={<SchemaDetailPage />} />
+
+          {/* OBSERVE */}
+          <Route path="/traces" element={<TracesPage />} />
           <Route path="/audit" element={<AuditLogPage />} />
           <Route path="/dlq" element={<DLQPage />} />
+
+          {/* SETTINGS */}
           <Route path="/safety/input" element={<InputSafetyPage />} />
           <Route path="/safety/output" element={<OutputSafetyPage />} />
           <Route path="/settings" element={<SettingsHubPage />} />
@@ -101,6 +121,7 @@ function ProtectedRoutes() {
           <Route path="/settings/environments" element={<SettingsEnvironmentsPage />} />
           <Route path="/settings/config" element={<SettingsConfigPage />} />
           <Route path="/settings/mcp" element={<SettingsMcpPage />} />
+
           {/* Legacy redirects */}
           <Route path="/pools" element={<Navigate to="/agents" replace />} />
           <Route path="/system" element={<Navigate to="/settings/health" replace />} />
