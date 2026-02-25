@@ -42,6 +42,8 @@ const navSections = [
     items: [
       { path: "/approvals", label: "Approvals", icon: UserCheck, badge: true },
       { path: "/policies", label: "Policy Studio", icon: Shield },
+      { path: "/safety/input", label: "Input Safety", icon: Shield },
+      { path: "/safety/output", label: "Output Safety", icon: Shield },
     ],
   },
   {

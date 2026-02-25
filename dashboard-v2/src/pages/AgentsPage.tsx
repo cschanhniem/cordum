@@ -275,6 +275,27 @@ export default function AgentsPage() {
                   )}
                 </div>
               </div>
+              {/* CPU & MEM — PRD 8.2 */}
+              <div className="space-y-3">
+                <div>
+                  <div className="flex justify-between text-xs mb-1">
+                    <span className="text-muted-foreground">CPU Usage</span>
+                    <span className="font-mono text-foreground">{selectedWorker.cpuLoad ?? 0}%</span>
+                  </div>
+                  <div className="w-full h-2 rounded-full bg-surface-2 overflow-hidden">
+                    <div className="h-full rounded-full bg-cordum transition-all" style={{ width: `${selectedWorker.cpuLoad ?? 0}%` }} />
+                  </div>
+                </div>
+                <div>
+                  <div className="flex justify-between text-xs mb-1">
+                    <span className="text-muted-foreground">Memory Usage</span>
+                    <span className="font-mono text-foreground">{selectedWorker.memoryLoad ?? 0}%</span>
+                  </div>
+                  <div className="w-full h-2 rounded-full bg-surface-2 overflow-hidden">
+                    <div className="h-full rounded-full bg-blue-400 transition-all" style={{ width: `${selectedWorker.memoryLoad ?? 0}%` }} />
+                  </div>
+                </div>
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1">Active Jobs</p>
@@ -286,6 +307,15 @@ export default function AgentsPage() {
                     {selectedWorker.lastHeartbeat ? formatRelativeTime(selectedWorker.lastHeartbeat) : "—"}
                   </p>
                 </div>
+              </div>
+              {/* Actions — PRD 8.3 */}
+              <div className="flex gap-2 pt-2 border-t border-border">
+                <Button variant="outline" size="sm" className="flex-1">
+                  View Jobs
+                </Button>
+                <Button variant="danger" size="sm" className="flex-1">
+                  Drain Worker
+                </Button>
               </div>
             </div>
           </motion.div>

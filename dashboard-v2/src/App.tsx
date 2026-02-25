@@ -46,6 +46,8 @@ const SettingsNotificationsPage = lazy(() => import("./pages/SettingsNotificatio
 const SettingsEnvironmentsPage = lazy(() => import("./pages/SettingsEnvironmentsPage"));
 const SettingsConfigPage = lazy(() => import("./pages/SettingsConfigPage"));
 const SettingsMcpPage = lazy(() => import("./pages/SettingsMcpPage"));
+const InputSafetyPage = lazy(() => import("./pages/InputSafetyPage"));
+const OutputSafetyPage = lazy(() => import("./pages/OutputSafetyPage"));
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage"));
 
 function ThemeSync() {
@@ -88,6 +90,8 @@ function ProtectedRoutes() {
           <Route path="/schemas/:id" element={<SchemaDetailPage />} />
           <Route path="/audit" element={<AuditLogPage />} />
           <Route path="/dlq" element={<DLQPage />} />
+          <Route path="/safety/input" element={<InputSafetyPage />} />
+          <Route path="/safety/output" element={<OutputSafetyPage />} />
           <Route path="/settings" element={<Navigate to="/settings/health" replace />} />
           <Route path="/settings/health" element={<SettingsHealthPage />} />
           <Route path="/settings/keys" element={<SettingsKeysPage />} />

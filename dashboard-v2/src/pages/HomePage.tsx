@@ -368,6 +368,85 @@ export default function HomePage() {
         </table>
       </div>
 
+      {/* Worker Pool Health — PRD 6.6 */}
+      <div className="instrument-card p-5">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="font-display font-semibold text-sm text-foreground">Worker Pool Health</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">Real-time agent status</p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={() => navigate("/agents")}>
+            View all <ArrowRight className="w-3 h-3 ml-1" />
+          </Button>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3">
+          {(workers ?? []).slice(0, 12).map((w) => {
+            const isOnline = w.status === "idle" || w.status === "busy";
+            return (
+              <div
+                key={w.id}
+                onClick={() => navigate("/agents")}
+                className={cn(
+                  "rounded-lg border p-3 cursor-pointer transition-all hover:bg-surface-1",
+                  isOnline ? "border-emerald-500/20 bg-emerald-500/5" : "border-red-500/20 bg-red-500/5"
+                )}
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <div className={cn("w-2 h-2 rounded-full", isOnline ? "bg-emerald-400 animate-pulse" : "bg-red-400")} />
+                  <span className="font-mono text-xs text-foreground truncate">{w.name || w.id.slice(0, 10)}</span>
+                </div>
+                <div className="space-y-1.5">
+                  <div className="flex justify-between text-[10px]">
+                    <span className="text-muted-foreground">CPU</span>
+                    <span className="font-mono text-foreground">{w.cpuLoad ?? 0}%</span>
+                  </div>
+                  <div className="w-full h-1 rounded-full bg-surface-2 overflow-hidden">
+                    <div className="h-full rounded-full bg-cordum transition-all" style={{ width: `${w.cpuLoad ?? 0}%` }} />
+                  </div>
+                  <div className="flex justify-between text-[10px]">
+                    <span className="text-muted-foreground">MEM</span>
+                    <span className="font-mono text-foreground">{w.memoryLoad ?? 0}%</span>
+                  </div>
+                  <div className="w-full h-1 rounded-full bg-surface-2 overflow-hidden">
+                    <div className="h-full rounded-full bg-blue-400 transition-all" style={{ width: `${w.memoryLoad ?? 0}%` }} />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          {(!workers || workers.length === 0) && !workersLoading && (
+            <div className="col-span-full text-center py-8 text-sm text-muted-foreground">
+              No workers registered yet
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* System Health — PRD 6.7 */}
+      <div className="instrument-card p-5">
+        <h3 className="font-display font-semibold text-sm text-foreground mb-4">System Health</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          {[
+            { name: "API Gateway", status: "healthy", latency: "12ms" },
+            { name: "Scheduler", status: "healthy", latency: "3ms" },
+            { name: "Safety Kernel", status: "healthy", latency: "8ms" },
+            { name: "Message Bus", status: "healthy", latency: "1ms" },
+          ].map((svc) => (
+            <div key={svc.name} className="flex items-center gap-3 rounded-lg border border-border bg-surface-0 p-3">
+              <div className={cn(
+                "w-2.5 h-2.5 rounded-full",
+                svc.status === "healthy" ? "bg-emerald-400" : svc.status === "degraded" ? "bg-amber-400" : "bg-red-400"
+              )} />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-foreground font-medium truncate">{svc.name}</p>
+                <p className="text-xs text-muted-foreground font-mono">{svc.latency}</p>
+              </div>
+              <StatusBadge variant={svc.status === "healthy" ? "healthy" : "danger"}>{svc.status}</StatusBadge>
+            </div>
+          ))}
+        </div>
+      </div>
+
       {/* Approval Queue — matches showcase */}
       {pendingApprovals.length > 0 && (
         <div className="space-y-4">

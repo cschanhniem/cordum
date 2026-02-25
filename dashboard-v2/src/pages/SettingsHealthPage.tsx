@@ -1,49 +1,73 @@
 /*
- * DESIGN: "Control Surface" — System Health
- * Matches cordumds-gj5mw4zm.manus.space showcase patterns
+ * DESIGN: "Control Surface" — Settings: System Health
+ * PRD Section 28: System health monitoring
  */
-import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { Button } from "@/components/ui/Button";
-import { HeartPulse, ArrowLeft, Construction } from "lucide-react";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import {
+  Activity, Database, Server, Wifi, Clock, HardDrive,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+
+const SERVICES = [
+  { name: "API Server", icon: Server, status: "healthy", latency: "12ms", uptime: "99.99%", version: "2.4.1" },
+  { name: "PostgreSQL", icon: Database, status: "healthy", latency: "3ms", uptime: "99.97%", version: "15.2" },
+  { name: "Redis", icon: HardDrive, status: "healthy", latency: "1ms", uptime: "100%", version: "7.2" },
+  { name: "Worker Pool", icon: Activity, status: "degraded", latency: "—", uptime: "98.5%", version: "—" },
+  { name: "WebSocket", icon: Wifi, status: "healthy", latency: "8ms", uptime: "99.95%", version: "—" },
+  { name: "Scheduler", icon: Clock, status: "healthy", latency: "—", uptime: "99.99%", version: "1.1.0" },
+];
+
+function statusVariant(s: string) {
+  if (s === "healthy") return "healthy" as const;
+  if (s === "degraded") return "warning" as const;
+  return "danger" as const;
+}
 
 export default function SettingsHealthPage() {
-  const navigate = useNavigate();
   return (
     <div className="space-y-6">
-      <PageHeader
-        label="System"
-        title="System Health"
-        subtitle="Monitor system health and diagnostics"
-        actions={
-          <Button variant="outline" size="sm" onClick={() => navigate(-1 as any)}>
-            <ArrowLeft className="w-3 h-3 mr-1" />
-            Back
-          </Button>
-        }
-      />
+      <PageHeader label="Settings" title="System Health" subtitle="Monitor the health of all system components" />
 
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3 }}
-        className="instrument-card p-8"
-      >
-        <div className="flex flex-col items-center text-center max-w-lg mx-auto">
-          <div className="w-14 h-14 rounded-xl bg-cordum/10 border border-cordum/20 flex items-center justify-center text-cordum mb-5">
-            <HeartPulse className="w-6 h-6" />
-          </div>
-          <h3 className="font-display font-bold text-lg text-foreground mb-2">System Health</h3>
-          <p className="text-sm text-muted-foreground leading-relaxed mb-6">
-            Real-time health dashboard showing service status, queue depths, latency metrics, and resource utilization across all components.
-          </p>
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs font-mono">
-            <Construction className="w-3.5 h-3.5" />
-            Under Construction
-          </div>
-        </div>
-      </motion.div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {SERVICES.map((svc, i) => {
+          const Icon = svc.icon;
+          return (
+            <motion.div
+              key={svc.name}
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.05 }}
+              className={cn("instrument-card p-5", svc.status === "degraded" && "status-warning", svc.status === "down" && "status-danger")}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <Icon className="w-4 h-4 text-cordum" />
+                  <span className="font-display font-semibold text-sm text-foreground">{svc.name}</span>
+                </div>
+                <StatusBadge variant={statusVariant(svc.status)} dot pulse={svc.status === "healthy"}>
+                  {svc.status}
+                </StatusBadge>
+              </div>
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs">
+                  <span className="text-muted-foreground">Latency</span>
+                  <span className="font-mono text-foreground">{svc.latency}</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-muted-foreground">Uptime</span>
+                  <span className="font-mono text-foreground">{svc.uptime}</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-muted-foreground">Version</span>
+                  <span className="font-mono text-foreground">{svc.version}</span>
+                </div>
+              </div>
+            </motion.div>
+          );
+        })}
+      </div>
     </div>
   );
 }
