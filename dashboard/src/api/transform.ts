@@ -78,6 +78,8 @@ export interface BackendOutputSafetyRecord {
 export interface BackendJobDetail extends BackendJobRecord {
   context_ptr?: string;
   result_ptr?: string;
+  context?: unknown;
+  result?: unknown;
   error_message?: string;
   error_status?: string;
   error_code?: string;
@@ -553,6 +555,8 @@ export function mapJobDetail(detail: BackendJobDetail): Job {
     ...base,
     contextPtr: detail.context_ptr,
     resultPtr: detail.result_ptr,
+    context: detail.context,
+    result: detail.result,
     errorMessage: detail.error_message,
     errorStatus: detail.error_status,
     errorCode: detail.error_code,

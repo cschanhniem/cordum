@@ -45,7 +45,12 @@ export default function SettingsKeysPage() {
     mutationFn: async () => post("/auth/keys", { name: newKeyName, scopes: newKeyScopes }),
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["api-keys"] });
-      setCreatedKey(data?.data?.key || "ck_live_xxxxxxxxxxxxxxxxxxxx");
+      const key = data?.data?.key;
+      if (key) {
+        setCreatedKey(key);
+      } else {
+        toast.error("API key created but key value not returned");
+      }
       setNewKeyName("");
     },
   });

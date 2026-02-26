@@ -68,13 +68,23 @@ export default function PoliciesOverviewPage() {
     };
   }, [auditEntries]);
 
-  // Mock evaluation data for chart
-  const evalData = Array.from({ length: 7 }, (_, i) => ({
-    time: ["00:00", "04:00", "08:00", "12:00", "16:00", "20:00", "Now"][i],
-    allow: Math.floor(Math.random() * 80 + 20),
-    deny: Math.floor(Math.random() * 10),
-    approval: Math.floor(Math.random() * 8),
-  }));
+  const evalData = useMemo(() => {
+    const labels = ["00:00", "04:00", "08:00", "12:00", "16:00", "20:00", "Now"];
+    const buckets = labels.map((time) => ({ time, allow: 0, deny: 0, approval: 0 }));
+    for (const entry of auditEntries) {
+      const hour = new Date(entry.timestamp).getHours();
+      const idx = Math.min(Math.floor(hour / 4), 5);
+      const a = entry.action.toLowerCase();
+      if (a.includes("deny") || a.includes("block") || a.includes("reject")) {
+        buckets[idx].deny++;
+      } else if (a.includes("approval") || a.includes("warn")) {
+        buckets[idx].approval++;
+      } else {
+        buckets[idx].allow++;
+      }
+    }
+    return buckets;
+  }, [auditEntries]);
 
   const quickLinks = [
     { label: "Input Policy", desc: "Global, workflow-scoped, and tenant rules", icon: ShieldCheck, path: "/policies/input" },

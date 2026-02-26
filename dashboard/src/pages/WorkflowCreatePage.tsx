@@ -14,7 +14,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { useCreateWorkflow } from "@/hooks/useWorkflows";
+import { useCreateWorkflow, useWorkflows } from "@/hooks/useWorkflows";
+import { usePolicyBundles } from "@/hooks/usePolicies";
 import type { WorkflowStep } from "@/api/types";
 
 type NodeType = "worker" | "approval" | "condition" | "delay" | "loop" | "parallel" | "subworkflow";
@@ -53,6 +54,10 @@ export default function WorkflowBuilderPage() {
   const isEdit = !!id;
 
   const createWorkflow = useCreateWorkflow();
+  const { data: workflowsData } = useWorkflows();
+  const { data: bundlesData } = usePolicyBundles();
+  const workflows = workflowsData ?? [];
+  const bundles = bundlesData?.items ?? [];
 
   const [workflowName, setWorkflowName] = useState(isEdit ? "production-safety" : "");
   const [nodes, setNodes] = useState<BuilderNode[]>([]);
@@ -363,10 +368,10 @@ export default function WorkflowBuilderPage() {
                       <Shield className="w-3 h-3 text-cordum" /> Policy Bundle
                     </label>
                     <select className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum">
-                      <option value="default/global">default/global</option>
-                      <option value="secops/workflows">secops/workflows</option>
-                      <option value="compliance/pii">compliance/pii</option>
                       <option value="none">No policy</option>
+                      {bundles.map((b) => (
+                        <option key={b.id} value={b.id}>{b.name || b.id}</option>
+                      ))}
                     </select>
                     <p className="text-[9px] text-muted-foreground mt-1">Safety Kernel evaluates this bundle before dispatch</p>
                   </div>
@@ -441,8 +446,10 @@ export default function WorkflowBuilderPage() {
                   <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Workflow</label>
                   <select className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum">
                     <option value="">Select workflow...</option>
-                    <option>production-safety</option>
-                    <option>data-pipeline</option>
+                    {workflows.map((w) => (
+                      <option key={w.id} value={w.id}>{w.name || w.id}</option>
+                    ))}
+                    {workflows.length === 0 && <option disabled>No workflows available</option>}
                   </select>
                 </div>
               )}

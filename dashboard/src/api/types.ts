@@ -137,6 +137,8 @@ export interface Job {
   metadata: Record<string, unknown>;
   contextPtr?: string;
   resultPtr?: string;
+  context?: unknown;
+  result?: unknown;
   workflowRunId?: string;
   workflowId?: string;
   createdAt: string;

@@ -13,11 +13,12 @@ import { Button } from "@/components/ui/Button";
 import { Skeleton } from "@/components/ui/Skeleton";
 import {
   ArrowLeft, Copy, Play, XCircle, Clock, Shield,
-  FileText, AlertTriangle, CheckCircle2, Workflow, Layers,
+  FileText, AlertTriangle, CheckCircle2, Workflow, Layers, Eye,
 } from "lucide-react";
 import { cn, formatRelativeTime, formatDuration } from "@/lib/utils";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { toast } from "sonner";
+import { useEventStore } from "@/state/events";
 
 function jobStatusVariant(status: string) {
   switch (status) {
@@ -69,6 +70,226 @@ function StateMachine({ currentState }: { currentState: string }) {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// BlobViewer — shows Redis pointer + expandable "Read" button for data
+// ---------------------------------------------------------------------------
+
+function BlobViewer({ label, pointer, data, emptyText }: {
+  label: string;
+  pointer?: string;
+  data?: unknown;
+  emptyText: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (!pointer && data == null) {
+    return (
+      <div className="rounded-md bg-surface-0 border border-border p-4 font-mono text-xs">
+        <p className="text-muted-foreground italic">{emptyText}</p>
+      </div>
+    );
+  }
+
+  const formatted = data != null
+    ? (typeof data === "string" ? data : JSON.stringify(data, null, 2))
+    : null;
+
+  return (
+    <div className="space-y-3">
+      {pointer && (
+        <div className="rounded-md bg-surface-0 border border-border p-4 font-mono text-xs flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <span className="text-muted-foreground">{label} pointer: </span>
+            <span className="text-foreground break-all">{pointer}</span>
+          </div>
+          {formatted && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              onClick={() => setExpanded(!expanded)}
+            >
+              <Eye className="w-3 h-3 mr-1" />
+              {expanded ? "Hide" : "Read"}
+            </Button>
+          )}
+        </div>
+      )}
+      {(expanded || !pointer) && formatted && (
+        <div className="rounded-md bg-surface-0 border border-border p-4 font-mono text-xs text-foreground overflow-auto max-h-[500px]">
+          <pre className="whitespace-pre-wrap break-all">{formatted}</pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Terminal — shows live WebSocket events + result data for a job
+// ---------------------------------------------------------------------------
+
+function JobTerminal({ job }: { job: Job }) {
+  const events = useEventStore((s) => s.events);
+  const jobEvents = useMemo(
+    () =>
+      events
+        .filter((e) => {
+          const p = e.payload ?? {};
+          const eid = (p.jobId ?? p.job_id) as string | undefined;
+          return eid === job.id;
+        })
+        .reverse(), // oldest first
+    [events, job.id],
+  );
+
+  const hasResult = job.result != null;
+  const hasEvents = jobEvents.length > 0;
+
+  if (!hasResult && !hasEvents) {
+    return (
+      <p className="text-muted-foreground italic">
+        {job.status === "running" || job.status === "pending" || job.status === "dispatched"
+          ? "Waiting for output\u2026"
+          : "No output recorded for this job."}
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {hasEvents && jobEvents.map((e) => (
+        <div key={e.id} className="flex gap-3">
+          <span className="text-muted-foreground shrink-0 w-[80px]">
+            {new Date(e.timestamp).toLocaleTimeString()}
+          </span>
+          <span className="text-cordum shrink-0">[{e.type}]</span>
+          <span className="text-foreground break-all">
+            {(e.payload?.message as string) ?? (e.payload?.status as string) ?? JSON.stringify(e.payload)}
+          </span>
+        </div>
+      ))}
+      {hasResult && (
+        <>
+          {hasEvents && <div className="border-t border-border my-3" />}
+          <div className="text-muted-foreground mb-1">--- Result ---</div>
+          <pre className="whitespace-pre-wrap break-all">{typeof job.result === "string" ? job.result : JSON.stringify(job.result, null, 2)}</pre>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Timeline — reconstructs chronological event list from job metadata
+// ---------------------------------------------------------------------------
+
+interface TimelineEntry {
+  time: string;
+  label: string;
+  detail?: string;
+  variant: "cordum" | "warning" | "danger" | "muted";
+}
+
+function JobTimeline({ job }: { job: Job }) {
+  const entries = useMemo(() => {
+    const items: TimelineEntry[] = [];
+
+    // Created
+    if (job.createdAt) {
+      items.push({ time: job.createdAt, label: "Job submitted", detail: `Topic: ${job.topic}`, variant: "muted" });
+    }
+
+    // Safety decision
+    if (job.safetyDecision?.type) {
+      const t = job.createdAt; // safety eval happens at submit time
+      const variant = job.safetyDecision.type === "allow" ? "cordum"
+        : job.safetyDecision.type === "deny" ? "danger"
+        : "warning";
+      items.push({
+        time: t,
+        label: `Safety: ${job.safetyDecision.type}`,
+        detail: job.safetyDecision.reason || job.safetyDecision.matchedRule,
+        variant,
+      });
+    }
+
+    // Approval
+    if (job.approvalAt) {
+      const t = new Date(job.approvalAt).toISOString();
+      items.push({
+        time: t,
+        label: `Approved by ${job.approvalBy ?? "unknown"}`,
+        detail: job.approvalReason || job.approvalNote || undefined,
+        variant: "cordum",
+      });
+    }
+
+    // Output safety
+    if (job.output_safety?.decision) {
+      const variant = job.output_safety.decision === "ALLOW" ? "cordum"
+        : job.output_safety.decision === "QUARANTINE" ? "danger"
+        : "warning";
+      items.push({
+        time: job.updatedAt,
+        label: `Output policy: ${job.output_safety.decision}`,
+        detail: job.output_safety.reason,
+        variant,
+      });
+    }
+
+    // Error
+    if (job.errorMessage) {
+      items.push({ time: job.updatedAt, label: "Error", detail: job.errorMessage, variant: "danger" });
+    }
+
+    // Final state
+    if (job.status === "succeeded" || job.status === "failed" || job.status === "cancelled") {
+      items.push({
+        time: job.updatedAt,
+        label: `Job ${job.status}`,
+        detail: job.status === "succeeded" ? `Attempts: ${job.attempts ?? 1}` : undefined,
+        variant: job.status === "succeeded" ? "cordum" : "danger",
+      });
+    }
+
+    return items;
+  }, [job]);
+
+  if (entries.length === 0) {
+    return <p className="text-sm text-muted-foreground italic">No timeline events available.</p>;
+  }
+
+  return (
+    <div className="relative pl-6 space-y-4">
+      <div className="absolute left-[9px] top-1 bottom-1 w-px bg-border" />
+      {entries.map((entry, i) => (
+        <div key={i} className="relative flex items-start gap-3">
+          <div
+            className={cn(
+              "absolute left-[-15px] top-1.5 w-[10px] h-[10px] rounded-full border-2",
+              entry.variant === "cordum" && "border-cordum bg-cordum/20",
+              entry.variant === "warning" && "border-amber-400 bg-amber-400/20",
+              entry.variant === "danger" && "border-red-400 bg-red-400/20",
+              entry.variant === "muted" && "border-border bg-surface-2",
+            )}
+          />
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-foreground">{entry.label}</span>
+              <span className="text-[10px] text-muted-foreground font-mono">
+                {formatRelativeTime(entry.time)}
+              </span>
+            </div>
+            {entry.detail && (
+              <p className="text-xs text-muted-foreground mt-0.5 break-all">{entry.detail}</p>
+            )}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -357,13 +578,7 @@ export default function JobDetailPage() {
             <FileText className="w-4 h-4 text-cordum" />
             <h3 className="font-display font-semibold text-sm text-foreground">Job Context</h3>
           </div>
-          <div className="rounded-md bg-surface-0 border border-border p-4 font-mono text-xs text-foreground overflow-auto max-h-[400px]">
-            {job.contextPtr ? (
-              <pre>{job.contextPtr}</pre>
-            ) : (
-              <p className="text-muted-foreground italic">No context data available</p>
-            )}
-          </div>
+          <BlobViewer label="Context" pointer={job.contextPtr} data={job.context} emptyText="No context data available" />
         </motion.div>
       )}
 
@@ -379,13 +594,16 @@ export default function JobDetailPage() {
             <CheckCircle2 className="w-4 h-4 text-cordum" />
             <h3 className="font-display font-semibold text-sm text-foreground">Job Result</h3>
           </div>
-          <div className="rounded-md bg-surface-0 border border-border p-4 font-mono text-xs text-foreground overflow-auto max-h-[400px]">
-            {job.resultPtr ? (
-              <pre>{job.resultPtr}</pre>
-            ) : (
-              <p className="text-muted-foreground italic">No result data available</p>
-            )}
-          </div>
+          <BlobViewer
+            label="Result"
+            pointer={job.resultPtr}
+            data={job.result}
+            emptyText={
+              job.status === "running" || job.status === "pending" || job.status === "dispatched"
+                ? "Job is still running\u2026"
+                : "No result data available"
+            }
+          />
         </motion.div>
       )}
 
@@ -522,7 +740,7 @@ export default function JobDetailPage() {
             <h3 className="font-display font-semibold text-sm text-foreground">Terminal Output</h3>
           </div>
           <div className="bg-surface-0 rounded-lg border border-border p-4 font-mono text-xs text-foreground min-h-[200px] max-h-[500px] overflow-auto">
-            <p className="text-muted-foreground italic">Terminal output will appear here when connected to a live Cordum instance with streaming enabled.</p>
+            <JobTerminal job={job} />
           </div>
         </motion.div>
       )}
@@ -539,9 +757,7 @@ export default function JobDetailPage() {
             <Clock className="w-4 h-4 text-cordum" />
             <h3 className="font-display font-semibold text-sm text-foreground">Event Timeline</h3>
           </div>
-          <p className="text-sm text-muted-foreground italic">
-            Timeline events will appear here when connected to a live Cordum instance.
-          </p>
+          <JobTimeline job={job} />
         </motion.div>
       )}
     </div>

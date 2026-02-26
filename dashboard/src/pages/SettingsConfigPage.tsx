@@ -66,7 +66,7 @@ export default function SettingsConfigPage() {
   const [originalValues, setOriginalValues] = useState<Record<string, any>>({});
   const [activeGroup, setActiveGroup] = useState("general");
 
-  const { isLoading } = useQuery({
+  const { data: configData, isLoading } = useQuery({
     queryKey: ["config"],
     queryFn: async () => {
       const res: any = await get("/config");
@@ -74,13 +74,20 @@ export default function SettingsConfigPage() {
     },
   });
 
-  // Initialize values from groups
+  // Initialize values from groups defaults, then overlay backend config when available
   useEffect(() => {
     const initial: Record<string, any> = {};
     GROUPS.forEach(g => g.fields.forEach(f => { initial[f.key] = f.value; }));
+    if (configData && typeof configData === "object") {
+      for (const key of Object.keys(initial)) {
+        if (key in configData && configData[key] !== undefined) {
+          initial[key] = configData[key];
+        }
+      }
+    }
     setValues(initial);
     setOriginalValues(initial);
-  }, []);
+  }, [configData]);
 
   const hasChanges = JSON.stringify(values) !== JSON.stringify(originalValues);
 

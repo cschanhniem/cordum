@@ -369,10 +369,8 @@ export default function HomePage() {
             </tr>
           </thead>
           <tbody>
-            {jobs.slice(0, 8).map((job, idx) => {
-              // Mock safety decision — in production from job.safety_result.decision
-              const decisions = ["allow", "allow", "allow", "allow", "require_approval", "deny", "allow_with_constraints", "allow"];
-              const safetyDecision = decisions[idx % decisions.length];
+            {jobs.slice(0, 8).map((job) => {
+              const safetyDecision = job.safetyDecision?.type;
               return (
                 <tr
                   key={job.id}
@@ -469,7 +467,7 @@ export default function HomePage() {
                 </div>
                 {/* Last policy eval line */}
                 <div className="mt-2 pt-1.5 border-t border-border/50 text-[9px] font-mono text-muted-foreground">
-                  Jobs: {Math.floor(Math.random() * 200 + 50)} · Denied: {Math.floor(Math.random() * 3)}
+                  Jobs: {w.activeJobs ?? 0} / {w.capacity ?? 0}
                 </div>
               </div>
             );

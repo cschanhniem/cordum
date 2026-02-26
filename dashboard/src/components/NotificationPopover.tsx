@@ -1,6 +1,8 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Bell, CheckCircle2, XCircle, AlertTriangle, Info, X, Check } from "lucide-react";
+import { useEventStore } from "@/state/events";
+import { formatRelativeTime } from "@/lib/utils";
 
 interface Notification {
   id: string;
@@ -11,14 +13,36 @@ interface Notification {
   read: boolean;
 }
 
-const mockNotifications: Notification[] = [
-  { id: "1", type: "warning", title: "Approval Required", message: "Job job-8a2f3e requires human approval for service.restart in production", timestamp: "2m ago", read: false },
-  { id: "2", type: "error", title: "Worker Offline", message: "Worker worker-prod-03 has not sent a heartbeat in 90 seconds", timestamp: "5m ago", read: false },
-  { id: "3", type: "success", title: "Policy Deployed", message: "Policy 'production-restart-gate' v3 deployed successfully", timestamp: "12m ago", read: false },
-  { id: "4", type: "info", title: "Workflow Completed", message: "Workflow 'data-pipeline-v2' run #47 completed in 3m 22s", timestamp: "18m ago", read: true },
-  { id: "5", type: "error", title: "DLQ Item Added", message: "Job job-c4d1e2 moved to dead letter queue after 3 failed retries", timestamp: "25m ago", read: true },
-  { id: "6", type: "success", title: "Job Succeeded", message: "Job job-f7a9b1 completed successfully in 1.2s", timestamp: "32m ago", read: true },
-];
+function eventTypeToNotifType(eventType: string): Notification["type"] {
+  if (eventType.includes("failed") || eventType.includes("error") || eventType.includes("cancel")) return "error";
+  if (eventType.includes("safety") || eventType.includes("approval") || eventType.includes("alert")) return "warning";
+  if (eventType.includes("succeeded") || eventType.includes("completed")) return "success";
+  return "info";
+}
+
+function eventTypeToTitle(eventType: string): string {
+  if (eventType.startsWith("job.result.failed")) return "Job Failed";
+  if (eventType.startsWith("job.result.succeeded")) return "Job Succeeded";
+  if (eventType.startsWith("job.result")) return "Job Result";
+  if (eventType.startsWith("job.submit")) return "Job Submitted";
+  if (eventType.startsWith("job.cancel")) return "Job Cancelled";
+  if (eventType.startsWith("job.progress")) return "Job Progress";
+  if (eventType.startsWith("worker.heartbeat")) return "Worker Heartbeat";
+  if (eventType.startsWith("safety")) return "Safety Decision";
+  if (eventType.startsWith("system.alert")) return "System Alert";
+  return eventType;
+}
+
+function eventPayloadSummary(payload: Record<string, unknown>): string {
+  const parts: string[] = [];
+  if (payload.jobId) parts.push(`Job ${String(payload.jobId).slice(0, 12)}`);
+  if (payload.workerId) parts.push(`Worker ${String(payload.workerId).slice(0, 12)}`);
+  if (payload.topic) parts.push(String(payload.topic));
+  if (payload.status) parts.push(String(payload.status));
+  if (payload.errorMessage) parts.push(String(payload.errorMessage).slice(0, 80));
+  if (payload.message) parts.push(String(payload.message).slice(0, 80));
+  return parts.join(" · ") || "Event received";
+}
 
 const iconMap = {
   success: CheckCircle2,
@@ -43,8 +67,26 @@ const bgMap = {
 
 export function NotificationPopover() {
   const [open, setOpen] = useState(false);
-  const [notifications, setNotifications] = useState(mockNotifications);
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  const [readIds, setReadIds] = useState<Set<string>>(new Set());
   const ref = useRef<HTMLDivElement>(null);
+
+  const events = useEventStore((s) => s.events);
+
+  // Derive notifications from real WebSocket events (skip heartbeats — too noisy)
+  const notifications: Notification[] = useMemo(() => {
+    return events
+      .filter((e) => !e.type.startsWith("worker.heartbeat") && !dismissed.has(e.id))
+      .slice(0, 20)
+      .map((e) => ({
+        id: e.id,
+        type: eventTypeToNotifType(e.type),
+        title: eventTypeToTitle(e.type),
+        message: eventPayloadSummary(e.payload),
+        timestamp: e.timestamp,
+        read: readIds.has(e.id),
+      }));
+  }, [events, dismissed, readIds]);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 
@@ -60,11 +102,11 @@ export function NotificationPopover() {
   }, [open]);
 
   const markAllRead = () => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+    setReadIds(new Set(notifications.map((n) => n.id)));
   };
 
   const dismiss = (id: string) => {
-    setNotifications((prev) => prev.filter((n) => n.id !== id));
+    setDismissed((prev) => new Set(prev).add(id));
   };
 
   return (
@@ -145,7 +187,7 @@ export function NotificationPopover() {
                           </button>
                         </div>
                         <p className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2">{notif.message}</p>
-                        <p className="text-[10px] text-muted-foreground/60 font-mono mt-1">{notif.timestamp}</p>
+                        <p className="text-[10px] text-muted-foreground/60 font-mono mt-1">{formatRelativeTime(notif.timestamp)}</p>
                       </div>
                     </div>
                   );

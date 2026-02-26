@@ -61,7 +61,7 @@ const BUILTIN_SCANNERS: ScannerType[] = [
     ],
     action: "redact",
     confidence: 0.85,
-    stats: { findings_7d: 45, false_positives_7d: 8 },
+    stats: { findings_7d: 0, false_positives_7d: 0 },
   },
   {
     id: "secret",
@@ -78,7 +78,7 @@ const BUILTIN_SCANNERS: ScannerType[] = [
     ],
     action: "quarantine",
     confidence: 0.9,
-    stats: { findings_7d: 12, false_positives_7d: 0 },
+    stats: { findings_7d: 0, false_positives_7d: 0 },
   },
   {
     id: "injection",
@@ -91,7 +91,7 @@ const BUILTIN_SCANNERS: ScannerType[] = [
     ],
     action: "quarantine",
     confidence: 0.8,
-    stats: { findings_7d: 3, false_positives_7d: 1 },
+    stats: { findings_7d: 0, false_positives_7d: 0 },
   },
 ];
 
@@ -104,10 +104,7 @@ interface CustomPattern {
   enabled: boolean;
 }
 
-const MOCK_CUSTOM_PATTERNS: CustomPattern[] = [
-  { id: "cp-1", name: "Internal IP", regex: "10\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}", category: "network", action: "redact", enabled: true },
-  { id: "cp-2", name: "JWT Token", regex: "eyJ[A-Za-z0-9-_]+\\.[A-Za-z0-9-_]+\\.[A-Za-z0-9-_]+", category: "secret", action: "quarantine", enabled: true },
-];
+const customPatterns: CustomPattern[] = [];
 
 // ── Scanner Tester ─────────────────────────────────────────────────────
 
@@ -346,8 +343,8 @@ export default function PoliciesOutputPage() {
       enabled: r.enabled ?? true,
       scope: r.scope ?? "global",
       workflowId: r.workflowId,
-      triggered_7d: r.triggered_7d ?? Math.floor(Math.random() * 50),
-      false_positives_7d: r.false_positives_7d ?? Math.floor(Math.random() * 5),
+      triggered_7d: r.triggered_7d ?? 0,
+      false_positives_7d: r.false_positives_7d ?? 0,
     }));
   }, [outputRulesData]);
 
@@ -361,7 +358,7 @@ export default function PoliciesOutputPage() {
     return m;
   }, [allOutputRules]);
 
-  const totalScannerPatterns = BUILTIN_SCANNERS.reduce((sum, s) => sum + (s.types?.filter((t) => t.enabled).length ?? 1), 0) + MOCK_CUSTOM_PATTERNS.filter((p) => p.enabled).length;
+  const totalScannerPatterns = BUILTIN_SCANNERS.reduce((sum, s) => sum + (s.types?.filter((t) => t.enabled).length ?? 1), 0) + customPatterns.filter((p) => p.enabled).length;
 
   const scopeTabs = [
     { id: "global", label: "Global", count: globalRules.length },
@@ -564,7 +561,7 @@ export default function PoliciesOutputPage() {
                 </Button>
               </div>
 
-              {MOCK_CUSTOM_PATTERNS.length === 0 ? (
+              {customPatterns.length === 0 ? (
                 <EmptyState
                   icon={<Scan className="w-5 h-5" />}
                   title="No custom patterns"
@@ -585,7 +582,7 @@ export default function PoliciesOutputPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {MOCK_CUSTOM_PATTERNS.map((p) => (
+                      {customPatterns.map((p) => (
                         <tr key={p.id} className="border-b border-border last:border-0 hover:bg-surface-2/30">
                           <td className="px-4 py-2.5 font-medium text-foreground">{p.name}</td>
                           <td className="px-4 py-2.5 font-mono text-muted-foreground">{p.regex}</td>

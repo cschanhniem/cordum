@@ -76,25 +76,6 @@ const safetyOrder: Record<string, number> = {
   deny: 0, require_approval: 1, throttle: 2, allow_with_constraints: 3, allow: 4,
 };
 
-// Mock safety decisions for demo — in production from job.safety_result.decision
-const mockSafetyDecisions: SafetyDecisionType[] = [
-  "allow", "allow", "deny", "allow", "require_approval", "allow_with_constraints",
-  "allow", "throttle", "allow", "allow", "deny", "allow",
-];
-const mockMatchedRules = [
-  ["default-allow"],
-  ["default-allow"],
-  ["high-risk-deny", "pii-protection"],
-  ["default-allow"],
-  ["financial-approval-gate"],
-  ["sandbox-constraint-policy", "budget-limit-policy"],
-  ["default-allow"],
-  ["rate-limit-policy"],
-  ["default-allow"],
-  ["default-allow"],
-  ["external-api-deny"],
-  ["default-allow"],
-];
 
 export default function JobsPage() {
   const navigate = useNavigate();
@@ -116,12 +97,11 @@ export default function JobsPage() {
 
   const jobs = data?.items ?? [];
 
-  // Enrich jobs with mock safety data
   const enrichedJobs = useMemo(() => {
-    return jobs.map((j, idx) => ({
+    return jobs.map((j) => ({
       ...j,
-      _safetyDecision: (j.safetyDecision?.type as SafetyDecisionType) || mockSafetyDecisions[idx % mockSafetyDecisions.length],
-      _matchedRules: mockMatchedRules[idx % mockMatchedRules.length],
+      _safetyDecision: j.safetyDecision?.type as SafetyDecisionType | undefined,
+      _matchedRules: j.safetyDecision?.matchedRule ? [j.safetyDecision.matchedRule] : [],
     }));
   }, [jobs]);
 
@@ -186,7 +166,7 @@ export default function JobsPage() {
           cmp = (a.topic ?? "").localeCompare(b.topic ?? "");
           break;
         case "safety":
-          cmp = (safetyOrder[a._safetyDecision] ?? 99) - (safetyOrder[b._safetyDecision] ?? 99);
+          cmp = (safetyOrder[a._safetyDecision as string] ?? 99) - (safetyOrder[b._safetyDecision as string] ?? 99);
           break;
         case "attempts":
           cmp = (a.attempts ?? 0) - (b.attempts ?? 0);
@@ -203,7 +183,7 @@ export default function JobsPage() {
 
   const exportCSV = () => {
     const rows = filtered.map((j) =>
-      [j.id, j.status, j.topic ?? "", j._safetyDecision, j._matchedRules.join(";"), j.attempts ?? 0, j.updatedAt ?? ""].join(",")
+      [j.id, j.status, j.topic ?? "", j._safetyDecision ?? "", j._matchedRules.join(";"), j.attempts ?? 0, j.updatedAt ?? ""].join(",")
     );
     const csv = ["id,status,topic,safety_decision,matched_rules,attempts,updatedAt", ...rows].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
