@@ -35,7 +35,7 @@ export default function PoliciesAnalyticsPage() {
     const t = auditEntries.length;
     const b = auditEntries.filter((e) => categorizeAction(e.action) === "blocked").length;
     const w = auditEntries.filter((e) => categorizeAction(e.action) === "warned").length;
-    return { total: t, blockRate: t > 0 ? ((b / t) * 100).toFixed(1) : "0.0", approvalRate: t > 0 ? ((w / t) * 100).toFixed(1) : "0.0" };
+    return { total: t, blockRate: t > 0 ? ((b / t) * 100).toFixed(1) : "--", approvalRate: t > 0 ? ((w / t) * 100).toFixed(1) : "--" };
   }, [auditEntries]);
 
   const trendData = useMemo(() => {
@@ -106,8 +106,8 @@ export default function PoliciesAnalyticsPage() {
               {(view === "input"
                 ? [
                     { label: "Total Evaluations", value: total.toLocaleString(), icon: Shield },
-                    { label: "Block Rate", value: `${blockRate}%`, icon: XCircle },
-                    { label: "Approval Rate", value: `${approvalRate}%`, icon: AlertTriangle },
+                    { label: "Block Rate", value: blockRate === "--" ? "--" : `${blockRate}%`, icon: XCircle },
+                    { label: "Approval Rate", value: approvalRate === "--" ? "--" : `${approvalRate}%`, icon: AlertTriangle },
                     { label: "Avg Latency", value: "\u2014", icon: TrendingUp },
                   ]
                 : [

@@ -48,8 +48,8 @@ export default function PoliciesOverviewPage() {
     }).length;
     return {
       total: t,
-      blockRate: t > 0 ? ((blocked / t) * 100).toFixed(1) : "0.0",
-      approvalRate: t > 0 ? ((approvals / t) * 100).toFixed(1) : "0.0",
+      blockRate: t > 0 ? ((blocked / t) * 100).toFixed(1) : "--",
+      approvalRate: t > 0 ? ((approvals / t) * 100).toFixed(1) : "--",
     };
   }, [auditEntries]);
 
@@ -127,9 +127,9 @@ export default function PoliciesOverviewPage() {
                 <span className="text-xs font-mono text-muted-foreground uppercase tracking-widest">Deny Rate</span>
               </div>
               <div className="flex items-baseline gap-2">
-                <span className="font-mono text-3xl font-bold text-foreground">{blockRate}%</span>
+                <span className="font-mono text-3xl font-bold text-foreground">{blockRate}{blockRate !== "--" && "%"}</span>
               </div>
-              <p className="text-xs text-muted-foreground mt-1">of {total} evaluations</p>
+              <p className="text-xs text-muted-foreground mt-1">{total > 0 ? `of ${total} evaluations` : "No evaluations yet"}</p>
             </div>
 
             <div className="instrument-card p-5">
@@ -137,7 +137,7 @@ export default function PoliciesOverviewPage() {
                 <span className="text-xs font-mono text-muted-foreground uppercase tracking-widest">Approval Rate</span>
               </div>
               <div className="flex items-baseline gap-2">
-                <span className="font-mono text-3xl font-bold text-foreground">{approvalRate}%</span>
+                <span className="font-mono text-3xl font-bold text-foreground">{approvalRate}{approvalRate !== "--" && "%"}</span>
               </div>
               <p className="text-xs text-muted-foreground mt-1">require human review</p>
             </div>
