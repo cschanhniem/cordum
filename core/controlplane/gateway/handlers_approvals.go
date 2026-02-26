@@ -258,7 +258,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 	if snapResp != nil && len(snapResp.Snapshots) > 0 {
 		currentSnapshot = strings.TrimSpace(snapResp.Snapshots[0])
 	}
-	if currentSnapshot == "" || currentSnapshot != safetyRecord.PolicySnapshot {
+	if currentSnapshot == "" || snapshotBase(currentSnapshot) != snapshotBase(safetyRecord.PolicySnapshot) {
 		writeErrorJSON(w, http.StatusConflict, "policy snapshot changed; re-evaluate before approving")
 		return
 	}
@@ -426,4 +426,14 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 	s.appendAuditEntryNamed(r.Context(), "reject", "job", jobID, rejectTopic, policyActorID(r), policyRole(r), "reject job "+jobID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]string{"job_id": jobID})
+}
+
+// snapshotBase returns the base policy hash from a combined snapshot string.
+// Combined snapshots have the form "base|cfg:hash"; this extracts just "base"
+// so that config-overlay changes don't invalidate existing approvals.
+func snapshotBase(snap string) string {
+	if i := strings.Index(snap, "|"); i >= 0 {
+		return snap[:i]
+	}
+	return snap
 }
