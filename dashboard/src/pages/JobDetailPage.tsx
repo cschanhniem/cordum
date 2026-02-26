@@ -19,6 +19,8 @@ import { cn, formatRelativeTime, formatDuration } from "@/lib/utils";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
 import { useEventStore } from "@/state/events";
+import { useCancelJob, useRetryJob } from "@/hooks/useJobs";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 
 function jobStatusVariant(status: string) {
   switch (status) {
@@ -298,6 +300,9 @@ export default function JobDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("overview");
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const cancelMut = useCancelJob();
+  const retryMut = useRetryJob();
 
   const { data: job, isLoading } = useQuery({
     queryKey: ["job", id],
@@ -306,7 +311,11 @@ export default function JobDetailPage() {
       return mapJobDetail(res);
     },
     enabled: !!id,
-    refetchInterval: 5_000,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      if (status && ["succeeded", "failed", "cancelled"].includes(status)) return false;
+      return 5_000;
+    },
   });
 
   const copyId = () => {
@@ -388,13 +397,21 @@ export default function JobDetailPage() {
         </div>
         <div className="flex gap-2">
           {job.status === "failed" && (
-            <Button variant="primary" size="sm">
+            <Button
+              variant="primary"
+              size="sm"
+              loading={retryMut.isPending}
+              onClick={() => retryMut.mutate({ id: job.id, topic: job.topic }, {
+                onSuccess: () => toast.success("Job resubmitted for retry"),
+                onError: () => toast.error("Failed to retry job"),
+              })}
+            >
               <Play className="w-3 h-3 mr-1" />
               Retry
             </Button>
           )}
           {(job.status === "running" || job.status === "pending") && (
-            <Button variant="danger" size="sm">
+            <Button variant="danger" size="sm" onClick={() => setShowCancelConfirm(true)}>
               <XCircle className="w-3 h-3 mr-1" />
               Cancel
             </Button>
@@ -718,9 +735,12 @@ export default function JobDetailPage() {
                   {job.output_safety.decision === "REDACT" && job.output_safety.redacted_ptr && (
                     <div className="mt-3">
                       <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-2">Redacted Output</p>
-                      <div className="bg-surface-0 rounded-lg border border-border p-3">
-                        <pre className="text-xs font-mono text-foreground whitespace-pre-wrap">{job.output_safety.redacted_ptr}</pre>
-                      </div>
+                      <BlobViewer
+                        label="Redacted"
+                        pointer={job.output_safety.redacted_ptr}
+                        data={job.output_safety.redacted}
+                        emptyText="Redacted content not yet resolved"
+                      />
                     </div>
                   )}
                 </>
@@ -760,6 +780,23 @@ export default function JobDetailPage() {
           <JobTimeline job={job} />
         </motion.div>
       )}
+
+      <ConfirmDialog
+        open={showCancelConfirm}
+        onClose={() => setShowCancelConfirm(false)}
+        onConfirm={() => {
+          cancelMut.mutate(job.id, {
+            onSuccess: () => toast.success("Job cancelled"),
+            onError: () => toast.error("Failed to cancel job"),
+          });
+          setShowCancelConfirm(false);
+        }}
+        title="Cancel Job"
+        description={`Cancel job ${job.id.slice(0, 12)}…? This will stop the job if it is currently running.`}
+        confirmLabel="Cancel Job"
+        variant="destructive"
+        loading={cancelMut.isPending}
+      />
     </div>
   );
 }

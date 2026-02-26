@@ -51,6 +51,7 @@ export interface OutputSafetyRecord {
   phase?: string;
   policy_snapshot?: string;
   redacted_ptr?: string;
+  redacted?: unknown;
   original_ptr?: string;
 }
 
