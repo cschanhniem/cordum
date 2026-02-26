@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonTable } from "@/components/ui/Skeleton";
 import { Search, Plus, Workflow, RefreshCw, Eye, GitBranch } from "lucide-react";
-import { cn, formatRelativeTime } from "@/lib/utils";
+import { cn, formatRelativeTime, clickableRowProps } from "@/lib/utils";
 
 interface WorkflowSummary {
   id: string;
@@ -103,14 +103,15 @@ export default function WorkflowsPage() {
           transition={{ duration: 0.3 }}
           className="instrument-card overflow-hidden"
         >
-          <table className="w-full">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[700px]">
             <thead>
               <tr className="border-b border-border bg-surface-0">
-                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Name</th>
-                <th className="text-center px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Version</th>
-                <th className="text-center px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Steps</th>
-                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Status</th>
-                <th className="text-right px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Last Run</th>
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Name</th>
+                <th className="text-center px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Version</th>
+                <th className="text-center px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Steps</th>
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Status</th>
+                <th className="text-right px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Last Run</th>
                 <th className="px-5 py-3"></th>
               </tr>
             </thead>
@@ -118,7 +119,7 @@ export default function WorkflowsPage() {
               {filtered.map((w) => (
                 <tr
                   key={w.id}
-                  onClick={() => navigate(`/workflows/${w.id}`)}
+                  {...clickableRowProps(() => navigate(`/workflows/${w.id}`))}
                   className="border-b border-border hover:bg-surface-1 transition-colors cursor-pointer"
                 >
                   <td className="px-5 py-3">
@@ -151,6 +152,7 @@ export default function WorkflowsPage() {
               ))}
             </tbody>
           </table>
+          </div>
         </motion.div>
       )}
     </div>

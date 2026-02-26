@@ -17,7 +17,7 @@ import {
   Cpu, Search, RefreshCw, Zap, Filter, X, Shield,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { cn, formatRelativeTime } from "@/lib/utils";
+import { cn, formatRelativeTime, clickableRowProps } from "@/lib/utils";
 import { useWorkers } from "@/hooks/useWorkers";
 
 function workerStatusVariant(status: string) {
@@ -33,7 +33,6 @@ function workerStatusVariant(status: string) {
 export default function AgentsPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [selectedWorker, setSelectedWorker] = useState<Worker | null>(null);
   const [tab, setTab] = useState<"fleet" | "registry">("fleet");
   const navigate = useNavigate();
 
@@ -118,10 +117,10 @@ export default function AgentsPage() {
           <>
             <div className="instrument-card p-5">
               <div className="flex items-center justify-between mb-3">
-                <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Total Agents</span>
+                <span className="text-xs font-mono text-muted-foreground uppercase tracking-widest">Total Agents</span>
                 <Cpu className="w-4 h-4 text-cordum" />
               </div>
-              <span className="font-mono text-2xl font-bold text-foreground">{allWorkers.length}</span>
+              <span className="font-mono text-3xl font-bold text-foreground">{allWorkers.length}</span>
               <div className="flex gap-1 mt-3">
                 {allWorkers.map((w, i) => (
                   <div
@@ -137,27 +136,27 @@ export default function AgentsPage() {
 
             <div className="instrument-card p-5">
               <div className="flex items-center justify-between mb-3">
-                <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Idle</span>
+                <span className="text-xs font-mono text-muted-foreground uppercase tracking-widest">Idle</span>
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 status-pulse" />
               </div>
-              <span className="font-mono text-2xl font-bold text-emerald-400">{idleCount}</span>
+              <span className="font-mono text-3xl font-bold text-emerald-400">{idleCount}</span>
               <p className="text-xs text-muted-foreground mt-1">Ready for work</p>
             </div>
 
             <div className="instrument-card p-5">
               <div className="flex items-center justify-between mb-3">
-                <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Busy</span>
+                <span className="text-xs font-mono text-muted-foreground uppercase tracking-widest">Busy</span>
                 <Zap className="w-4 h-4 text-blue-400" />
               </div>
-              <span className="font-mono text-2xl font-bold text-blue-400">{busyCount}</span>
+              <span className="font-mono text-3xl font-bold text-blue-400">{busyCount}</span>
               <p className="text-xs text-muted-foreground mt-1">Processing jobs</p>
             </div>
 
             <div className={cn("instrument-card p-5", offlineCount > 0 && "status-danger")}>
               <div className="flex items-center justify-between mb-3">
-                <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Offline</span>
+                <span className="text-xs font-mono text-muted-foreground uppercase tracking-widest">Offline</span>
               </div>
-              <span className={cn("font-mono text-2xl font-bold", offlineCount > 0 ? "text-red-400" : "text-foreground")}>{offlineCount}</span>
+              <span className={cn("font-mono text-3xl font-bold", offlineCount > 0 ? "text-red-400" : "text-foreground")}>{offlineCount}</span>
               <p className="text-xs text-muted-foreground mt-1">Disconnected</p>
             </div>
           </>
@@ -212,22 +211,23 @@ export default function AgentsPage() {
               Refresh
             </Button>
           </div>
-          <table className="w-full">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[750px]">
             <thead>
               <tr className="border-b border-border bg-surface-0">
-                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Worker</th>
-                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Status</th>
-                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Pool</th>
-                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Capabilities</th>
-                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Jobs</th>
-                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Last Seen</th>
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Worker</th>
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Status</th>
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Pool</th>
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Capabilities</th>
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Jobs</th>
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Last Seen</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((w) => (
                 <tr
                   key={w.id}
-                  onClick={() => setSelectedWorker(w)}
+                  {...clickableRowProps(() => navigate(`/agents/${w.id}`))}
                   className={cn(
                     "border-b border-border hover:bg-surface-1 transition-colors cursor-pointer",
                     w.status === "offline" && "opacity-50"
@@ -265,6 +265,7 @@ export default function AgentsPage() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
@@ -296,7 +297,8 @@ function AgentRegistryTab() {
     <div className="space-y-4">
       <p className="text-xs text-muted-foreground">Agents that have submitted jobs, with their safety decision breakdown and policy bindings.</p>
       <div className="instrument-card overflow-hidden">
-        <table className="w-full">
+        <div className="overflow-x-auto">
+        <table className="w-full min-w-[800px]">
           <thead>
             <tr className="border-b border-border bg-surface-0">
               <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Agent</th>
@@ -312,7 +314,7 @@ function AgentRegistryTab() {
             {workers.map((w) => (
               <tr
                 key={w.id}
-                onClick={() => navigate(`/agents/${w.id}`)}
+                {...clickableRowProps(() => navigate(`/agents/${w.id}`))}
                 className="border-b border-border hover:bg-surface-1 transition-colors cursor-pointer"
               >
                 <td className="px-5 py-3">
@@ -345,6 +347,7 @@ function AgentRegistryTab() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   );

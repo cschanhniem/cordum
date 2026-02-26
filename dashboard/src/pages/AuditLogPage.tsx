@@ -124,7 +124,8 @@ export default function AuditLogPage() {
           transition={{ duration: 0.3 }}
           className="instrument-card overflow-hidden"
         >
-          <table className="w-full">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[700px]">
             <thead>
               <tr className="border-b border-border bg-surface-0">
                 <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Time</th>
@@ -153,6 +154,7 @@ export default function AuditLogPage() {
               ))}
             </tbody>
           </table>
+          </div>
         </motion.div>
       )}
     </div>

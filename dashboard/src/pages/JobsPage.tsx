@@ -6,21 +6,24 @@
 import { useState, useMemo, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { get } from "@/api/client";
 import { mapJobRecord, type BackendJobRecord } from "@/api/transform";
 import type { Job } from "@/api/types";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
+import { Select } from "@/components/ui/Select";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonTable } from "@/components/ui/Skeleton";
 import {
   Search, RefreshCw, ListChecks, Plus, Eye, Download,
-  ArrowUpDown, ArrowUp, ArrowDown, Shield, Filter,
+  ArrowUpDown, ArrowUp, ArrowDown, Shield, Filter, X,
 } from "lucide-react";
-import { cn, formatRelativeTime } from "@/lib/utils";
+import { cn, formatRelativeTime, clickableRowProps } from "@/lib/utils";
 import { toast } from "sonner";
+import { useSubmitJob } from "@/hooks/useJobs";
 
 /* Safety decision badge — 5 decision types from Safety Kernel */
 type SafetyDecisionType = "allow" | "deny" | "require_approval" | "allow_with_constraints" | "throttle";
@@ -77,11 +80,101 @@ const safetyOrder: Record<string, number> = {
 };
 
 
+function SubmitJobDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const navigate = useNavigate();
+  const submitJob = useSubmitJob();
+  const [topic, setTopic] = useState("");
+  const [prompt, setPrompt] = useState("");
+  const [priority, setPriority] = useState("normal");
+
+  const handleSubmit = () => {
+    if (!topic.trim() || !prompt.trim()) return;
+    submitJob.mutate(
+      { topic: topic.trim(), prompt: prompt.trim(), priority: priority as "low" | "normal" | "high" | "critical" },
+      {
+        onSuccess: (data) => {
+          toast.success("Job submitted");
+          onClose();
+          setTopic("");
+          setPrompt("");
+          setPriority("normal");
+          if (data.job_id) navigate(`/jobs/${data.job_id}`);
+        },
+        onError: (err) => toast.error(`Submission failed: ${err.message}`),
+      },
+    );
+  };
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[90] bg-black/50 backdrop-blur-sm" onClick={onClose} />
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[91] w-[520px] max-w-[90vw] bg-surface-1 border border-border rounded-xl shadow-2xl"
+          >
+            <div className="px-6 py-4 border-b border-border flex items-center justify-between">
+              <h3 className="font-display font-semibold text-foreground">Submit Job</h3>
+              <button onClick={onClose} className="p-1 rounded hover:bg-surface-2 text-muted-foreground"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="px-6 py-5 space-y-4">
+              <div>
+                <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1">Topic *</label>
+                <Input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="e.g. job.code-review" />
+              </div>
+              <div>
+                <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1">Prompt *</label>
+                <textarea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  rows={4}
+                  placeholder="Describe the task for the agent..."
+                  className="w-full px-3 py-2 text-xs bg-surface-0 border border-border rounded-md text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-cordum/30 resize-none"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1">Priority</label>
+                <Select
+                  value={priority}
+                  onChange={(e) => setPriority(e.target.value)}
+                  options={[
+                    { value: "low", label: "Low" },
+                    { value: "normal", label: "Normal" },
+                    { value: "high", label: "High" },
+                    { value: "critical", label: "Critical" },
+                  ]}
+                  className="w-40"
+                />
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t border-border flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
+              <Button
+                variant="primary"
+                size="sm"
+                loading={submitJob.isPending}
+                disabled={!topic.trim() || !prompt.trim()}
+                onClick={handleSubmit}
+              >
+                Submit
+              </Button>
+            </div>
+          </motion.div>
+        </>
+      )}
+    </AnimatePresence>
+  );
+}
+
 export default function JobsPage() {
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState("all");
   const [safetyFilter, setSafetyFilter] = useState("all");
+  const [showSubmit, setShowSubmit] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>("updatedAt");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
@@ -224,7 +317,7 @@ export default function JobsPage() {
               <RefreshCw className="w-3 h-3 mr-1" />
               Refresh
             </Button>
-            <Button variant="primary" size="sm" onClick={() => toast.info("Feature coming soon")}>
+            <Button variant="primary" size="sm" onClick={() => setShowSubmit(true)}>
               <Plus className="w-3 h-3 mr-1" />
               Submit Job
             </Button>
@@ -298,7 +391,7 @@ export default function JobsPage() {
           title="No jobs found"
           description={search ? "Try adjusting your search or filters" : "No jobs have been submitted yet"}
           action={
-            <Button variant="primary" size="sm" onClick={() => toast.info("Feature coming soon")}>
+            <Button variant="primary" size="sm" onClick={() => setShowSubmit(true)}>
               <Plus className="w-3 h-3 mr-1" />
               Submit Job
             </Button>
@@ -311,7 +404,8 @@ export default function JobsPage() {
           transition={{ duration: 0.3 }}
           className="instrument-card overflow-hidden"
         >
-          <table className="w-full">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[800px]">
             <thead>
               <tr className="border-b border-border bg-surface-0">
                 <th
@@ -357,7 +451,7 @@ export default function JobsPage() {
               {filtered.map((job) => (
                 <tr
                   key={job.id}
-                  onClick={() => navigate(`/jobs/${job.id}`)}
+                  {...clickableRowProps(() => navigate(`/jobs/${job.id}`))}
                   className="border-b border-border hover:bg-surface-1 transition-colors cursor-pointer group"
                 >
                   <td className="px-5 py-2.5">
@@ -383,6 +477,7 @@ export default function JobsPage() {
               ))}
             </tbody>
           </table>
+          </div>
           <div className="flex items-center justify-between px-5 py-2.5 border-t border-border bg-surface-0">
             <span className="text-xs font-mono text-muted-foreground">
               Showing {filtered.length} of {enrichedJobs.length} jobs
@@ -393,6 +488,8 @@ export default function JobsPage() {
           </div>
         </motion.div>
       )}
+
+      <SubmitJobDialog open={showSubmit} onClose={() => setShowSubmit(false)} />
     </div>
   );
 }

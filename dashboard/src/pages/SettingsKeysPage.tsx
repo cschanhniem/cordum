@@ -36,14 +36,14 @@ export default function SettingsKeysPage() {
   const { data: keys, isLoading } = useQuery({
     queryKey: ["api-keys"],
     queryFn: async () => {
-      const res: any = await get("/auth/keys");
-      return (res.data || []) as ApiKey[];
+      const res = await get<{ data?: ApiKey[] }>("/auth/keys");
+      return res.data || [];
     },
   });
 
   const createMutation = useMutation({
-    mutationFn: async () => post("/auth/keys", { name: newKeyName, scopes: newKeyScopes }),
-    onSuccess: (data: any) => {
+    mutationFn: async () => post<{ data?: { key?: string } }>("/auth/keys", { name: newKeyName, scopes: newKeyScopes }),
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["api-keys"] });
       const key = data?.data?.key;
       if (key) {
@@ -75,14 +75,15 @@ export default function SettingsKeysPage() {
       {isLoading ? <SkeletonTable rows={4} /> :
        !keys?.length ? <EmptyState icon={<Key className="w-8 h-8" />} title="No API keys" description="Create an API key to access the Cordum API" /> : (
         <div className="instrument-card overflow-hidden">
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[600px]">
             <thead>
               <tr className="border-b border-border bg-surface-0">
-                <th className="text-left px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Name</th>
-                <th className="text-left px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Key</th>
-                <th className="text-left px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Scopes</th>
-                <th className="text-left px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Last Used</th>
-                <th className="text-right px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Actions</th>
+                <th className="text-left px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-widest">Name</th>
+                <th className="text-left px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-widest">Key</th>
+                <th className="text-left px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-widest">Scopes</th>
+                <th className="text-left px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-widest">Last Used</th>
+                <th className="text-right px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-widest">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -109,6 +110,7 @@ export default function SettingsKeysPage() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 

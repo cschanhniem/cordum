@@ -12,7 +12,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { SkeletonCard, SkeletonTable } from "@/components/ui/Skeleton";
 import { Search, RefreshCw, AlertTriangle, Play, Trash2, CheckCircle2, Download, X } from "lucide-react";
-import { cn, formatRelativeTime } from "@/lib/utils";
+import { cn, formatRelativeTime, clickableRowProps } from "@/lib/utils";
 import { toast } from "sonner";
 
 interface DLQItem {
@@ -22,7 +22,7 @@ interface DLQItem {
   error?: string;
   attempts: number;
   failedAt: string;
-  payload?: any;
+  payload?: Record<string, unknown>;
 }
 
 export default function DLQPage() {
@@ -219,7 +219,8 @@ export default function DLQPage() {
           transition={{ duration: 0.3, delay: 0.1 }}
           className="instrument-card status-danger overflow-hidden"
         >
-          <table className="w-full">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[750px]">
             <thead>
               <tr className="border-b border-border bg-surface-0">
                 <th className="w-10 px-3 py-3">
@@ -248,7 +249,7 @@ export default function DLQPage() {
                       selected.has(d.id) && "bg-cordum/5",
                       expandedRow === d.id && "bg-surface-1"
                     )}
-                    onClick={() => setExpandedRow(expandedRow === d.id ? null : d.id)}
+                    {...clickableRowProps(() => setExpandedRow(expandedRow === d.id ? null : d.id))}
                   >
                     <td className="w-10 px-3 py-3" onClick={(e) => e.stopPropagation()}>
                       <input
@@ -313,6 +314,7 @@ export default function DLQPage() {
               ))}
             </tbody>
           </table>
+          </div>
         </motion.div>
       )}
 
