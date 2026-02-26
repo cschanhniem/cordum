@@ -10,7 +10,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Skeleton } from "@/components/ui/Skeleton";
-import { ArrowLeft, Play, Edit, GitBranch, Workflow, Eye } from "lucide-react";
+import { ArrowLeft, Play, Edit, GitBranch, Workflow, Eye, Shield, Link2 } from "lucide-react";
 import { useState } from "react";
 import { cn, formatRelativeTime } from "@/lib/utils";
 
@@ -68,6 +68,7 @@ export default function WorkflowDetailPage() {
     { id: "steps", label: "Steps", count: workflow.steps?.length },
     { id: "runs", label: "Runs", count: workflow.runs?.length },
     { id: "config", label: "Configuration" },
+    { id: "policy", label: "Policy" },
   ];
 
   return (
@@ -254,6 +255,75 @@ export default function WorkflowDetailPage() {
           <h3 className="font-display font-semibold text-sm text-foreground mb-3">Workflow Configuration</h3>
           <div className="rounded-md bg-surface-0 border border-border p-4 font-mono text-xs text-foreground overflow-auto max-h-[400px]">
             <pre>{JSON.stringify(workflow, null, 2)}</pre>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Policy Tab */}
+      {activeTab === "policy" && (
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }} className="space-y-4">
+          {/* Bound Bundles */}
+          <div className="instrument-card p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <Shield className="w-4 h-4 text-cordum" />
+              <h3 className="font-display font-semibold text-sm text-foreground">Policy Bindings</h3>
+            </div>
+            <p className="text-xs text-muted-foreground mb-4">
+              Policy bundles bound to this workflow. Rules in these bundles are evaluated for every job dispatched by this workflow.
+            </p>
+            <div className="space-y-2">
+              <div className="rounded-lg bg-surface-0 border border-border p-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-cordum/10 flex items-center justify-center">
+                    <Shield className="w-4 h-4 text-cordum" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-foreground">No bundles bound</p>
+                    <p className="text-xs text-muted-foreground">Bind a policy bundle to enforce rules on this workflow</p>
+                  </div>
+                </div>
+                <Button variant="outline" size="sm" onClick={() => navigate("/policies/bundles")}>
+                  <Link2 className="w-3 h-3 mr-1" />Bind Bundle
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          {/* Step-Level Overrides */}
+          <div className="instrument-card p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <Shield className="w-4 h-4 text-cordum" />
+              <h3 className="font-display font-semibold text-sm text-foreground">Step-Level Overrides</h3>
+            </div>
+            <p className="text-xs text-muted-foreground mb-4">
+              Override policy rules for specific steps in this workflow.
+            </p>
+            {(workflow.steps?.length ?? 0) === 0 ? (
+              <p className="text-xs text-muted-foreground">No steps defined in this workflow.</p>
+            ) : (
+              <div className="space-y-2">
+                {(workflow.steps ?? []).map((step) => (
+                  <div key={step.id} className="rounded-lg bg-surface-0 border border-border p-3 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-surface-2 border border-border text-muted-foreground">{step.type}</span>
+                      <span className="text-sm font-medium text-foreground">{step.name}</span>
+                    </div>
+                    <span className="text-[10px] font-mono text-muted-foreground">inherits workflow policy</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Evaluation Summary */}
+          <div className="instrument-card p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <Shield className="w-4 h-4 text-cordum" />
+              <h3 className="font-display font-semibold text-sm text-foreground">Evaluation Summary</h3>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Connect to a live Cordum instance to see policy evaluation statistics for this workflow.
+            </p>
           </div>
         </motion.div>
       )}

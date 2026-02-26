@@ -57,6 +57,10 @@ const OutputSafetyPage = lazy(() => import("./pages/OutputSafetyPage"));
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage"));
 const SettingsHubPage = lazy(() => import("./pages/SettingsHubPage"));
 const SecurityOverviewPage = lazy(() => import("./pages/SecurityOverviewPage"));
+const PoliciesInputPage = lazy(() => import("./pages/PoliciesInputPage"));
+const PoliciesOutputPage = lazy(() => import("./pages/PoliciesOutputPage"));
+const PoliciesHierarchyPage = lazy(() => import("./pages/PoliciesHierarchyPage"));
+const QuarantineQueuePage = lazy(() => import("./pages/QuarantineQueuePage"));
 
 function ThemeSync() {
   const resolvedTheme = useUiStore((s) => s.resolvedTheme);
@@ -112,6 +116,10 @@ function ProtectedRoutes() {
           <Route path="/policies/history" element={<PoliciesHistoryPage />} />
           <Route path="/policies/analytics" element={<PoliciesAnalyticsPage />} />
           <Route path="/policies/publish" element={<PoliciesPublishPage />} />
+          <Route path="/policies/input" element={<PoliciesInputPage />} />
+          <Route path="/policies/output" element={<PoliciesOutputPage />} />
+          <Route path="/policies/hierarchy" element={<PoliciesHierarchyPage />} />
+          <Route path="/quarantine" element={<QuarantineQueuePage />} />
 
           {/* EXTEND */}
           <Route path="/packs" element={<PacksPage />} />

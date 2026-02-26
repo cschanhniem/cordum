@@ -68,10 +68,10 @@ const navSections = [
     label: "Govern",
     items: [
       { path: "/policies", label: "Policy Studio", icon: Shield },
+      { path: "/policies/input", label: "Input Policy", icon: ShieldCheck },
+      { path: "/policies/output", label: "Output Policy", icon: ShieldAlert },
       { path: "/policies/bundles", label: "Bundles", icon: Layers },
       { path: "/policies/publish", label: "Publish", icon: GitBranch },
-      { path: "/safety/input", label: "Input Safety", icon: ShieldCheck },
-      { path: "/safety/output", label: "Output Safety", icon: ShieldAlert },
     ],
   },
   {
@@ -86,7 +86,8 @@ const navSections = [
     items: [
       { path: "/traces", label: "Traces", icon: Activity },
       { path: "/audit", label: "Audit Log", icon: FileText },
-      { path: "/dlq", label: "Dead Letters", icon: AlertTriangle, badge: "dlq" },
+      { path: "/quarantine", label: "Quarantine", icon: ShieldAlert, badge: "dlq" },
+      { path: "/dlq", label: "Dead Letters", icon: AlertTriangle },
     ],
   },
 ];

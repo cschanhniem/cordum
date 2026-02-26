@@ -129,7 +129,8 @@ export default function JobDetailPage() {
     { id: "overview", label: "Overview" },
     { id: "context", label: "Context" },
     { id: "result", label: "Result" },
-    { id: "safety", label: "Safety" },
+    { id: "safety", label: "Safety Story" },
+    { id: "terminal", label: "Terminal" },
     { id: "timeline", label: "Timeline" },
   ];
 
@@ -388,73 +389,141 @@ export default function JobDetailPage() {
         </motion.div>
       )}
 
-      {/* Safety Tab */}
+      {/* Safety Story Tab */}
       {activeTab === "safety" && (
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3 }}
-          className="space-y-4"
-        >
-          <div className={cn("instrument-card p-5", job.safetyDecision?.type === "deny" ? "status-danger" : "")}>
-            <div className="flex items-center gap-2 mb-4">
-              <Shield className="w-4 h-4 text-cordum" />
-              <h3 className="font-display font-semibold text-sm text-foreground">Input Safety</h3>
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }} className="space-y-4">
+          {/* Step 1: Input Evaluation */}
+          <div className="instrument-card p-0 overflow-hidden">
+            <div className="px-5 py-3 border-b border-border bg-surface-0 flex items-center gap-2">
+              <div className="w-5 h-5 rounded-full bg-cordum/15 flex items-center justify-center text-[10px] font-mono font-bold text-cordum">1</div>
+              <span className="text-xs font-mono font-medium text-foreground">Input Policy Evaluation</span>
+              <StatusBadge variant={job.safetyDecision?.type === "deny" ? "danger" : job.safetyDecision?.type === "require_approval" ? "warning" : "healthy"}>
+                {job.safetyDecision?.type ?? "no evaluation"}
+              </StatusBadge>
             </div>
-            <dl className="space-y-3">
-              {[
-                ["Decision", job.safetyDecision?.type ?? "—"],
-                ["Reason", job.safetyDecision?.reason ?? "—"],
-                ["Rule ID", job.safetyDecision?.matchedRule ?? "—"],
-              ].map(([label, value]) => (
-                <div key={label} className="flex justify-between">
-                  <dt className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">{label}</dt>
-                  <dd className="text-sm font-mono text-foreground">{value}</dd>
-                </div>
-              ))}
-            </dl>
-          </div>
-
-          {job.output_safety && (
-            <div className={cn("instrument-card p-5", job.output_safety.decision === "QUARANTINE" ? "status-danger" : "")}>
-              <div className="flex items-center gap-2 mb-4">
-                <Shield className="w-4 h-4 text-cordum" />
-                <h3 className="font-display font-semibold text-sm text-foreground">Output Safety</h3>
-              </div>
+            <div className="p-5 space-y-3">
               <dl className="space-y-3">
-                <div className="flex justify-between">
-                  <dt className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Decision</dt>
-                  <dd>
-                    <StatusBadge variant={job.output_safety.decision === "ALLOW" ? "healthy" : "danger"}>
-                      {job.output_safety.decision}
-                    </StatusBadge>
-                  </dd>
-                </div>
-                {job.output_safety.reason && (
-                  <div className="flex justify-between">
-                    <dt className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Reason</dt>
-                    <dd className="text-sm font-mono text-foreground">{job.output_safety.reason}</dd>
+                {[
+                  ["Decision", job.safetyDecision?.type ?? "\u2014"],
+                  ["Reason", job.safetyDecision?.reason ?? "\u2014"],
+                  ["Matched Rule", job.safetyDecision?.matchedRule ?? "\u2014"],
+                  ["Eval Time", job.safetyDecision?.evalTimeMs ? `${job.safetyDecision.evalTimeMs}ms` : "\u2014"],
+                ].map(([label, value]) => (
+                  <div key={label} className="flex justify-between">
+                    <dt className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">{label}</dt>
+                    <dd className="text-sm font-mono text-foreground">{value}</dd>
                   </div>
-                )}
+                ))}
               </dl>
-              {job.output_safety.findings && job.output_safety.findings.length > 0 && (
-                <div className="mt-4 space-y-2">
-                  <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Findings</p>
-                  {job.output_safety.findings.map((f: OutputFinding, i: number) => (
-                    <div key={i} className="rounded-md bg-surface-0 border border-border p-3">
-                      <div className="flex items-center gap-2 mb-1">
-                        <StatusBadge variant={f.severity === "critical" ? "danger" : f.severity === "high" ? "warning" : "muted"}>
-                          {f.severity}
-                        </StatusBadge>
-                        <span className="text-xs font-mono text-foreground">{f.type}</span>
-                      </div>
-                      <p className="text-xs text-muted-foreground">{f.detail}</p>
-                    </div>
-                  ))}
+              {/* Evaluation path */}
+              {job.safetyDecision?.evalPath && job.safetyDecision.evalPath.length > 0 && (
+                <div className="mt-3">
+                  <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-2">Evaluation Path</p>
+                  <div className="flex items-center gap-1 flex-wrap">
+                    {job.safetyDecision.evalPath.map((step, i) => (
+                      <span key={i} className="inline-flex items-center">
+                        <span className="px-2 py-0.5 rounded bg-surface-1 border border-border text-[10px] font-mono text-foreground">{step}</span>
+                        {i < (job.safetyDecision?.evalPath?.length ?? 0) - 1 && <span className="text-muted-foreground mx-1">&rarr;</span>}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
+          </div>
+
+          {/* Step 2: Constraints Applied */}
+          {job.safetyDecision?.type === "allow_with_constraints" && (
+            <div className="instrument-card p-0 overflow-hidden">
+              <div className="px-5 py-3 border-b border-border bg-surface-0 flex items-center gap-2">
+                <div className="w-5 h-5 rounded-full bg-amber-400/15 flex items-center justify-center text-[10px] font-mono font-bold text-amber-400">2</div>
+                <span className="text-xs font-mono font-medium text-foreground">Constraints Applied</span>
+                <StatusBadge variant="warning">constrained</StatusBadge>
+              </div>
+              <div className="p-5">
+                <p className="text-xs text-muted-foreground">This job was allowed with constraints. Connect to a live Cordum instance to see constraint details.</p>
+              </div>
+            </div>
           )}
+
+          {/* Step 3: Output Evaluation */}
+          <div className={cn("instrument-card p-0 overflow-hidden", job.output_safety?.decision === "QUARANTINE" ? "status-danger" : "")}>
+            <div className="px-5 py-3 border-b border-border bg-surface-0 flex items-center gap-2">
+              <div className="w-5 h-5 rounded-full bg-blue-400/15 flex items-center justify-center text-[10px] font-mono font-bold text-blue-400">{job.safetyDecision?.type === "allow_with_constraints" ? "3" : "2"}</div>
+              <span className="text-xs font-mono font-medium text-foreground">Output Policy Evaluation</span>
+              {job.output_safety ? (
+                <StatusBadge variant={job.output_safety.decision === "ALLOW" ? "healthy" : job.output_safety.decision === "REDACT" ? "warning" : "danger"}>
+                  {job.output_safety.decision}
+                </StatusBadge>
+              ) : (
+                <StatusBadge variant="muted">not evaluated</StatusBadge>
+              )}
+            </div>
+            <div className="p-5 space-y-3">
+              {job.output_safety ? (
+                <>
+                  <dl className="space-y-3">
+                    <div className="flex justify-between">
+                      <dt className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Decision</dt>
+                      <dd><StatusBadge variant={job.output_safety.decision === "ALLOW" ? "healthy" : "danger"}>{job.output_safety.decision}</StatusBadge></dd>
+                    </div>
+                    {job.output_safety.reason && (
+                      <div className="flex justify-between">
+                        <dt className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Reason</dt>
+                        <dd className="text-sm font-mono text-foreground">{job.output_safety.reason}</dd>
+                      </div>
+                    )}
+                    {job.output_safety.rule_id && (
+                      <div className="flex justify-between">
+                        <dt className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Rule</dt>
+                        <dd className="text-sm font-mono text-foreground">{job.output_safety.rule_id}</dd>
+                      </div>
+                    )}
+                  </dl>
+                  {job.output_safety.findings && job.output_safety.findings.length > 0 && (
+                    <div className="mt-3 space-y-2">
+                      <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Findings</p>
+                      {job.output_safety.findings.map((f: OutputFinding, i: number) => (
+                        <div key={i} className="rounded-md bg-surface-0 border border-border p-3">
+                          <div className="flex items-center gap-2 mb-1">
+                            <StatusBadge variant={f.severity === "critical" ? "danger" : f.severity === "high" ? "warning" : "muted"}>{f.severity}</StatusBadge>
+                            <span className="text-xs font-mono text-foreground">{f.type}</span>
+                            {f.scanner && <span className="text-[10px] text-muted-foreground">via {f.scanner}</span>}
+                          </div>
+                          <p className="text-xs text-muted-foreground">{f.detail}</p>
+                          {f.matched_pattern && <p className="text-[10px] font-mono text-red-400 mt-1">Pattern: {f.matched_pattern}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {/* Redaction preview */}
+                  {job.output_safety.decision === "REDACT" && job.output_safety.redacted_ptr && (
+                    <div className="mt-3">
+                      <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-2">Redacted Output</p>
+                      <div className="bg-surface-0 rounded-lg border border-border p-3">
+                        <pre className="text-xs font-mono text-foreground whitespace-pre-wrap">{job.output_safety.redacted_ptr}</pre>
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p className="text-xs text-muted-foreground">No output policy evaluation was performed for this job.</p>
+              )}
+            </div>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Terminal Tab */}
+      {activeTab === "terminal" && (
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }} className="instrument-card p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <FileText className="w-4 h-4 text-cordum" />
+            <h3 className="font-display font-semibold text-sm text-foreground">Terminal Output</h3>
+          </div>
+          <div className="bg-surface-0 rounded-lg border border-border p-4 font-mono text-xs text-foreground min-h-[200px] max-h-[500px] overflow-auto">
+            <p className="text-muted-foreground italic">Terminal output will appear here when connected to a live Cordum instance with streaming enabled.</p>
+          </div>
         </motion.div>
       )}
 
