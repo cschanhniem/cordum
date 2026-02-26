@@ -13,7 +13,7 @@ export interface SafetyDecisionEvent {
   id: string;
   timestamp: string;
   topic: string;
-  decision: "allow" | "deny" | "require_approval" | "throttle";
+  decision: "allow" | "deny" | "require_approval" | "allow_with_constraints" | "throttle";
   matchedRule?: string;
   evalTimeMs?: number;
 }

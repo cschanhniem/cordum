@@ -59,7 +59,7 @@ export function useRetryDLQ() {
   return useMutation<void, Error, RetryInput, DLQSnapshot>({
     mutationFn: ({ id }) => {
       logger.info("dlq", "Retrying DLQ entry", { id });
-      return post<void>(`/dlq/${id}/retry`);
+      return post<void>(`/dlq/${encodeURIComponent(id)}/retry`);
     },
     onMutate: async ({ id }) => {
       await queryClient.cancelQueries({ queryKey: queryKeys.dlq.all });

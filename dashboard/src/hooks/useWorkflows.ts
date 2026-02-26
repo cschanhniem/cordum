@@ -488,7 +488,7 @@ export function useWorkflow(id: string | null | undefined) {
       if (!id) {
         throw new Error("workflow id is required");
       }
-      return get<BackendWorkflow>(`/workflows/${id}`).then(mapWorkflow);
+      return get<BackendWorkflow>(`/workflows/${encodeURIComponent(id)}`).then(mapWorkflow);
     },
     enabled: !!id,
   });
@@ -550,7 +550,7 @@ export function useDeleteWorkflow() {
         throw new Error("workflow id is required");
       }
       logger.info("workflows", "Deleting workflow", { id: workflowId });
-      return del<void>(`/workflows/${workflowId}`);
+      return del<void>(`/workflows/${encodeURIComponent(workflowId)}`);
     },
     onSuccess: (_data, workflowId) => {
       logger.info("workflows", "Workflow deleted", { id: workflowId });

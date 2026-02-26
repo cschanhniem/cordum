@@ -48,7 +48,7 @@ export function useKeyboardShortcuts() {
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
   const prefixRef = useRef<string | null>(null);
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {

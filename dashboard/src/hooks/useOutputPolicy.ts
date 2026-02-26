@@ -47,7 +47,7 @@ export function useReleaseQuarantinedJob() {
   return useMutation<void, Error, string>({
     mutationFn: (jobId) => {
       logger.info("output-policy", "Releasing quarantined job", { jobId });
-      return post<void>(`/dlq/${jobId}/retry`);
+      return post<void>(`/dlq/${encodeURIComponent(jobId)}/retry`);
     },
     onSuccess: (_, jobId) => {
       useToastStore.getState().addToast({ type: "success", title: "Released quarantined job" });
@@ -71,7 +71,7 @@ export function useConfirmQuarantine() {
   return useMutation<void, Error, string>({
     mutationFn: (jobId) => {
       logger.info("output-policy", "Confirming quarantine", { jobId });
-      return del(`/dlq/${jobId}`);
+      return del(`/dlq/${encodeURIComponent(jobId)}`);
     },
     onSuccess: (_, jobId) => {
       useToastStore.getState().addToast({ type: "success", title: "Quarantine confirmed" });
@@ -94,7 +94,7 @@ export function useOutputFindings(jobId: string) {
   return useQuery<OutputFinding[]>({
     queryKey: queryKeys.jobs.outputFindings(jobId),
     queryFn: async () => {
-      const res = await get<BackendJobDetail>(`/jobs/${jobId}`);
+      const res = await get<BackendJobDetail>(`/jobs/${encodeURIComponent(jobId)}`);
       const job = mapJobDetail(res);
       return job.output_safety?.findings ?? [];
     },
@@ -310,16 +310,22 @@ async function persistOutputPolicyConfig(data: Record<string, unknown>): Promise
 async function fetchSystemConfig(): Promise<Record<string, unknown>> {
   try {
     return await get<Record<string, unknown>>("/config?scope=system&scope_id=default");
-  } catch {
-    return get<Record<string, unknown>>("/config");
+  } catch (err) {
+    if (err instanceof ApiError && (err.status === 404 || err.status === 405)) {
+      return get<Record<string, unknown>>("/config");
+    }
+    throw err;
   }
 }
 
 async function fetchOutputPolicyConfigRaw(): Promise<Record<string, unknown>> {
   try {
     return await get<Record<string, unknown>>("/config?scope=output_policy");
-  } catch {
-    return fetchSystemConfig();
+  } catch (err) {
+    if (err instanceof ApiError && (err.status === 404 || err.status === 405)) {
+      return fetchSystemConfig();
+    }
+    throw err;
   }
 }
 

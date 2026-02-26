@@ -1,58 +1,237 @@
-import { useState } from "react";
-import { usePolicyBundleContext } from "../components/policy/PolicyBundleContext";
-import { PolicyBundleEditor } from "../components/policy/PolicyBundleEditor";
-import { VisualRuleBuilder } from "../components/policy/VisualRuleBuilder";
-import { cn } from "../lib/utils";
-import { usePageTitle } from "../hooks/usePageTitle";
-import { usePolicyBundle } from "../hooks/usePolicies";
+/*
+ * DESIGN: "Control Surface" — Policy Builder
+ * PRD Section 17: Visual rule builder with conditions
+ */
+import { useState, useEffect } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { motion } from "framer-motion";
+import { Button } from "@/components/ui/Button";
+import { ArrowLeft, Save, Plus, Trash2, GripVertical } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { toast } from "sonner";
+import { useUpdatePolicyBundle, usePolicyBundles } from "@/hooks/usePolicies";
+import YAML from "yaml";
 
-type BuilderTab = "visual" | "yaml";
+interface Condition {
+  id: string;
+  field: string;
+  operator: string;
+  value: string;
+}
+
+interface RuleBlock {
+  id: string;
+  name: string;
+  action: "allow" | "deny" | "warn";
+  conditions: Condition[];
+}
+
+function blocksToYaml(ruleName: string, description: string, blocks: RuleBlock[]): string {
+  const rules = blocks.map(block => ({
+    name: block.name,
+    decision: block.action === "warn" ? "require_approval" : block.action,
+    match: {
+      conditions: block.conditions.map(c => ({
+        field: c.field,
+        operator: c.operator,
+        value: c.value,
+      })),
+    },
+  }));
+  return YAML.stringify({ name: ruleName, description, rules });
+}
 
 export default function PoliciesBuilderPage() {
-  usePageTitle("Policies - Builder");
-  const { bundleId } = usePolicyBundleContext();
-  const { data: bundle } = usePolicyBundle(bundleId);
-  const [tab, setTab] = useState<BuilderTab>("visual");
+  const navigate = useNavigate();
+  const { id } = useParams();
+  const isEdit = !!id;
 
-  if (!bundleId) {
-    return (
-      <div className="rounded-2xl border border-dashed border-border px-6 py-12 text-center text-sm text-muted">
-        No policy bundles found. Create one to get started.
-      </div>
+  const updateBundle = useUpdatePolicyBundle();
+  const { data: bundlesData } = usePolicyBundles();
+  const bundles = bundlesData?.items ?? [];
+
+  const [selectedBundleId, setSelectedBundleId] = useState("");
+  const [ruleName, setRuleName] = useState(isEdit ? "production-safety" : "");
+  const [description, setDescription] = useState("");
+  const [blocks, setBlocks] = useState<RuleBlock[]>([
+    {
+      id: "block-1",
+      name: "Default Block",
+      action: "allow",
+      conditions: [{ id: "cond-1", field: "topic", operator: "equals", value: "" }],
+    },
+  ]);
+
+  // Auto-select first bundle when data loads
+  useEffect(() => {
+    if (bundles.length > 0 && !selectedBundleId) {
+      setSelectedBundleId(bundles[0].id);
+    }
+  }, [bundles, selectedBundleId]);
+
+  const FIELDS = ["topic", "payload.size", "agent.role", "agent.name", "risk_score", "source_ip"];
+  const OPERATORS = ["equals", "not_equals", "contains", "greater_than", "less_than", "matches"];
+  const ACTIONS = ["allow", "deny", "warn"];
+
+  const addBlock = () => {
+    const uid = crypto.randomUUID();
+    setBlocks(prev => [...prev, {
+      id: `block-${uid}`,
+      name: `Rule ${prev.length + 1}`,
+      action: "deny",
+      conditions: [{ id: `cond-${uid}`, field: "topic", operator: "equals", value: "" }],
+    }]);
+  };
+
+  const removeBlock = (blockId: string) => {
+    setBlocks(prev => prev.filter(b => b.id !== blockId));
+  };
+
+  const addCondition = (blockId: string) => {
+    const uid = crypto.randomUUID();
+    setBlocks(prev => prev.map(b =>
+      b.id === blockId ? { ...b, conditions: [...b.conditions, { id: `cond-${uid}`, field: "topic", operator: "equals", value: "" }] } : b
+    ));
+  };
+
+  const removeCondition = (blockId: string, condId: string) => {
+    setBlocks(prev => prev.map(b =>
+      b.id === blockId ? { ...b, conditions: b.conditions.filter(c => c.id !== condId) } : b
+    ));
+  };
+
+  const updateCondition = (blockId: string, condId: string, field: string, value: string) => {
+    setBlocks(prev => prev.map(b =>
+      b.id === blockId ? { ...b, conditions: b.conditions.map(c => c.id === condId ? { ...c, [field]: value } : c) } : b
+    ));
+  };
+
+  const updateBlock = (blockId: string, field: string, value: string) => {
+    setBlocks(prev => prev.map(b => b.id === blockId ? { ...b, [field]: value } : b));
+  };
+
+  const handleSave = () => {
+    if (!ruleName.trim()) {
+      toast.error("Rule name is required");
+      return;
+    }
+    if (!selectedBundleId) {
+      toast.error("Select a target bundle first");
+      return;
+    }
+    const content = blocksToYaml(ruleName, description, blocks);
+    updateBundle.mutate(
+      { id: selectedBundleId, content, message: "Updated via Policy Builder" },
+      { onSuccess: () => navigate("/policies/bundles") },
     );
-  }
+  };
+
+  const actionColor = (a: string) => a === "allow" ? "healthy" : a === "deny" ? "danger" : "warning";
 
   return (
-    <div className="space-y-4">
-      {/* Tab toggle */}
-      <div className="flex gap-1 rounded-xl border border-border bg-surface2/40 p-1 w-fit">
-        {(["visual", "yaml"] as const).map((t) => (
-          <button
-            key={t}
-            type="button"
-            onClick={() => setTab(t)}
-            className={cn(
-              "rounded-lg px-4 py-1.5 text-xs font-semibold transition",
-              tab === t
-                ? "bg-surface1 text-ink shadow-sm"
-                : "text-muted hover:text-ink",
-            )}
-          >
-            {t === "visual" ? "Visual" : "YAML"}
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button onClick={() => navigate("/policies/rules")} className="p-1.5 rounded-md hover:bg-surface-2 transition-colors">
+            <ArrowLeft className="w-4 h-4 text-muted-foreground" />
           </button>
-        ))}
+          <div>
+            <h1 className="text-lg font-display font-bold text-foreground">{isEdit ? "Edit Rule" : "Create Rule"}</h1>
+            <p className="text-xs text-muted-foreground">Define conditions and actions for policy enforcement</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="sm" onClick={() => navigate("/policies/rules")}>Cancel</Button>
+          <Button variant="primary" size="sm" onClick={handleSave} loading={updateBundle.isPending} disabled={!selectedBundleId}>
+            <Save className="w-3 h-3 mr-1" />Save Rule
+          </Button>
+        </div>
       </div>
 
-      {/* Tab content */}
-      {tab === "visual" ? (
-        <VisualRuleBuilder bundleId={bundleId} onEditYaml={() => setTab("yaml")} />
-      ) : (
-        <PolicyBundleEditor
-          bundleId={bundleId}
-          currentContent={bundle?.content ?? ""}
-          onClose={() => setTab("visual")}
-        />
-      )}
+      {/* Rule Meta */}
+      <div className="instrument-card p-5 space-y-4">
+        <div className="grid grid-cols-3 gap-4">
+          <div>
+            <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Rule Name</label>
+            <input type="text" value={ruleName} onChange={(e) => setRuleName(e.target.value)} placeholder="e.g., block-dangerous-topics"
+              className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
+          </div>
+          <div>
+            <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Description</label>
+            <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What does this rule do?"
+              className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
+          </div>
+          <div>
+            <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Target Bundle</label>
+            <select
+              value={selectedBundleId}
+              onChange={(e) => setSelectedBundleId(e.target.value)}
+              className="h-8 w-full px-2 text-xs font-mono bg-surface-1 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+            >
+              {bundles.length === 0 && <option value="">No bundles available</option>}
+              {bundles.map(b => (
+                <option key={b.id} value={b.id}>{b.name} ({b.id})</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* Rule Blocks */}
+      <div className="space-y-4">
+        {blocks.map((block) => (
+          <motion.div key={block.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+            className={cn("instrument-card overflow-hidden", `status-${actionColor(block.action) === "healthy" ? "healthy" : actionColor(block.action) === "danger" ? "danger" : "warning"}`)}>
+            <div className="p-4 border-b border-border flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <GripVertical className="w-4 h-4 text-muted-foreground cursor-grab" />
+                <input type="text" value={block.name} onChange={(e) => updateBlock(block.id, "name", e.target.value)}
+                  className="text-sm font-display font-semibold bg-transparent border-none outline-none text-foreground w-48" />
+                <select value={block.action} onChange={(e) => updateBlock(block.id, "action", e.target.value)}
+                  className="h-7 px-2 text-xs bg-surface-1 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum">
+                  {ACTIONS.map(a => <option key={a} value={a}>{a.toUpperCase()}</option>)}
+                </select>
+              </div>
+              {blocks.length > 1 && (
+                <button onClick={() => removeBlock(block.id)} className="p-1.5 rounded hover:bg-red-500/10 transition-colors">
+                  <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                </button>
+              )}
+            </div>
+            <div className="p-4 space-y-3">
+              <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Conditions (all must match)</p>
+              {block.conditions.map((cond, ci) => (
+                <div key={cond.id} className="flex items-center gap-2">
+                  {ci > 0 && <span className="text-[10px] font-mono text-cordum w-8">AND</span>}
+                  {ci === 0 && <span className="text-[10px] font-mono text-muted-foreground w-8">IF</span>}
+                  <select value={cond.field} onChange={(e) => updateCondition(block.id, cond.id, "field", e.target.value)}
+                    className="h-8 px-2 text-xs bg-surface-1 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum">
+                    {FIELDS.map(f => <option key={f} value={f}>{f}</option>)}
+                  </select>
+                  <select value={cond.operator} onChange={(e) => updateCondition(block.id, cond.id, "operator", e.target.value)}
+                    className="h-8 px-2 text-xs bg-surface-1 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum">
+                    {OPERATORS.map(o => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                  <input type="text" value={cond.value} onChange={(e) => updateCondition(block.id, cond.id, "value", e.target.value)}
+                    placeholder="value" className="h-8 flex-1 px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
+                  {block.conditions.length > 1 && (
+                    <button onClick={() => removeCondition(block.id, cond.id)} className="p-1 rounded hover:bg-red-500/10">
+                      <Trash2 className="w-3 h-3 text-red-400" />
+                    </button>
+                  )}
+                </div>
+              ))}
+              <button onClick={() => addCondition(block.id)} className="text-xs text-cordum hover:text-cordum/80 transition-colors flex items-center gap-1">
+                <Plus className="w-3 h-3" />Add Condition
+              </button>
+            </div>
+          </motion.div>
+        ))}
+        <Button variant="outline" size="sm" onClick={addBlock}>
+          <Plus className="w-3 h-3 mr-1" />Add Rule Block
+        </Button>
+      </div>
     </div>
   );
 }

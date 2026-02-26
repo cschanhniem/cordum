@@ -44,6 +44,15 @@ export function useApproval(id: string) {
   return useQuery<Approval>({
     queryKey: queryKeys.approvals.detail(id),
     queryFn: async () => {
+      try {
+        const res = await get<BackendApprovalItem>(`/approvals/${encodeURIComponent(id)}`);
+        const mapped = mapApprovalItem(res);
+        if (mapped) return mapped;
+      } catch (err) {
+        if (!(err instanceof ApiError && (err.status === 404 || err.status === 405))) {
+          throw err;
+        }
+      }
       const res = await get<{ items: BackendApprovalItem[] }>(`/approvals`);
       const items = (res.items ?? [])
         .map(mapApprovalItem)

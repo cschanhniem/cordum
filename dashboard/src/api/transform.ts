@@ -24,6 +24,7 @@ import type {
   MarketplacePack,
   MarketplaceCatalog,
   PolicyRule,
+  PolicyRuleMatch,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -414,10 +415,11 @@ export function normalizeJobStatus(raw?: string): JobStatus {
 export function normalizeDecisionType(raw?: string): SafetyDecision["type"] {
   switch ((raw || "").toUpperCase()) {
     case "ALLOW":
-    case "ALLOW_WITH_CONSTRAINTS":
     case "DECISION_TYPE_ALLOW":
-    case "DECISION_TYPE_ALLOW_WITH_CONSTRAINTS":
       return "allow";
+    case "ALLOW_WITH_CONSTRAINTS":
+    case "DECISION_TYPE_ALLOW_WITH_CONSTRAINTS":
+      return "allow_with_constraints";
     case "DENY":
     case "DECISION_TYPE_DENY":
       return "deny";
@@ -455,6 +457,8 @@ function normalizeOutputDecision(raw?: string): OutputDecision {
       return "QUARANTINE";
     case "REDACT":
       return "REDACT";
+    case "DENY":
+      return "QUARANTINE";
     default:
       return "ALLOW";
   }
@@ -1036,30 +1040,12 @@ export function mapDLQEntry(entry: BackendDLQEntry): DLQEntry {
   };
 }
 
-function normalizeMatchCriteria(raw: Record<string, unknown>): Record<string, unknown> {
+function normalizeMatchCriteria(raw: Record<string, unknown>): PolicyRuleMatch {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(raw)) {
-    switch (key) {
-      case "risk_tags":
-        out.riskTags = value;
-        break;
-      case "pack_ids":
-        out.packIds = value;
-        break;
-      case "actor_ids":
-        out.actorIds = value;
-        break;
-      case "actor_types":
-        out.actorTypes = value;
-        break;
-      case "secrets_present":
-        out.secretsPresent = value;
-        break;
-      default:
-        out[key] = value;
-    }
+    out[key] = value;
   }
-  return out;
+  return out as PolicyRuleMatch;
 }
 
 export function mapPolicyRule(raw: Record<string, unknown>): PolicyRule {
@@ -1069,15 +1055,21 @@ export function mapPolicyRule(raw: Record<string, unknown>): PolicyRule {
   const match = (raw.match as Record<string, unknown>) ?? {};
   const priority = typeof raw.priority === "number" ? raw.priority : undefined;
   const logic = typeof raw.logic === "string" ? raw.logic : undefined;
+  const name = typeof raw.name === "string" ? raw.name : id;
+  const normalizedDecision = normalizeDecisionType(decision);
+  const normalizedMatch = normalizeMatchCriteria(match);
   return {
     id,
-    matchCriteria: normalizeMatchCriteria(match),
-    decisionType: normalizeDecisionType(decision),
+    name,
+    match: normalizedMatch,
+    decision: normalizedDecision,
+    matchCriteria: normalizedMatch as Record<string, unknown>,
+    decisionType: normalizedDecision,
     reason,
-    priority,
+    priority: priority ?? 0,
     logic,
     source: typeof raw.source === "object" && raw.source ? (raw.source as Record<string, unknown>) : undefined,
-    enabled: typeof raw.enabled === "boolean" ? raw.enabled : undefined,
+    enabled: typeof raw.enabled === "boolean" ? raw.enabled : true,
   };
 }
 
@@ -1090,7 +1082,7 @@ export function mapPolicyBundleSummary(summary: BackendPolicyBundleSummary, cont
       const rawRules = Array.isArray(parsed?.rules) ? parsed.rules : [];
       rules = rawRules.map((r: unknown) => mapPolicyRule(r as Record<string, unknown>));
     } catch {
-      logger.debug("transform", "YAML parse error in policy bundle summary, falling back to empty rules");
+      logger.warn("transform", "YAML parse error in policy bundle summary, falling back to empty rules");
     }
   }
   return {
@@ -1129,7 +1121,7 @@ export function mapPolicyBundleDetail(detail: BackendPolicyBundleDetail): Policy
       const rawRules = Array.isArray(parsed?.rules) ? parsed.rules : [];
       rules = rawRules.map((r: unknown) => mapPolicyRule(r as Record<string, unknown>));
     } catch {
-      logger.debug("transform", "YAML parse error in policy bundle detail, falling back to empty rules");
+      logger.warn("transform", "YAML parse error in policy bundle detail, falling back to empty rules");
     }
   }
   return {

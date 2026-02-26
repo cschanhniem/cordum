@@ -1,7 +1,199 @@
-import { PolicyAnalytics } from "../components/policy/PolicyAnalytics";
-import { usePageTitle } from "../hooks/usePageTitle";
+/*
+ * DESIGN: "Control Surface" — Policy Analytics
+ * PRD Section 19: Evaluation charts and decision breakdown
+ */
+import { useMemo } from "react";
+import { motion } from "framer-motion";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { SkeletonCard } from "@/components/ui/Skeleton";
+import { TrendingUp, Shield, XCircle, AlertTriangle } from "lucide-react";
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
+import { usePolicyAudit } from "@/hooks/usePolicies";
+
+function categorizeAction(action: string): "allowed" | "blocked" | "warned" {
+  const lower = action.toLowerCase();
+  if (lower.includes("block") || lower.includes("deny") || lower.includes("denied") || lower.includes("reject")) return "blocked";
+  if (lower.includes("warn")) return "warned";
+  return "allowed";
+}
+
+function formatDay(timestamp: string): string {
+  try {
+    return new Date(timestamp).toLocaleDateString("en-US", { weekday: "short" });
+  } catch {
+    return "?";
+  }
+}
 
 export default function PoliciesAnalyticsPage() {
-  usePageTitle("Policies - Analytics");
-  return <PolicyAnalytics />;
+  const { data: auditData, isLoading, error } = usePolicyAudit();
+  const auditEntries = auditData?.items ?? [];
+
+  // KPIs
+  const { total, blockRate } = useMemo(() => {
+    const t = auditEntries.length;
+    const b = auditEntries.filter(e => categorizeAction(e.action) === "blocked").length;
+    return { total: t, blockRate: t > 0 ? ((b / t) * 100).toFixed(1) : "0.0" };
+  }, [auditEntries]);
+
+  // Trend data: group by day
+  const trendData = useMemo(() => {
+    const dayMap = new Map<string, { date: string; allowed: number; blocked: number; warned: number }>();
+    for (const entry of auditEntries) {
+      const day = formatDay(entry.timestamp);
+      if (!dayMap.has(day)) dayMap.set(day, { date: day, allowed: 0, blocked: 0, warned: 0 });
+      const row = dayMap.get(day)!;
+      row[categorizeAction(entry.action)]++;
+    }
+    return Array.from(dayMap.values());
+  }, [auditEntries]);
+
+  // Breakdown data
+  const breakdownData = useMemo(() => {
+    let allowed = 0, warned = 0, blocked = 0;
+    for (const entry of auditEntries) {
+      const cat = categorizeAction(entry.action);
+      if (cat === "allowed") allowed++;
+      else if (cat === "warned") warned++;
+      else blocked++;
+    }
+    return [
+      { name: "Allowed", value: allowed, color: "#00E5A0" },
+      { name: "Warned", value: warned, color: "#F59E0B" },
+      { name: "Blocked", value: blocked, color: "#EF4444" },
+    ];
+  }, [auditEntries]);
+
+  // Top blocked rules
+  const topBlocked = useMemo(() => {
+    const blockedEntries = auditEntries.filter(e => categorizeAction(e.action) === "blocked");
+    const ruleMap = new Map<string, number>();
+    for (const entry of blockedEntries) {
+      const rule = entry.resourceName || entry.bundleId || "unknown";
+      ruleMap.set(rule, (ruleMap.get(rule) ?? 0) + 1);
+    }
+    const sorted = Array.from(ruleMap.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4);
+    const maxCount = sorted.length > 0 ? sorted[0][1] : 1;
+    return sorted.map(([rule, count]) => ({
+      rule,
+      count,
+      pct: Math.round((count / maxCount) * 100),
+    }));
+  }, [auditEntries]);
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+      <PageHeader title="Policy Analytics" subtitle="Evaluation trends and decision breakdown" />
+
+      {isLoading ? (
+        <div className="grid grid-cols-3 gap-4">{Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} />)}</div>
+      ) : error ? (
+        <div className="instrument-card p-8 text-center">
+          <AlertTriangle className="w-8 h-8 text-red-400 mx-auto mb-3" />
+          <p className="text-sm text-foreground font-medium mb-1">Failed to load analytics</p>
+          <p className="text-xs text-muted-foreground">
+            {error instanceof Error ? error.message : "An unexpected error occurred"}
+          </p>
+        </div>
+      ) : (
+        <>
+          {/* KPI Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {[
+              { label: "Total Evaluations", value: total.toLocaleString(), icon: Shield },
+              { label: "Block Rate", value: `${blockRate}%`, icon: XCircle },
+              { label: "Avg Latency", value: "\u2014", icon: TrendingUp },
+            ].map((kpi, i) => {
+              const Icon = kpi.icon;
+              return (
+                <motion.div key={kpi.label} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
+                  className="instrument-card p-5">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">{kpi.label}</span>
+                    <Icon className="w-4 h-4 text-muted-foreground" />
+                  </div>
+                  <span className="text-2xl font-mono font-bold text-foreground">{kpi.value}</span>
+                </motion.div>
+              );
+            })}
+          </div>
+
+          {/* Trend Chart */}
+          <div className="instrument-card p-5">
+            <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-4">Evaluation Trend</p>
+            {trendData.length === 0 ? (
+              <p className="text-xs text-muted-foreground text-center py-8">No evaluation data available</p>
+            ) : (
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={trendData}>
+                    <XAxis dataKey="date" tick={{ fill: "#6B7280", fontSize: 10 }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fill: "#6B7280", fontSize: 10 }} axisLine={false} tickLine={false} />
+                    <Tooltip contentStyle={{ background: "#1E293B", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "8px", fontSize: "12px" }} />
+                    <Area type="monotone" dataKey="allowed" stackId="1" stroke="#00E5A0" fill="#00E5A0" fillOpacity={0.2} />
+                    <Area type="monotone" dataKey="warned" stackId="1" stroke="#F59E0B" fill="#F59E0B" fillOpacity={0.2} />
+                    <Area type="monotone" dataKey="blocked" stackId="1" stroke="#EF4444" fill="#EF4444" fillOpacity={0.2} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+
+          {/* Decision Breakdown */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="instrument-card p-5">
+              <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-4">Decision Breakdown</p>
+              {total === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-8">No evaluation data available</p>
+              ) : (
+                <>
+                  <div className="h-48">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie data={breakdownData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={3} dataKey="value">
+                          {breakdownData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+                        </Pie>
+                        <Tooltip contentStyle={{ background: "#1E293B", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "8px", fontSize: "12px" }} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="flex justify-center gap-4 mt-2">
+                    {breakdownData.map(b => (
+                      <div key={b.name} className="flex items-center gap-1.5">
+                        <div className="w-2 h-2 rounded-full" style={{ background: b.color }} />
+                        <span className="text-[10px] text-muted-foreground">{b.name} ({b.value})</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="instrument-card p-5">
+              <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-4">Top Blocked Rules</p>
+              {topBlocked.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-8">No blocks in audit window</p>
+              ) : (
+                <div className="space-y-3">
+                  {topBlocked.map((r, i) => (
+                    <div key={r.rule}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-mono text-foreground">{r.rule}</span>
+                        <span className="text-xs text-muted-foreground">{r.count} blocks</span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-surface-2 overflow-hidden">
+                        <motion.div className="h-full rounded-full bg-red-400" initial={{ width: 0 }} animate={{ width: `${r.pct}%` }}
+                          transition={{ duration: 0.6, delay: i * 0.1 }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </motion.div>
+  );
 }

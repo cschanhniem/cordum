@@ -1,61 +1,156 @@
-import { useCallback, useState } from "react";
+/*
+ * DESIGN: "Control Surface" — Policy Rules
+ * Matches cordumds-gj5mw4zm.manus.space showcase patterns
+ */
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { RulesTable } from "../components/policy/RulesTable";
-import { OutputRulesTab } from "../components/policy/OutputRulesTab";
-import type { PolicyRule } from "../api/types";
-import { usePageTitle } from "../hooks/usePageTitle";
-import { cn } from "../lib/utils";
-import { usePolicyBundleContext } from "../components/policy/PolicyBundleContext";
+import { useQuery } from "@tanstack/react-query";
+import { motion } from "framer-motion";
+import { get } from "@/api/client";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { Button } from "@/components/ui/Button";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { SkeletonTable } from "@/components/ui/Skeleton";
+import { Search, Plus, Shield, ArrowLeft, ToggleLeft, ToggleRight, Eye } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+interface PolicyRule {
+  id: string;
+  name: string;
+  description?: string;
+  decision: string;
+  priority?: number;
+  enabled?: boolean;
+  conditions?: Record<string, any>;
+  createdAt?: string;
+  updatedAt?: string;
+}
 
 export default function PoliciesRulesPage() {
-  usePageTitle("Policies - Rules");
-  const { bundleId } = usePolicyBundleContext();
   const navigate = useNavigate();
-  const [ruleType, setRuleType] = useState<"input" | "output">("input");
+  const [search, setSearch] = useState("");
 
-  const handleSelectRule = useCallback(
-    (rule: PolicyRule) => {
-      const source = rule.source as Record<string, unknown> | undefined;
-      const bundleId =
-        source && typeof source === "object" && "fragment_id" in source
-          ? String(source.fragment_id ?? "").trim()
-          : "";
-      if (bundleId) {
-        navigate(`/policies/rules/new?bundle=${encodeURIComponent(bundleId)}`);
-      } else {
-        navigate("/policies/rules/new");
-      }
+  const { data: rules, isLoading } = useQuery({
+    queryKey: ["policy-rules"],
+    queryFn: async () => {
+      const res = await get<{ items: PolicyRule[] }>("/policies/rules?limit=500");
+      return res.items ?? [];
     },
-    [navigate],
-  );
+  });
+
+  const all = rules ?? [];
+  const filtered = all.filter((r) => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return r.name.toLowerCase().includes(q) || r.id.toLowerCase().includes(q) || (r.description ?? "").toLowerCase().includes(q);
+  });
 
   return (
-    <div className="space-y-4">
-      <div className="flex w-fit items-center gap-1 rounded-xl border border-border p-0.5">
-        {[
-          { id: "input" as const, label: "Input Rules" },
-          { id: "output" as const, label: "Output Rules" },
-        ].map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => setRuleType(item.id)}
-            className={cn(
-              "rounded-lg px-3 py-1 text-xs font-semibold uppercase tracking-wide transition",
-              ruleType === item.id
-                ? "bg-accent text-white"
-                : "text-muted hover:bg-surface2 hover:text-ink",
-            )}
-          >
-            {item.label}
-          </button>
-        ))}
+    <div className="space-y-6">
+      <PageHeader
+        label="Safety"
+        title="Policy Rules"
+        subtitle={`${all.length} rule${all.length !== 1 ? "s" : ""} defined`}
+        actions={
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => navigate("/policies")}>
+              <ArrowLeft className="w-3 h-3 mr-1" />
+              Back
+            </Button>
+            <Button variant="primary" size="sm" onClick={() => navigate("/policies/rules/new")}>
+              <Plus className="w-3 h-3 mr-1" />
+              New Rule
+            </Button>
+          </div>
+        }
+      />
+
+      {/* Search — showcase style */}
+      <div className="relative max-w-sm">
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+        <input
+          type="text"
+          placeholder="Search rules..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="h-8 w-full pl-8 pr-3 text-xs bg-surface-1 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+        />
       </div>
 
-      {ruleType === "input" ? (
-        <RulesTable onSelectRule={handleSelectRule} />
+      {/* Rules Table — showcase style */}
+      {isLoading ? (
+        <div className="instrument-card p-5">
+          <SkeletonTable rows={6} />
+        </div>
+      ) : filtered.length === 0 ? (
+        <EmptyState
+          icon={<Shield className="w-5 h-5" />}
+          title="No rules found"
+          description="Create your first policy rule"
+          action={
+            <Button variant="primary" size="sm" onClick={() => navigate("/policies/rules/new")}>
+              <Plus className="w-3 h-3 mr-1" />
+              New Rule
+            </Button>
+          }
+        />
       ) : (
-        <OutputRulesTab activeBundleId={bundleId} />
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+          className="instrument-card overflow-hidden"
+        >
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-border bg-surface-0">
+                <th className="px-5 py-3 w-10"></th>
+                <th className="text-center px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider w-20">Priority</th>
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Rule Name</th>
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider w-24">Decision</th>
+                <th className="text-right px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider w-28">Updated</th>
+                <th className="px-5 py-3 w-10"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((r) => (
+                <tr
+                  key={r.id}
+                  onClick={() => navigate(`/policies/rules/${r.id}`)}
+                  className="border-b border-border hover:bg-surface-1 transition-colors cursor-pointer"
+                >
+                  <td className="px-5 py-3">
+                    {r.enabled !== false
+                      ? <ToggleRight className="w-4 h-4 text-cordum" />
+                      : <ToggleLeft className="w-4 h-4 text-muted-foreground" />
+                    }
+                  </td>
+                  <td className="px-5 py-3 text-center font-mono text-xs text-muted-foreground">{r.priority ?? "—"}</td>
+                  <td className="px-5 py-3">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{r.name}</p>
+                      {r.description && <p className="text-xs text-muted-foreground truncate max-w-[300px]">{r.description}</p>}
+                    </div>
+                  </td>
+                  <td className="px-5 py-3">
+                    <StatusBadge variant={r.decision === "allow" ? "healthy" : r.decision === "deny" ? "danger" : "warning"}>
+                      {r.decision}
+                    </StatusBadge>
+                  </td>
+                  <td className="px-5 py-3 text-right text-xs text-muted-foreground font-mono">
+                    {r.updatedAt ? new Date(r.updatedAt).toLocaleDateString() : "—"}
+                  </td>
+                  <td className="px-5 py-3">
+                    <button className="p-1 rounded hover:bg-surface-2 transition-colors">
+                      <Eye className="w-3.5 h-3.5 text-muted-foreground" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </motion.div>
       )}
     </div>
   );

@@ -1,157 +1,173 @@
-import { lazy, Suspense } from "react";
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
-import { QueryClient, QueryClientProvider, QueryCache, MutationCache } from "@tanstack/react-query";
-import { ProtectedRoute } from "./components/ProtectedRoute";
+import { Suspense, lazy, useEffect, type ReactNode } from "react";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { Toaster } from "sonner";
+import { useConfigStore } from "./state/config";
+import { useUiStore } from "./state/ui";
+import { AppShell } from "./components/layout/AppShell";
+import { LoadingScreen } from "./components/layout/LoadingScreen";
+import { useRequireAuth } from "./hooks/useAuth";
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import { LoadingScreen } from "./components/ui/Spinner";
-import { ToastContainer } from "./components/ui/Toast";
-import { logger } from "./lib/logger";
-import { shouldRetry, retryDelay } from "./api/retry";
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
+      staleTime: 10_000,
+      retry: 2,
       refetchOnWindowFocus: false,
-      retry: shouldRetry,
-      retryDelay,
     },
   },
-  queryCache: new QueryCache({
-    onError: (error, query) => {
-      const retryCount = query.state.fetchFailureCount;
-      if (retryCount > 0) {
-        logger.warn("react-query", "Query retry exhausted", {
-          queryKey: query.queryKey,
-          attempt: retryCount,
-          error: error.message,
-        });
-      } else {
-        logger.error("react-query", "Query failed", {
-          queryKey: query.queryKey,
-          error: error.message,
-        });
-      }
-    },
-  }),
-  mutationCache: new MutationCache({
-    onError: (error) => {
-      logger.error("react-query", "Mutation failed", {
-        error: error.message,
-      });
-    },
-  }),
 });
 
 // Lazy-loaded pages
-const HomePage = lazy(() => import("./pages/HomePage"));
 const LoginPage = lazy(() => import("./pages/LoginPage"));
+const HomePage = lazy(() => import("./pages/HomePage"));
 const JobsPage = lazy(() => import("./pages/JobsPage"));
 const JobDetailPage = lazy(() => import("./pages/JobDetailPage"));
-const WorkflowsPage = lazy(() => import("./pages/WorkflowsPage"));
-const WorkflowCreatePage = lazy(() => import("./pages/WorkflowCreatePage"));
-const WorkflowDetailPage = lazy(() => import("./pages/WorkflowDetailPage"));
-const RunDetailPage = lazy(() => import("./pages/RunDetailPage"));
 const AgentsPage = lazy(() => import("./pages/AgentsPage"));
-const PolicyLayout = lazy(() => import("./components/policy/PolicyLayout"));
+const AgentDetailPage = lazy(() => import("./pages/AgentDetailPage"));
+const ApprovalsPage = lazy(() => import("./pages/ApprovalsPage"));
+const WorkflowsPage = lazy(() => import("./pages/WorkflowsPage"));
+const WorkflowDetailPage = lazy(() => import("./pages/WorkflowDetailPage"));
+const WorkflowCreatePage = lazy(() => import("./pages/WorkflowCreatePage"));
+const RunDetailPage = lazy(() => import("./pages/RunDetailPage"));
 const PoliciesOverviewPage = lazy(() => import("./pages/PoliciesOverviewPage"));
+const PoliciesBundlesPage = lazy(() => import("./pages/PoliciesBundlesPage"));
 const PoliciesRulesPage = lazy(() => import("./pages/PoliciesRulesPage"));
 const PoliciesBuilderPage = lazy(() => import("./pages/PoliciesBuilderPage"));
 const PoliciesSimulatorPage = lazy(() => import("./pages/PoliciesSimulatorPage"));
 const PoliciesHistoryPage = lazy(() => import("./pages/PoliciesHistoryPage"));
 const PoliciesAnalyticsPage = lazy(() => import("./pages/PoliciesAnalyticsPage"));
-const ApprovalsPage = lazy(() => import("./pages/ApprovalsPage"));
+const PoliciesPublishPage = lazy(() => import("./pages/PoliciesPublishPage"));
+const PacksPage = lazy(() => import("./pages/PacksPage"));
+const SchemasPage = lazy(() => import("./pages/SchemasPage"));
+const SchemaDetailPage = lazy(() => import("./pages/SchemaDetailPage"));
 const AuditLogPage = lazy(() => import("./pages/AuditLogPage"));
 const DLQPage = lazy(() => import("./pages/DLQPage"));
-const PacksPage = lazy(() => import("./pages/PacksPage"));
-const SettingsLayout = lazy(() => import("./components/settings/SettingsLayout"));
+const TracesPage = lazy(() => import("./pages/TracesPage"));
 const SettingsHealthPage = lazy(() => import("./pages/SettingsHealthPage"));
 const SettingsKeysPage = lazy(() => import("./pages/SettingsKeysPage"));
 const SettingsUsersPage = lazy(() => import("./pages/SettingsUsersPage"));
 const SettingsNotificationsPage = lazy(() => import("./pages/SettingsNotificationsPage"));
 const SettingsEnvironmentsPage = lazy(() => import("./pages/SettingsEnvironmentsPage"));
 const SettingsConfigPage = lazy(() => import("./pages/SettingsConfigPage"));
-const OutputSafetySettings = lazy(() => import("./pages/settings/OutputSafetySettings"));
-const InputSafetySettings = lazy(() => import("./pages/settings/InputSafetySettings"));
 const SettingsMcpPage = lazy(() => import("./pages/SettingsMcpPage"));
-const SchemasPage = lazy(() => import("./pages/SchemasPage"));
-const SchemaDetailPage = lazy(() => import("./pages/SchemaDetailPage"));
+const InputSafetyPage = lazy(() => import("./pages/InputSafetyPage"));
+const OutputSafetyPage = lazy(() => import("./pages/OutputSafetyPage"));
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage"));
+const SettingsHubPage = lazy(() => import("./pages/SettingsHubPage"));
+const SecurityOverviewPage = lazy(() => import("./pages/SecurityOverviewPage"));
 
+function ThemeSync() {
+  const resolvedTheme = useUiStore((s) => s.resolvedTheme);
 
-function LocationAwareErrorBoundary({ children }: { children: React.ReactNode }) {
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.remove("light", "dark");
+    root.classList.add(resolvedTheme);
+    root.style.colorScheme = resolvedTheme;
+  }, [resolvedTheme]);
+
+  return null;
+}
+
+function ErrorBoundaryWrapper({ children }: { children: ReactNode }) {
   const location = useLocation();
   return <ErrorBoundary resetKey={location.pathname}>{children}</ErrorBoundary>;
+}
+
+function ProtectedRoutes() {
+  const isAuthenticated = useRequireAuth();
+  if (!isAuthenticated) return null;
+
+  return (
+    <AppShell>
+      <ErrorBoundaryWrapper>
+      <Suspense fallback={<LoadingScreen />}>
+        <Routes>
+          {/* OPERATE */}
+          <Route path="/" element={<HomePage />} />
+          <Route path="/security" element={<SecurityOverviewPage />} />
+          <Route path="/agents" element={<AgentsPage />} />
+          <Route path="/agents/:id" element={<AgentDetailPage />} />
+          <Route path="/jobs" element={<JobsPage />} />
+          <Route path="/jobs/:id" element={<JobDetailPage />} />
+
+          {/* ORCHESTRATE */}
+          <Route path="/workflows" element={<WorkflowsPage />} />
+          <Route path="/workflows/new" element={<WorkflowCreatePage />} />
+          <Route path="/workflows/:id/edit" element={<WorkflowCreatePage />} />
+          <Route path="/workflows/:id" element={<WorkflowDetailPage />} />
+          <Route path="/workflows/:id/runs/:runId" element={<RunDetailPage />} />
+          <Route path="/approvals" element={<ApprovalsPage />} />
+
+          {/* GOVERN */}
+          <Route path="/policies" element={<PoliciesOverviewPage />} />
+          <Route path="/policies/bundles" element={<PoliciesBundlesPage />} />
+          <Route path="/policies/rules" element={<PoliciesRulesPage />} />
+          <Route path="/policies/rules/new" element={<PoliciesBuilderPage />} />
+          <Route path="/policies/rules/:id" element={<PoliciesBuilderPage />} />
+          <Route path="/policies/builder" element={<PoliciesBuilderPage />} />
+          <Route path="/policies/simulator" element={<PoliciesSimulatorPage />} />
+          <Route path="/policies/history" element={<PoliciesHistoryPage />} />
+          <Route path="/policies/analytics" element={<PoliciesAnalyticsPage />} />
+          <Route path="/policies/publish" element={<PoliciesPublishPage />} />
+
+          {/* EXTEND */}
+          <Route path="/packs" element={<PacksPage />} />
+          <Route path="/schemas" element={<SchemasPage />} />
+          <Route path="/schemas/:id" element={<SchemaDetailPage />} />
+
+          {/* OBSERVE */}
+          <Route path="/traces" element={<TracesPage />} />
+          <Route path="/audit" element={<AuditLogPage />} />
+          <Route path="/dlq" element={<DLQPage />} />
+
+          {/* SETTINGS */}
+          <Route path="/safety/input" element={<InputSafetyPage />} />
+          <Route path="/safety/output" element={<OutputSafetyPage />} />
+          <Route path="/settings" element={<SettingsHubPage />} />
+          <Route path="/settings/health" element={<SettingsHealthPage />} />
+          <Route path="/settings/keys" element={<SettingsKeysPage />} />
+          <Route path="/settings/users" element={<SettingsUsersPage />} />
+          <Route path="/settings/notifications" element={<SettingsNotificationsPage />} />
+          <Route path="/settings/environments" element={<SettingsEnvironmentsPage />} />
+          <Route path="/settings/config" element={<SettingsConfigPage />} />
+          <Route path="/settings/mcp" element={<SettingsMcpPage />} />
+
+          {/* Legacy redirects */}
+          <Route path="/pools" element={<Navigate to="/agents" replace />} />
+          <Route path="/system" element={<Navigate to="/settings/health" replace />} />
+          <Route path="*" element={<NotFoundPage />} />
+        </Routes>
+      </Suspense>
+      </ErrorBoundaryWrapper>
+    </AppShell>
+  );
 }
 
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <ErrorBoundary>
-          <ToastContainer />
-          <Suspense fallback={<LoadingScreen />}>
-            <Routes>
-              {/* Public route */}
-              <Route path="/login" element={<LoginPage />} />
-
-              {/* Protected routes inside ProtectedRoute (provides AppShell) */}
-              <Route
-                path="*"
-                element={
-                  <ProtectedRoute>
-                    <LocationAwareErrorBoundary>
-                      <Suspense fallback={<LoadingScreen />}>
-                        <Routes>
-                      <Route path="/" element={<HomePage />} />
-                      <Route path="/jobs" element={<JobsPage />} />
-                      <Route path="/jobs/:id" element={<JobDetailPage />} />
-                      <Route path="/workflows" element={<WorkflowsPage />} />
-                      <Route path="/workflows/new" element={<WorkflowCreatePage />} />
-                      <Route path="/workflows/:id/edit" element={<WorkflowCreatePage />} />
-                      <Route path="/workflows/:id" element={<WorkflowDetailPage />} />
-                      <Route path="/workflows/:id/runs/:runId" element={<RunDetailPage />} />
-                      <Route path="/agents" element={<AgentsPage />} />
-                      <Route path="/policies" element={<PolicyLayout />}>
-                        <Route index element={<PoliciesOverviewPage />} />
-                        <Route path="rules" element={<PoliciesRulesPage />} />
-                        <Route path="rules/new" element={<PoliciesBuilderPage />} />
-                        <Route path="rules/:id" element={<PoliciesBuilderPage />} />
-                        <Route path="simulator" element={<PoliciesSimulatorPage />} />
-                        <Route path="history" element={<PoliciesHistoryPage />} />
-                        <Route path="analytics" element={<PoliciesAnalyticsPage />} />
-                      </Route>
-                      <Route path="/policy" element={<Navigate to="/policies" replace />} />
-                      <Route path="/approvals" element={<ApprovalsPage />} />
-                      <Route path="/audit" element={<AuditLogPage />} />
-                      <Route path="/dlq" element={<DLQPage />} />
-                      <Route path="/packs" element={<PacksPage />} />
-                      <Route path="/settings" element={<SettingsLayout />}>
-                        <Route index element={<Navigate to="health" replace />} />
-                        <Route path="health" element={<SettingsHealthPage />} />
-                        <Route path="keys" element={<SettingsKeysPage />} />
-                        <Route path="users" element={<SettingsUsersPage />} />
-                        <Route path="notifications" element={<SettingsNotificationsPage />} />
-                        <Route path="environments" element={<SettingsEnvironmentsPage />} />
-                        <Route path="config" element={<SettingsConfigPage />} />
-                        <Route path="output-safety" element={<OutputSafetySettings />} />
-                        <Route path="input-safety" element={<InputSafetySettings />} />
-                        <Route path="mcp" element={<SettingsMcpPage />} />
-                      </Route>
-                      <Route path="/schemas" element={<SchemasPage />} />
-                      <Route path="/schemas/:id" element={<SchemaDetailPage />} />
-                      {/* Legacy redirects */}
-                      <Route path="/pools" element={<Navigate to="/agents" replace />} />
-                      <Route path="/system" element={<Navigate to="/settings/health" replace />} />
-                      <Route path="*" element={<NotFoundPage />} />
-                        </Routes>
-                      </Suspense>
-                    </LocationAwareErrorBoundary>
-                  </ProtectedRoute>
-                }
-              />
-            </Routes>
-          </Suspense>
-        </ErrorBoundary>
+        <ThemeSync />
+        <Toaster
+          position="top-right"
+          toastOptions={{
+            style: {
+              background: "var(--surface)",
+              color: "var(--text)",
+              border: "1px solid var(--border-color)",
+              fontFamily: "var(--font-sans)",
+            },
+          }}
+        />
+        <Suspense fallback={<LoadingScreen />}>
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/*" element={<ProtectedRoutes />} />
+          </Routes>
+        </Suspense>
       </BrowserRouter>
     </QueryClientProvider>
   );

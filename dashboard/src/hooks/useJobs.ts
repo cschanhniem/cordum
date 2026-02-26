@@ -96,8 +96,10 @@ function rangeToMicros(range?: string): { after?: number; before?: number } {
 
 function buildParams(filters: JobFilters): string {
   const params = new URLSearchParams();
-  if (filters.state?.length === 1) {
-    params.set("state", stateToBackend(filters.state[0]));
+  if (filters.state?.length) {
+    for (const s of filters.state) {
+      params.append("state", stateToBackend(s));
+    }
   }
   if (filters.topic) params.set("topic", filters.topic);
   if (filters.tenant) params.set("tenant", filters.tenant);
@@ -133,7 +135,9 @@ export function useJobs(filters: JobFilters = {}) {
         `/jobs${buildParams(filters)}`,
       );
       let items = (res.items ?? []).map(mapJobRecord);
-      if (filters.state && filters.state.length > 1) {
+      // Defensive client-side filter: backend receives repeated state params but
+      // may not support multi-status filtering, so we re-filter here as a fallback.
+      if (filters.state && filters.state.length > 0) {
         items = items.filter((j) => filters.state?.includes(j.status));
       }
       if (filters.decision && filters.decision.length > 0) {
@@ -154,7 +158,7 @@ export function useJob(id: string) {
   return useQuery<Job>({
     queryKey: queryKeys.jobs.detail(id),
     queryFn: async () => {
-      const res = await get<BackendJobDetail>(`/jobs/${id}`);
+      const res = await get<BackendJobDetail>(`/jobs/${encodeURIComponent(id)}`);
       return mapJobDetail(res);
     },
     enabled: !!id,
@@ -166,7 +170,7 @@ export function useJobDecisions(id: string) {
   return useQuery<SafetyDecision[]>({
     queryKey: queryKeys.jobs.decisions(id),
     queryFn: async () => {
-      const res = await get<Array<Record<string, unknown>>>(`/jobs/${id}/decisions`);
+      const res = await get<Array<Record<string, unknown>>>(`/jobs/${encodeURIComponent(id)}/decisions`);
       return (res ?? []).map((r) =>
         mapSafetyDecision(
           typeof r.decision === "string" ? r.decision : undefined,
@@ -206,6 +210,7 @@ export function useSubmitJob() {
         topic: input.topic,
         error: err.message,
       });
+      useToastStore.getState().addToast({ type: "error", title: "Job submission failed", description: err.message });
     },
   });
 }
@@ -216,7 +221,7 @@ export function useCancelJob() {
   return useMutation<void, Error, string, CancelSnapshot>({
     mutationFn: (id) => {
       logger.info("jobs", "Cancelling job", { id });
-      return post<void>(`/jobs/${id}/cancel`);
+      return post<void>(`/jobs/${encodeURIComponent(id)}/cancel`);
     },
     onMutate: async (id) => {
       await queryClient.cancelQueries({ queryKey: queryKeys.jobs.all });
@@ -304,6 +309,7 @@ export function useRemediateJob() {
         jobId: variables.jobId,
         error: err.message,
       });
+      useToastStore.getState().addToast({ type: "error", title: "Remediation failed", description: err.message });
     },
   });
 }

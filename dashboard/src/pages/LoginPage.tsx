@@ -1,266 +1,324 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { Button } from "../components/ui/Button";
-import { Input } from "../components/ui/Input";
-import { Card } from "../components/ui/Card";
-import { useAuthConfig } from "../hooks/useAuthConfig";
-import { useConfigStore } from "../state/config";
-import { post } from "../api/client";
-import type { User } from "../api/types";
-import { usePageTitle } from "../hooks/usePageTitle";
+/*
+ * DESIGN: "Control Surface" — Login
+ * Multi-auth: API Key, Password, OIDC, SAML
+ */
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { motion, AnimatePresence } from "framer-motion";
+import { useConfigStore } from "@/state/config";
+import { Button } from "@/components/ui/Button";
+import { toast } from "sonner";
+import { KeyRound, ArrowRight, Layers, Lock, Globe, Building2, ChevronDown } from "lucide-react";
+import { cn } from "@/lib/utils";
 
-interface LoginResponse {
-  token: string;
-  user: User;
-}
+type AuthMode = "api_key" | "password" | "oidc" | "saml";
+
+const authModes: { id: AuthMode; label: string; icon: React.ReactNode; description: string }[] = [
+  { id: "api_key", label: "API Key", icon: <KeyRound className="w-4 h-4" />, description: "Connect with an API key" },
+  { id: "password", label: "Password", icon: <Lock className="w-4 h-4" />, description: "Username & password login" },
+  { id: "oidc", label: "OIDC / SSO", icon: <Globe className="w-4 h-4" />, description: "OpenID Connect provider" },
+  { id: "saml", label: "SAML / Enterprise", icon: <Building2 className="w-4 h-4" />, description: "Enterprise SAML SSO" },
+];
 
 export default function LoginPage() {
-  usePageTitle("Sign In");
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const returnUrl = searchParams.get("returnUrl") || "/";
-  const { data: authConfig, isLoading: authLoading } = useAuthConfig();
   const login = useConfigStore((s) => s.login);
+  const [authMode, setAuthMode] = useState<AuthMode>("api_key");
+  const [showModeSelector, setShowModeSelector] = useState(false);
 
-  const userAuthEnabled = authConfig?.user_auth_enabled ?? false;
-  const apiKeyEnabled = authConfig?.password_enabled ?? false;
-  const defaultTenant = authConfig?.default_tenant || "default";
-  const authRequired = userAuthEnabled || apiKeyEnabled || authConfig?.saml_enabled;
+  // API Key fields
+  const [apiUrl, setApiUrl] = useState("");
+  const [apiKey, setApiKey] = useState("");
 
-  type LoginMode = "user" | "apiKey";
-  const [mode, setMode] = useState<LoginMode>(userAuthEnabled ? "user" : "apiKey");
-
+  // Password fields
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [apiKeyInput, setApiKeyInput] = useState("");
-  const [tenantInput, setTenantInput] = useState(defaultTenant);
-  const [error, setError] = useState("");
-  const [submitting, setSubmitting] = useState(false);
 
-  const showModeToggle = userAuthEnabled && apiKeyEnabled;
-  const effectiveMode: LoginMode = userAuthEnabled ? mode : "apiKey";
+  const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    if (userAuthEnabled) {
-      setMode((m) => (m === "apiKey" && !apiKeyEnabled ? "user" : m));
-    } else {
-      setMode("apiKey");
-    }
-  }, [userAuthEnabled, apiKeyEnabled]);
-
-  useEffect(() => {
-    setTenantInput((t) => t || defaultTenant);
-  }, [defaultTenant]);
-
-  const handlePasswordLogin = async (e: FormEvent) => {
-    e.preventDefault();
-    setError("");
-    setSubmitting(true);
-    try {
-      const tenant = tenantInput.trim();
-      const res = await post<LoginResponse>("/auth/login", {
-        username,
-        password,
-        tenant: tenant || undefined,
-      });
-      login(res.token, res.user);
-      navigate(returnUrl, { replace: true });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Login failed");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleApiKeyLogin = (e: FormEvent) => {
-    e.preventDefault();
-    setError("");
-    const trimmed = apiKeyInput.trim();
-    if (!trimmed) {
-      setError("API key is required");
+  const handleApiKeyLogin = async () => {
+    if (!apiKey.trim()) {
+      toast.error("API key is required");
       return;
     }
-    const tenant = tenantInput.trim() || defaultTenant;
-    login(trimmed, {
-      id: "",
-      username: "api-key-user",
-      email: "",
-      display_name: "API Key User",
-      roles: [],
-      tenant,
-    });
-    navigate(returnUrl, { replace: true });
+    setLoading(true);
+    try {
+      const baseUrl = apiUrl.trim() || "/api/v1";
+      const res = await fetch(`${baseUrl}/auth/me`, {
+        headers: { Authorization: `Bearer ${apiKey.trim()}` },
+      });
+      if (res.ok) {
+        const user = await res.json();
+        login(apiKey.trim(), user);
+        toast.success("Connected to Cordum");
+        navigate("/");
+      } else {
+        const msg = res.status === 401 || res.status === 403
+          ? "Invalid API key"
+          : res.status >= 500
+            ? "Server error — try again later"
+            : `Connection failed (HTTP ${res.status})`;
+        toast.error(msg);
+      }
+    } catch {
+      toast.error("Cannot reach API server — check the endpoint URL");
+    } finally {
+      setLoading(false);
+    }
   };
 
+  const handlePasswordLogin = async () => {
+    if (!username.trim() || !password.trim()) {
+      toast.error("Username and password are required");
+      return;
+    }
+    setLoading(true);
+    try {
+      const baseUrl = apiUrl.trim() || "/api/v1";
+      const res = await fetch(`${baseUrl}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: username.trim(), password: password.trim() }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        // Fallback user object for servers that return { token } without a user field.
+        // Roles default to ["admin"] — the backend enforces real RBAC via the token.
+        login(data.token || "session", data.user || {
+          id: username.trim(),
+          username: username.trim(),
+          email: "",
+          display_name: username.trim(),
+          roles: ["admin"],
+          tenant: "default",
+        });
+        toast.success("Logged in");
+        navigate("/");
+      } else {
+        toast.error("Invalid credentials");
+      }
+    } catch {
+      toast.error("Cannot reach API server — check the endpoint URL");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleOidcLogin = () => {
+    const baseUrl = apiUrl.trim() || "/api/v1";
+    toast.info("Redirecting to OIDC provider...");
+    window.location.href = `${baseUrl}/auth/oidc/login`;
+  };
+
+  const handleSamlLogin = () => {
+    const baseUrl = apiUrl.trim() || "/api/v1";
+    toast.info("Redirecting to SAML IdP...");
+    window.location.href = `${baseUrl}/auth/saml/login`;
+  };
+
+  const handleSubmit = () => {
+    switch (authMode) {
+      case "api_key": return handleApiKeyLogin();
+      case "password": return handlePasswordLogin();
+      case "oidc": return handleOidcLogin();
+      case "saml": return handleSamlLogin();
+    }
+  };
+
+  const currentMode = authModes.find((m) => m.id === authMode)!;
+
   return (
-    <div className="flex min-h-screen items-center justify-center px-4">
-      <Card className="w-full max-w-md p-8">
-        <div className="mb-8 text-center">
-          <img
-            src="/assets/cordum-logo.png"
-            alt="Cordum logo"
-            className="mx-auto mb-4 h-12 w-auto object-contain dark:brightness-0 dark:invert"
-          />
-          <h1 className="font-display text-2xl font-semibold text-ink">
-            Cordum Control Plane
-          </h1>
-          <p className="mt-1 text-sm text-muted">
-            Sign in to continue
-          </p>
+    <div className="min-h-screen flex items-center justify-center bg-background dot-grid relative overflow-hidden">
+      {/* Ambient glow */}
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full bg-cordum/5 blur-[120px] pointer-events-none" />
+
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, ease: "easeOut" }}
+        className="w-full max-w-sm space-y-8 relative z-10"
+      >
+        {/* Logo */}
+        <div className="flex flex-col items-center">
+          <div className="w-14 h-14 rounded-xl bg-cordum/10 border border-cordum/20 flex items-center justify-center mb-4 glow-cordum">
+            <Layers className="w-7 h-7 text-cordum" />
+          </div>
+          <h1 className="text-2xl font-bold font-display text-foreground tracking-tight">Cordum</h1>
+          <p className="text-xs font-mono text-muted-foreground mt-1 uppercase tracking-[0.15em]">Agent Control Plane</p>
         </div>
 
-        {authLoading ? (
-          <div className="py-8 text-center text-sm text-muted">
-            Loading auth configuration...
+        {/* Form — instrument card style */}
+        <div className="instrument-card p-6 space-y-5">
+          {/* Auth Mode Selector */}
+          <div className="relative">
+            <button
+              onClick={() => setShowModeSelector(!showModeSelector)}
+              className="w-full flex items-center justify-between h-9 px-3 text-sm bg-surface-0 border border-border rounded-md text-foreground hover:bg-surface-1 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">{currentMode.icon}</span>
+                <span className="font-medium">{currentMode.label}</span>
+              </div>
+              <ChevronDown className={cn("w-3.5 h-3.5 text-muted-foreground transition-transform", showModeSelector && "rotate-180")} />
+            </button>
+
+            <AnimatePresence>
+              {showModeSelector && (
+                <motion.div
+                  initial={{ opacity: 0, y: -4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -4 }}
+                  className="absolute top-full left-0 right-0 mt-1 bg-surface-1 border border-border rounded-md shadow-xl z-20 overflow-hidden"
+                >
+                  {authModes.map((mode) => (
+                    <button
+                      key={mode.id}
+                      onClick={() => { setAuthMode(mode.id); setShowModeSelector(false); }}
+                      className={cn(
+                        "w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-surface-2 transition-colors",
+                        authMode === mode.id && "bg-cordum/5"
+                      )}
+                    >
+                      <span className={cn("text-muted-foreground", authMode === mode.id && "text-cordum")}>{mode.icon}</span>
+                      <div>
+                        <p className={cn("text-sm font-medium", authMode === mode.id ? "text-cordum" : "text-foreground")}>{mode.label}</p>
+                        <p className="text-[10px] text-muted-foreground">{mode.description}</p>
+                      </div>
+                    </button>
+                  ))}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
-        ) : !authRequired ? (
-          <div className="space-y-4 text-center">
-            <p className="text-sm text-muted">
-              Authentication is not required for this deployment.
-            </p>
-            <Button type="button" className="w-full" onClick={() => navigate(returnUrl, { replace: true })}>
-              Continue
-            </Button>
+
+          {/* API Endpoint — always shown */}
+          <div className="space-y-2">
+            <label className="text-[10px] font-mono font-semibold text-muted-foreground uppercase tracking-[0.08em]">
+              API Endpoint
+            </label>
+            <input
+              type="text"
+              placeholder="http://localhost:8080/api/v1"
+              value={apiUrl}
+              onChange={(e) => setApiUrl(e.target.value)}
+              className="h-9 w-full px-3 text-sm bg-surface-0 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum font-mono"
+            />
           </div>
-        ) : effectiveMode === "user" ? (
-          <form onSubmit={handlePasswordLogin} className="space-y-4">
-            {showModeToggle && (
-              <div className="flex rounded-full border border-border p-1">
-                <button
-                  type="button"
-                  className={`flex-1 rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-wide ${
-                    mode === "user" ? "bg-accent/15 text-accent" : "text-muted"
-                  }`}
-                  onClick={() => setMode("user")}
-                >
-                  User
-                </button>
-                <button
-                  type="button"
-                  className={`flex-1 rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-wide ${
-                    mode === "apiKey" ? "bg-accent/15 text-accent" : "text-muted"
-                  }`}
-                  onClick={() => setMode("apiKey")}
-                >
-                  API Key
-                </button>
-              </div>
-            )}
-            <div>
-              <label htmlFor="username" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">
-                Username
-              </label>
-              <Input
-                id="username"
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="Enter username"
-                autoComplete="username"
-                required
-              />
-            </div>
-            <div>
-              <label htmlFor="password" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">
-                Password
-              </label>
-              <Input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter password"
-                autoComplete="current-password"
-                required
-              />
-            </div>
-            <div>
-              <label htmlFor="tenant" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">
-                Tenant
-              </label>
-              <Input
-                id="tenant"
-                type="text"
-                value={tenantInput}
-                onChange={(e) => setTenantInput(e.target.value)}
-                placeholder={defaultTenant}
-                autoComplete="organization"
-              />
-            </div>
-            {error && (
-              <div className="rounded-xl bg-[color:rgba(184,58,58,0.1)] px-4 py-2.5 text-sm text-danger">
-                {error}
-              </div>
-            )}
-            <Button type="submit" className="w-full" disabled={submitting}>
-              {submitting ? "Signing in..." : "Sign in"}
-            </Button>
-          </form>
-        ) : (
-          <form onSubmit={handleApiKeyLogin} className="space-y-4">
-            {showModeToggle && (
-              <div className="flex rounded-full border border-border p-1">
-                <button
-                  type="button"
-                  className={`flex-1 rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-wide ${
-                    mode === "user" ? "text-muted" : "bg-accent/15 text-accent"
-                  }`}
-                  onClick={() => setMode("user")}
-                >
-                  User
-                </button>
-                <button
-                  type="button"
-                  className={`flex-1 rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-wide ${
-                    mode === "apiKey" ? "bg-accent/15 text-accent" : "text-muted"
-                  }`}
-                  onClick={() => setMode("apiKey")}
-                >
-                  API Key
-                </button>
-              </div>
-            )}
-            <div>
-              <label htmlFor="api-key" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">
+
+          {/* API Key mode */}
+          {authMode === "api_key" && (
+            <motion.div
+              key="api_key"
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="space-y-2"
+            >
+              <label className="text-[10px] font-mono font-semibold text-muted-foreground uppercase tracking-[0.08em]">
                 API Key
               </label>
-              <Input
-                id="api-key"
-                type="password"
-                value={apiKeyInput}
-                onChange={(e) => setApiKeyInput(e.target.value)}
-                placeholder="Enter your API key"
-                autoComplete="off"
-                required
-              />
-            </div>
-            <div>
-              <label htmlFor="tenant-api" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">
-                Tenant
-              </label>
-              <Input
-                id="tenant-api"
-                type="text"
-                value={tenantInput}
-                onChange={(e) => setTenantInput(e.target.value)}
-                placeholder={defaultTenant}
-                autoComplete="organization"
-              />
-            </div>
-            {error && (
-              <div className="rounded-xl bg-[color:rgba(184,58,58,0.1)] px-4 py-2.5 text-sm text-danger">
-                {error}
+              <div className="relative">
+                <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                <input
+                  type="password"
+                  placeholder="Enter your API key"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+                  className="h-9 w-full pl-9 pr-3 text-sm bg-surface-0 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum font-mono"
+                />
               </div>
-            )}
-            <Button type="submit" className="w-full" disabled={submitting}>
-              {submitting ? "Connecting..." : "Connect"}
-            </Button>
-            <p className="text-center text-xs text-muted">
-              API-key authentication mode
-            </p>
-          </form>
-        )}
-      </Card>
+            </motion.div>
+          )}
+
+          {/* Password mode */}
+          {authMode === "password" && (
+            <motion.div
+              key="password"
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="space-y-4"
+            >
+              <div className="space-y-2">
+                <label className="text-[10px] font-mono font-semibold text-muted-foreground uppercase tracking-[0.08em]">
+                  Username
+                </label>
+                <input
+                  type="text"
+                  placeholder="admin"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  className="h-9 w-full px-3 text-sm bg-surface-0 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum font-mono"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-mono font-semibold text-muted-foreground uppercase tracking-[0.08em]">
+                  Password
+                </label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                  <input
+                    type="password"
+                    placeholder="Enter password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+                    className="h-9 w-full pl-9 pr-3 text-sm bg-surface-0 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum font-mono"
+                  />
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {/* OIDC mode */}
+          {authMode === "oidc" && (
+            <motion.div
+              key="oidc"
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="text-center py-2"
+            >
+              <Globe className="w-8 h-8 text-cordum mx-auto mb-2" />
+              <p className="text-xs text-muted-foreground">
+                You will be redirected to your OIDC provider to authenticate.
+              </p>
+            </motion.div>
+          )}
+
+          {/* SAML mode */}
+          {authMode === "saml" && (
+            <motion.div
+              key="saml"
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="text-center py-2"
+            >
+              <Building2 className="w-8 h-8 text-cordum mx-auto mb-2" />
+              <p className="text-xs text-muted-foreground">
+                You will be redirected to your enterprise identity provider.
+              </p>
+            </motion.div>
+          )}
+
+          <Button variant="primary" className="w-full" loading={loading} onClick={handleSubmit}>
+            {authMode === "api_key" && "Connect"}
+            {authMode === "password" && "Sign In"}
+            {authMode === "oidc" && "Continue with OIDC"}
+            {authMode === "saml" && "Continue with SAML"}
+            <ArrowRight className="w-3.5 h-3.5 ml-1" />
+          </Button>
+        </div>
+
+        <p className="text-center text-xs text-muted-foreground">
+          Need help? Check the{" "}
+          <a href="https://cordum.io/docs" className="text-cordum hover:text-cordum-bright transition-colors">
+            documentation
+          </a>
+        </p>
+      </motion.div>
     </div>
   );
 }
