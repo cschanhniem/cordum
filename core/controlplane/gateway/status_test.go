@@ -29,11 +29,11 @@ func TestHandleStatusAndWorkers(t *testing.T) {
 	if workersRec.Code != http.StatusOK {
 		t.Fatalf("unexpected workers status: %d", workersRec.Code)
 	}
-	var workers []*pb.Heartbeat
-	if err := json.NewDecoder(workersRec.Body).Decode(&workers); err != nil {
+	var workersResp struct{ Items []*pb.Heartbeat }
+	if err := json.NewDecoder(workersRec.Body).Decode(&workersResp); err != nil {
 		t.Fatalf("decode workers: %v", err)
 	}
-	if len(workers) != 1 || workers[0].WorkerId != "w1" {
+	if len(workersResp.Items) != 1 || workersResp.Items[0].WorkerId != "w1" {
 		t.Fatalf("unexpected workers list")
 	}
 
@@ -252,15 +252,15 @@ func TestHandleGetWorkersFromRedisSnapshot(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("unexpected status: %d", rec.Code)
 	}
-	var workers []*pb.Heartbeat
-	if err := json.NewDecoder(rec.Body).Decode(&workers); err != nil {
+	var resp struct{ Items []*pb.Heartbeat }
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(workers) != 2 {
-		t.Fatalf("expected 2 workers from snapshot, got %d", len(workers))
+	if len(resp.Items) != 2 {
+		t.Fatalf("expected 2 workers from snapshot, got %d", len(resp.Items))
 	}
 	ids := map[string]bool{}
-	for _, w := range workers {
+	for _, w := range resp.Items {
 		ids[w.WorkerId] = true
 	}
 	if !ids["snap-w1"] || !ids["snap-w2"] {
@@ -282,12 +282,12 @@ func TestHandleGetWorkersFallbackOnRedisError(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("unexpected status: %d", rec.Code)
 	}
-	var workers []*pb.Heartbeat
-	if err := json.NewDecoder(rec.Body).Decode(&workers); err != nil {
+	var resp struct{ Items []*pb.Heartbeat }
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(workers) != 1 || workers[0].WorkerId != "local-w1" {
-		t.Fatalf("expected fallback to in-memory worker, got %+v", workers)
+	if len(resp.Items) != 1 || resp.Items[0].WorkerId != "local-w1" {
+		t.Fatalf("expected fallback to in-memory worker, got %+v", resp.Items)
 	}
 }
 
@@ -315,12 +315,12 @@ func TestHandleGetWorkersColdStart(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("unexpected status: %d", rec.Code)
 	}
-	var workers []*pb.Heartbeat
-	if err := json.NewDecoder(rec.Body).Decode(&workers); err != nil {
+	var resp struct{ Items []*pb.Heartbeat }
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(workers) != 3 {
-		t.Fatalf("expected 3 workers from snapshot on cold start, got %d", len(workers))
+	if len(resp.Items) != 3 {
+		t.Fatalf("expected 3 workers from snapshot on cold start, got %d", len(resp.Items))
 	}
 }
 

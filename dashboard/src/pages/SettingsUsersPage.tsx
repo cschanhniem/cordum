@@ -4,14 +4,15 @@
  */
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { get, post, del } from "@/api/client";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
-import { StatusBadge } from "@/components/ui/StatusBadge";
+import { StatusBadge, type BadgeVariant } from "@/components/ui/StatusBadge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonTable } from "@/components/ui/Skeleton";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { DialogOverlay } from "@/components/ui/DialogOverlay";
 import { Search, UserPlus, Users, Shield, Trash2, Edit, X, Mail, Key } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -25,7 +26,7 @@ interface User {
   status: "active" | "invited" | "disabled";
 }
 
-const ROLES = [
+const ROLES: { value: string; label: string; desc: string; color: BadgeVariant }[] = [
   { value: "admin", label: "Admin", desc: "Full access to all resources", color: "warning" },
   { value: "operator", label: "Operator", desc: "Manage jobs, workflows, approvals", color: "healthy" },
   { value: "viewer", label: "Viewer", desc: "Read-only access", color: "info" },
@@ -36,25 +37,37 @@ export default function SettingsUsersPage() {
   const [activeTab, setActiveTab] = useState("users");
   const [search, setSearch] = useState("");
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteUsername, setInviteUsername] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
+  const [invitePassword, setInvitePassword] = useState("");
   const [inviteRole, setInviteRole] = useState("operator");
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
 
   const { data: users, isLoading } = useQuery({
     queryKey: ["users"],
     queryFn: async () => {
-      const res: any = await get("/users");
-      return (res.data || []) as User[];
+      const res = await get<{ data?: User[] }>("/users");
+      return res.data || [];
     },
   });
 
+  const resetInviteForm = () => {
+    setInviteUsername("");
+    setInviteEmail("");
+    setInvitePassword("");
+    setInviteRole("operator");
+  };
+
   const inviteMutation = useMutation({
-    mutationFn: async () => post("/users/invite", { email: inviteEmail, role: inviteRole }),
+    mutationFn: async () => post("/users", { username: inviteUsername, email: inviteEmail, password: invitePassword, role: inviteRole }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["users"] });
-      toast.success(`Invitation sent to ${inviteEmail}`);
+      toast.success(`User ${inviteUsername} created`);
       setInviteOpen(false);
-      setInviteEmail("");
+      resetInviteForm();
+    },
+    onError: (err: Error) => {
+      toast.error("Failed to create user", { description: err.message });
     },
   });
 
@@ -64,6 +77,9 @@ export default function SettingsUsersPage() {
       queryClient.invalidateQueries({ queryKey: ["users"] });
       toast.success("User removed");
       setDeleteTarget(null);
+    },
+    onError: (err: Error) => {
+      toast.error("Failed to remove user", { description: err.message });
     },
   });
 
@@ -75,7 +91,7 @@ export default function SettingsUsersPage() {
   return (
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
       <PageHeader title="Users & RBAC" subtitle="Manage team access and role-based permissions" actions={<><Button variant="primary" size="sm" onClick={() => setInviteOpen(true)}>
-          <UserPlus className="w-3 h-3 mr-1" />Invite User
+          <UserPlus className="w-3 h-3 mr-1" />Create User
         </Button></>} />
 
       {/* Tabs */}
@@ -139,7 +155,7 @@ export default function SettingsUsersPage() {
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <StatusBadge variant={ROLES.find(r => r.value === user.role)?.color as any || "muted"}>{user.role}</StatusBadge>
+                      <StatusBadge variant={ROLES.find(r => r.value === user.role)?.color || "muted"}>{user.role}</StatusBadge>
                     </td>
                     <td className="px-4 py-3">
                       <StatusBadge variant={user.status === "active" ? "healthy" : user.status === "invited" ? "warning" : "danger"}>{user.status}</StatusBadge>
@@ -167,12 +183,12 @@ export default function SettingsUsersPage() {
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: i * 0.05 }}
-              className="instrument-card p-5"
+              className="instrument-card"
             >
               <div className="flex items-center gap-2 mb-3">
                 <Shield className="w-4 h-4 text-cordum" />
                 <span className="text-sm font-display font-semibold text-foreground capitalize">{role.label}</span>
-                <StatusBadge variant={role.color as any}>{role.value}</StatusBadge>
+                <StatusBadge variant={role.color}>{role.value}</StatusBadge>
               </div>
               <p className="text-xs text-muted-foreground">{role.desc}</p>
               <div className="mt-3 pt-3 border-t border-border">
@@ -194,58 +210,69 @@ export default function SettingsUsersPage() {
         </div>
       )}
 
-      {/* Invite Dialog */}
-      <AnimatePresence>
-        {inviteOpen && (
-          <>
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/50 z-50" onClick={() => setInviteOpen(false)} />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[420px] bg-surface-1 border border-border rounded-xl shadow-2xl z-50 p-6"
+      {/* Create User Dialog */}
+      <DialogOverlay open={inviteOpen} onClose={() => { setInviteOpen(false); resetInviteForm(); }} label="Create user" className="w-[420px] bg-surface-1 border border-border rounded-xl shadow-2xl p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-sm font-display font-semibold text-foreground">Create User</h3>
+          <button onClick={() => { setInviteOpen(false); resetInviteForm(); }} className="p-1 rounded hover:bg-surface-2 transition-colors">
+            <X className="w-4 h-4 text-muted-foreground" />
+          </button>
+        </div>
+        <div className="space-y-4">
+          <div>
+            <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Username</label>
+            <input
+              type="text"
+              value={inviteUsername}
+              onChange={(e) => setInviteUsername(e.target.value)}
+              placeholder="jsmith"
+              className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Email</label>
+            <div className="relative">
+              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              <input
+                type="email"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                placeholder="user@company.com"
+                className="h-9 w-full pl-9 pr-3 text-sm bg-surface-2 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Password</label>
+            <div className="relative">
+              <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              <input
+                type="password"
+                value={invitePassword}
+                onChange={(e) => setInvitePassword(e.target.value)}
+                placeholder="Minimum 8 characters"
+                className="h-9 w-full pl-9 pr-3 text-sm bg-surface-2 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Role</label>
+            <select
+              value={inviteRole}
+              onChange={(e) => setInviteRole(e.target.value)}
+              className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
             >
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-sm font-display font-semibold text-foreground">Invite User</h3>
-                <button onClick={() => setInviteOpen(false)} className="p-1 rounded hover:bg-surface-2 transition-colors">
-                  <X className="w-4 h-4 text-muted-foreground" />
-                </button>
-              </div>
-              <div className="space-y-4">
-                <div>
-                  <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Email</label>
-                  <div className="relative">
-                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                    <input
-                      type="email"
-                      value={inviteEmail}
-                      onChange={(e) => setInviteEmail(e.target.value)}
-                      placeholder="user@company.com"
-                      className="h-9 w-full pl-9 pr-3 text-sm bg-surface-2 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Role</label>
-                  <select
-                    value={inviteRole}
-                    onChange={(e) => setInviteRole(e.target.value)}
-                    className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
-                  >
-                    {ROLES.map(r => <option key={r.value} value={r.value}>{r.label} — {r.desc}</option>)}
-                  </select>
-                </div>
-                <div className="flex justify-end gap-2 pt-2">
-                  <Button variant="ghost" size="sm" onClick={() => setInviteOpen(false)}>Cancel</Button>
-                  <Button variant="primary" size="sm" onClick={() => inviteMutation.mutate()} loading={inviteMutation.isPending} disabled={!inviteEmail.trim()}>
-                    <UserPlus className="w-3 h-3 mr-1" />Send Invite
-                  </Button>
-                </div>
-              </div>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
+              {ROLES.map(r => <option key={r.value} value={r.value}>{r.label} — {r.desc}</option>)}
+            </select>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="ghost" size="sm" onClick={() => { setInviteOpen(false); resetInviteForm(); }}>Cancel</Button>
+            <Button variant="primary" size="sm" onClick={() => inviteMutation.mutate()} loading={inviteMutation.isPending} disabled={!inviteUsername.trim() || !invitePassword.trim()}>
+              <UserPlus className="w-3 h-3 mr-1" />Create User
+            </Button>
+          </div>
+        </div>
+      </DialogOverlay>
 
       {/* Delete Confirmation */}
       <ConfirmDialog

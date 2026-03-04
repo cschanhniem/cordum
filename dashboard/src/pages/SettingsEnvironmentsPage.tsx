@@ -28,8 +28,8 @@ export default function SettingsEnvironmentsPage() {
   const { data: envs, isLoading } = useQuery({
     queryKey: ["environments"],
     queryFn: async () => {
-      const res: any = await get("/environments");
-      return (res.data || []) as Environment[];
+      const res = await get<{ data?: Environment[] }>("/environments");
+      return res.data || [];
     },
   });
 
@@ -47,7 +47,7 @@ export default function SettingsEnvironmentsPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {envs.map((env, i) => (
             <motion.div key={env.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
-              className={cn("instrument-card p-5", env.status === "active" && "status-healthy")}>
+              className={cn("instrument-card", env.status === "active" && "status-healthy")}>
               <div className="flex items-start justify-between mb-3">
                 <div className="flex items-center gap-2">
                   <Server className="w-4 h-4 text-cordum" />

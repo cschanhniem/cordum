@@ -3,7 +3,7 @@
  * Multi-auth: API Key, Password, OIDC, SAML
  */
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useConfigStore } from "@/state/config";
 import { Button } from "@/components/ui/Button";
@@ -12,6 +12,25 @@ import { KeyRound, ArrowRight, Layers, Lock, Globe, Building2, ChevronDown } fro
 import { cn } from "@/lib/utils";
 
 type AuthMode = "api_key" | "password" | "oidc" | "saml";
+
+const LOGIN_TIMEOUT = 10_000;
+
+/** Validate returnUrl is a safe relative path — blocks open redirect attacks. */
+export function isSafeReturnUrl(url: string | null): string {
+  if (!url || typeof url !== "string") return "/";
+  const trimmed = url.trim();
+  if (!trimmed.startsWith("/")) return "/";
+  if (trimmed.startsWith("//")) return "/";
+  if (/[:\s]/.test(trimmed)) return "/";
+  try {
+    const parsed = new URL(trimmed, "http://localhost");
+    if (parsed.origin !== "http://localhost") return "/";
+    if (parsed.protocol !== "http:") return "/";
+  } catch {
+    return "/";
+  }
+  return trimmed;
+}
 
 const authModes: { id: AuthMode; label: string; icon: React.ReactNode; description: string }[] = [
   { id: "api_key", label: "API Key", icon: <KeyRound className="w-4 h-4" />, description: "Connect with an API key" },
@@ -22,7 +41,9 @@ const authModes: { id: AuthMode; label: string; icon: React.ReactNode; descripti
 
 export default function LoginPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const login = useConfigStore((s) => s.login);
+  const returnUrl = isSafeReturnUrl(searchParams.get("returnUrl"));
   const [authMode, setAuthMode] = useState<AuthMode>("api_key");
   const [showModeSelector, setShowModeSelector] = useState(false);
 
@@ -46,12 +67,13 @@ export default function LoginPage() {
       const baseUrl = apiUrl.trim() || "/api/v1";
       const res = await fetch(`${baseUrl}/auth/me`, {
         headers: { Authorization: `Bearer ${apiKey.trim()}` },
+        signal: AbortSignal.timeout(LOGIN_TIMEOUT),
       });
       if (res.ok) {
         const user = await res.json();
         login(apiKey.trim(), user);
         toast.success("Connected to Cordum");
-        navigate("/");
+        navigate(returnUrl);
       } else {
         const msg = res.status === 401 || res.status === 403
           ? "Invalid API key"
@@ -60,8 +82,12 @@ export default function LoginPage() {
             : `Connection failed (HTTP ${res.status})`;
         toast.error(msg);
       }
-    } catch {
-      toast.error("Cannot reach API server — check the endpoint URL");
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "TimeoutError") {
+        toast.error("Request timed out — check your connection");
+      } else {
+        toast.error("Cannot reach API server — check the endpoint URL");
+      }
     } finally {
       setLoading(false);
     }
@@ -79,6 +105,7 @@ export default function LoginPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: username.trim(), password: password.trim() }),
+        signal: AbortSignal.timeout(LOGIN_TIMEOUT),
       });
       if (res.ok) {
         const data = await res.json();
@@ -93,12 +120,16 @@ export default function LoginPage() {
           tenant: "default",
         });
         toast.success("Logged in");
-        navigate("/");
+        navigate(returnUrl);
       } else {
         toast.error("Invalid credentials");
       }
-    } catch {
-      toast.error("Cannot reach API server — check the endpoint URL");
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "TimeoutError") {
+        toast.error("Request timed out — check your connection");
+      } else {
+        toast.error("Cannot reach API server — check the endpoint URL");
+      }
     } finally {
       setLoading(false);
     }
@@ -198,7 +229,7 @@ export default function LoginPage() {
             </label>
             <input
               type="text"
-              placeholder="http://localhost:8080/api/v1"
+              placeholder="/api/v1"
               value={apiUrl}
               onChange={(e) => setApiUrl(e.target.value)}
               className="h-9 w-full px-3 text-sm bg-surface-0 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum font-mono"

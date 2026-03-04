@@ -43,7 +43,7 @@ export default function SettingsMcpPage() {
 
   // Build single server entry representing Cordum MCP
   const serverStatus = mcpStatus?.running ? "connected" : "disconnected";
-  const serverUrl = mcpConfig ? `${mcpConfig.transport}://localhost:${mcpConfig.port}` : "";
+  const serverUrl = mcpConfig ? `${mcpConfig.transport}://${window.location.hostname}:${mcpConfig.port}` : "";
 
   return (
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">

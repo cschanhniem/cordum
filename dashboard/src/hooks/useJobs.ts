@@ -123,6 +123,46 @@ function buildParams(filters: JobFilters): string {
   return qs ? `?${qs}` : "";
 }
 
+function filterJobsForClient(items: Job[], filters: JobFilters): Job[] {
+  let filtered = items;
+  if (filters.state && filters.state.length > 0) {
+    filtered = filtered.filter((job) => filters.state?.includes(job.status));
+  }
+  if (filters.decision && filters.decision.length > 0) {
+    filtered = filtered.filter((job) =>
+      job.safetyDecision && filters.decision?.includes(job.safetyDecision.type),
+    );
+  }
+  return filtered;
+}
+
+function applyOptimisticCancelToList(
+  old: ApiResponse<Job[]> | undefined,
+  id: string,
+): ApiResponse<Job[]> | undefined {
+  if (!old?.items) return old;
+  return {
+    ...old,
+    items: old.items.map((job) =>
+      job.id === id ? { ...job, status: "cancelled" as JobStatus } : job,
+    ),
+  };
+}
+
+function applyOptimisticCancelToDetail(
+  old: Job | undefined,
+): Job | undefined {
+  return old ? { ...old, status: "cancelled" as JobStatus } : old;
+}
+
+function validateRemediateJobId(jobId: string): string {
+  const trimmedJobID = jobId.trim();
+  if (!trimmedJobID) {
+    throw new Error("job id is required");
+  }
+  return trimmedJobID;
+}
+
 // ---------------------------------------------------------------------------
 // Queries
 // ---------------------------------------------------------------------------
@@ -134,17 +174,8 @@ export function useJobs(filters: JobFilters = {}) {
       const res = await get<{ items: BackendJobRecord[]; next_cursor?: number | null }>(
         `/jobs${buildParams(filters)}`,
       );
-      let items = (res.items ?? []).map(mapJobRecord);
-      // Defensive client-side filter: backend receives repeated state params but
-      // may not support multi-status filtering, so we re-filter here as a fallback.
-      if (filters.state && filters.state.length > 0) {
-        items = items.filter((j) => filters.state?.includes(j.status));
-      }
-      if (filters.decision && filters.decision.length > 0) {
-        items = items.filter((j) =>
-          j.safetyDecision && filters.decision?.includes(j.safetyDecision.type),
-        );
-      }
+      const mapped = (res.items ?? []).map(mapJobRecord);
+      const items = filterJobsForClient(mapped, filters);
       return {
         items,
         next_cursor: res.next_cursor ?? null,
@@ -230,13 +261,10 @@ export function useCancelJob() {
       const previousDetail = queryClient.getQueryData<Job>(queryKeys.jobs.detail(id));
       queryClient.setQueriesData<ApiResponse<Job[]>>(
         { queryKey: queryKeys.jobs.all },
-        (old) => {
-          if (!old?.items) return old;
-          return { ...old, items: old.items.map((j) => j.id === id ? { ...j, status: "cancelled" as JobStatus } : j) };
-        },
+        (old) => applyOptimisticCancelToList(old, id),
       );
       queryClient.setQueryData<Job>(queryKeys.jobs.detail(id), (old) =>
-        old ? { ...old, status: "cancelled" as JobStatus } : old,
+        applyOptimisticCancelToDetail(old),
       );
       return { previousList, previousDetail, id };
     },
@@ -265,18 +293,22 @@ export function useCancelJob() {
 
 export function useRetryJob() {
   const queryClient = useQueryClient();
-  return useMutation<void, Error, string>({
-    mutationFn: (id) => {
-      logger.info("jobs", "Retrying job", { id });
-      return post<void>(`/dlq/${id}/retry`);
+  return useMutation<SubmitJobResponse, Error, { id: string; topic: string }>({
+    mutationFn: ({ id, topic }) => {
+      logger.info("jobs", "Retrying job via resubmit", { id, topic });
+      return post<SubmitJobResponse>("/jobs", {
+        topic,
+        prompt: "",
+        labels: { retry: "true", retry_of_job: id },
+      });
     },
-    onSuccess: (_data, id) => {
-      logger.info("jobs", "Job retried", { id });
+    onSuccess: (result, { id }) => {
+      logger.info("jobs", "Job retried", { originalId: id, newJobId: result.job_id });
       useToastStore.getState().addToast({ type: "success", title: "Retrying job" });
       queryClient.invalidateQueries({ queryKey: queryKeys.jobs.all });
       queryClient.invalidateQueries({ queryKey: queryKeys.jobs.detail(id) });
     },
-    onError: (err, id) => {
+    onError: (err, { id }) => {
       logger.error("jobs", "Retry job failed", { id, error: err.message });
       useToastStore.getState().addToast({ type: "error", title: "Failed to retry job", description: err.message });
     },
@@ -291,10 +323,7 @@ export function useRemediateJob() {
     { jobId: string; input: RemediateJobInput }
   >({
     mutationFn: ({ jobId, input }) => {
-      const trimmedJobID = jobId.trim();
-      if (!trimmedJobID) {
-        throw new Error("job id is required");
-      }
+      const trimmedJobID = validateRemediateJobId(jobId);
       logger.info("jobs", "Remediating job", {
         jobId: trimmedJobID,
       });
@@ -319,4 +348,8 @@ export const __jobsInternal = {
   stateToBackend,
   rangeToMicros,
   buildParams,
+  filterJobsForClient,
+  applyOptimisticCancelToList,
+  applyOptimisticCancelToDetail,
+  validateRemediateJobId,
 };

@@ -1,0 +1,816 @@
+import { useState, useEffect, useRef } from "react";
+
+// ─── Config ──────────────────────────────────────────────────────────
+const DECISIONS = {
+  allow: { label: "Allow", color: "#34d399", glow: "#34d39920", icon: "↗", border: "#34d39945" },
+  deny: { label: "Deny", color: "#f87171", glow: "#f8717120", icon: "⊘", border: "#f8717145" },
+  require_approval: { label: "Approval", color: "#fbbf24", glow: "#fbbf2420", icon: "◉", border: "#fbbf2445" },
+  throttle: { label: "Throttle", color: "#a78bfa", glow: "#a78bfa20", icon: "◷", border: "#a78bfa45" },
+  quarantine: { label: "Quarantine", color: "#fb923c", glow: "#fb923c20", icon: "⬡", border: "#fb923c45" },
+  redact: { label: "Redact", color: "#f472b6", glow: "#f472b620", icon: "█", border: "#f472b645" },
+};
+
+const SCOPES = [
+  { id: "global", label: "Global", icon: "◆", desc: "System-wide defaults", color: "#6e8cff" },
+  { id: "tenant", label: "Tenant", icon: "◈", desc: "Per-organization overrides", color: "#a78bfa" },
+  { id: "workflow", label: "Workflow", icon: "◇", desc: "Per-workflow policy", color: "#2dd4bf" },
+  { id: "effective", label: "Effective", icon: "⊕", desc: "Merged result for a job", color: "#fbbf24" },
+];
+
+// ─── Sample data ────────────────────────────────────────────────────
+const globalRules = [
+  { id: "fin-approval", match: { capabilities: ["bank.transfer", "payment.*"], risk_tags: ["financial", "high_value"], topics: [], tenants: [] }, decision: "require_approval", reason: "Financial transactions require human approval", source: "global" },
+  { id: "allow-validators", match: { capabilities: ["validate.*", "check.*"], risk_tags: [], topics: [], tenants: [] }, decision: "allow", reason: "Read-only validation is always safe", source: "global" },
+  { id: "block-admin-ops", match: { capabilities: ["admin.*", "delete.*"], risk_tags: ["destructive"], topics: ["job.admin.*"], tenants: [] }, decision: "deny", reason: "Admin operations blocked in production", source: "global" },
+  { id: "throttle-codegen", match: { capabilities: ["code.generate"], risk_tags: [], topics: ["job.codegen.*"], tenants: [] }, decision: "throttle", reason: "Rate-limit code generation to prevent abuse", source: "global" },
+];
+const globalOutputRules = [
+  { id: "out-secret-leak", enabled: true, severity: "critical", match: { topics: ["job.*"], detectors: ["secret_leak"], content_patterns: [] }, decision: "quarantine", reason: "Potential credential or token in output", source: "global" },
+  { id: "out-pii", enabled: true, severity: "high", match: { topics: ["job.customer.*"], detectors: ["pii"], content_patterns: [] }, decision: "redact", reason: "PII detected — redacting before release", source: "global" },
+];
+
+const tenants = [
+  {
+    id: "acme-corp", label: "Acme Corp",
+    policy: {
+      allow_topics: ["job.default", "job.codegen.*", "job.customer.*"],
+      deny_topics: ["job.admin.*"],
+      max_concurrent: 50,
+      mcp: { allow_servers: ["github", "slack", "jira"], deny_servers: ["internal-admin"], allow_tools: ["search_issues", "get_issue", "post_message"], deny_tools: ["delete_issue", "delete_channel"] },
+      rules: [
+        { id: "acme-strict-pii", match: { capabilities: ["data.export"], risk_tags: ["pii"], topics: [], tenants: [] }, decision: "deny", reason: "Acme: PII export blocked by org policy", source: "tenant" },
+      ],
+    },
+  },
+  {
+    id: "globex", label: "Globex Inc",
+    policy: {
+      allow_topics: ["job.*"],
+      deny_topics: [],
+      max_concurrent: 100,
+      mcp: { allow_servers: ["*"], deny_servers: [], allow_tools: ["*"], deny_tools: [] },
+      rules: [],
+    },
+  },
+  {
+    id: "initech", label: "Initech",
+    policy: {
+      allow_topics: ["job.default"],
+      deny_topics: ["job.codegen.*", "job.admin.*"],
+      max_concurrent: 20,
+      mcp: { allow_servers: ["github"], deny_servers: ["*"], allow_tools: ["search_issues"], deny_tools: ["*"] },
+      rules: [
+        { id: "initech-no-shell", match: { capabilities: ["shell.*", "exec.*"], risk_tags: [], topics: [], tenants: [] }, decision: "deny", reason: "Initech: Shell execution disabled", source: "tenant" },
+      ],
+    },
+  },
+];
+
+const workflows = [
+  {
+    id: "wf-onboarding", label: "Customer Onboarding",
+    overrides: {
+      rules: [
+        { id: "wf-allow-pii-read", match: { capabilities: ["data.read"], risk_tags: ["pii"], topics: [], tenants: [] }, decision: "allow", reason: "Onboarding workflow: allow PII read for identity verification", source: "workflow" },
+      ],
+      output_rules: [],
+      budgets: { max_runtime_ms: 60000, max_retries: 3 },
+    },
+  },
+  {
+    id: "wf-code-review", label: "Automated Code Review",
+    overrides: {
+      rules: [
+        { id: "wf-allow-codegen", match: { capabilities: ["code.generate", "code.review"], risk_tags: [], topics: [], tenants: [] }, decision: "allow", reason: "Code review workflow: codegen is the point", source: "workflow" },
+      ],
+      output_rules: [
+        { id: "wf-out-injection", enabled: true, severity: "critical", match: { topics: ["job.codegen.*"], detectors: ["code_injection"], content_patterns: [] }, decision: "quarantine", reason: "Quarantine injected code patterns", source: "workflow" },
+      ],
+      budgets: { max_runtime_ms: 120000, max_retries: 2 },
+    },
+  },
+];
+
+// ─── YAML gen ───────────────────────────────────────────────────────
+function toYaml(scope, data) {
+  const lines = [];
+  const p = (indent, text) => lines.push("  ".repeat(indent) + text);
+
+  if (scope === "global") {
+    p(0, `version: "1"`);
+    p(0, `default_decision: ${data.defaultDecision}`);
+    p(0, ``);
+    p(0, `rules:`);
+    data.rules.forEach(r => {
+      p(1, `- id: ${r.id}`);
+      p(2, `match:`);
+      if (r.match.capabilities?.length) p(3, `capabilities: [${r.match.capabilities.map(c=>`"${c}"`).join(", ")}]`);
+      if (r.match.risk_tags?.length) p(3, `risk_tags: [${r.match.risk_tags.map(t=>`"${t}"`).join(", ")}]`);
+      if (r.match.topics?.length) p(3, `topics: [${r.match.topics.map(t=>`"${t}"`).join(", ")}]`);
+      p(2, `decision: ${r.decision}`);
+      p(2, `reason: "${r.reason}"`);
+      p(0, ``);
+    });
+    if (data.outputRules?.length) {
+      p(0, `output_policy:`); p(1, `enabled: true`); p(1, `fail_mode: closed`); p(0, ``);
+      p(0, `output_rules:`);
+      data.outputRules.forEach(r => {
+        p(1, `- id: ${r.id}`);
+        if (r.severity) p(2, `severity: ${r.severity}`);
+        p(2, `match:`);
+        if (r.match.topics?.length) p(3, `topics: [${r.match.topics.map(t=>`"${t}"`).join(", ")}]`);
+        if (r.match.detectors?.length) p(3, `detectors: [${r.match.detectors.map(d=>`"${d}"`).join(", ")}]`);
+        p(2, `decision: ${r.decision}`);
+        p(2, `reason: "${r.reason}"`);
+        p(0, ``);
+      });
+    }
+  } else if (scope === "tenant") {
+    const t = data.tenant;
+    p(0, `# Tenant: ${t.label}`);
+    p(0, `tenants:`);
+    p(1, `${t.id}:`);
+    if (t.policy.allow_topics?.length) p(2, `allow_topics: [${t.policy.allow_topics.map(x=>`"${x}"`).join(", ")}]`);
+    if (t.policy.deny_topics?.length) p(2, `deny_topics: [${t.policy.deny_topics.map(x=>`"${x}"`).join(", ")}]`);
+    if (t.policy.max_concurrent) p(2, `max_concurrent_jobs: ${t.policy.max_concurrent}`);
+    p(2, `mcp:`);
+    if (t.policy.mcp.allow_servers?.length) p(3, `allow_servers: [${t.policy.mcp.allow_servers.map(x=>`"${x}"`).join(", ")}]`);
+    if (t.policy.mcp.deny_servers?.length) p(3, `deny_servers: [${t.policy.mcp.deny_servers.map(x=>`"${x}"`).join(", ")}]`);
+    if (t.policy.mcp.allow_tools?.length) p(3, `allow_tools: [${t.policy.mcp.allow_tools.map(x=>`"${x}"`).join(", ")}]`);
+    if (t.policy.mcp.deny_tools?.length) p(3, `deny_tools: [${t.policy.mcp.deny_tools.map(x=>`"${x}"`).join(", ")}]`);
+    if (t.policy.rules?.length) {
+      p(0, ``); p(0, `# Tenant-scoped rules (merged with global)`);
+      p(0, `rules:`);
+      t.policy.rules.forEach(r => {
+        p(1, `- id: ${r.id}`);
+        p(2, `match:`);
+        if (r.match.capabilities?.length) p(3, `capabilities: [${r.match.capabilities.map(c=>`"${c}"`).join(", ")}]`);
+        if (r.match.risk_tags?.length) p(3, `risk_tags: [${r.match.risk_tags.map(t=>`"${t}"`).join(", ")}]`);
+        p(2, `decision: ${r.decision}`);
+        p(2, `reason: "${r.reason}"`);
+      });
+    }
+  } else if (scope === "workflow") {
+    const w = data.workflow;
+    p(0, `# Workflow: ${w.label}`);
+    p(0, `# Scope: cfg:workflow:${w.id}`);
+    p(0, ``);
+    if (w.overrides.rules?.length) {
+      p(0, `rules:`);
+      w.overrides.rules.forEach(r => {
+        p(1, `- id: ${r.id}`);
+        p(2, `match:`);
+        if (r.match.capabilities?.length) p(3, `capabilities: [${r.match.capabilities.map(c=>`"${c}"`).join(", ")}]`);
+        if (r.match.risk_tags?.length) p(3, `risk_tags: [${r.match.risk_tags.map(t=>`"${t}"`).join(", ")}]`);
+        p(2, `decision: ${r.decision}`);
+        p(2, `reason: "${r.reason}"`);
+        p(0, ``);
+      });
+    }
+    if (w.overrides.budgets) {
+      p(0, `budgets:`);
+      if (w.overrides.budgets.max_runtime_ms) p(1, `max_runtime_ms: ${w.overrides.budgets.max_runtime_ms}`);
+      if (w.overrides.budgets.max_retries) p(1, `max_retries: ${w.overrides.budgets.max_retries}`);
+    }
+  } else {
+    p(0, `# Effective merged policy`);
+    p(0, `# Scope: system → ${data.tenantId || "default"} → ${data.workflowId || "none"}`);
+    p(0, ``);
+    p(0, `effective_decision_chain:`);
+    data.chain?.forEach(r => {
+      p(1, `- rule: ${r.id}`);
+      p(2, `source: ${r.source}`);
+      p(2, `decision: ${r.decision}`);
+    });
+  }
+  return lines.join("\n");
+}
+
+// ─── Tag Input ──────────────────────────────────────────────────────
+function TagInput({ label, tags = [], onChange, placeholder, accent = "#60a5fa", readOnly }) {
+  const [val, setVal] = useState("");
+  const handleKey = e => {
+    if (readOnly) return;
+    if (e.key === "Enter" && val.trim()) { e.preventDefault(); if (!tags.includes(val.trim())) onChange([...tags, val.trim()]); setVal(""); }
+    if (e.key === "Backspace" && !val && tags.length) onChange(tags.slice(0, -1));
+  };
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div className="fl">{label}</div>
+      <div className="ti-wrap">
+        {tags.map((t, i) => (
+          <span key={i} className="tg" style={{ color: accent, background: accent + "14", borderColor: accent + "30" }}>
+            {t}{!readOnly && <span className="tg-x" onClick={() => onChange(tags.filter((_, j) => j !== i))}>×</span>}
+          </span>
+        ))}
+        {!readOnly && <input value={val} onChange={e => setVal(e.target.value)} onKeyDown={handleKey} placeholder={tags.length ? "" : placeholder} className="ti" />}
+      </div>
+    </div>
+  );
+}
+
+// ─── Rule Card ──────────────────────────────────────────────────────
+function RuleCard({ rule, index, total, type, onUpdate, onDelete, onMove, onHover, simMatch, delay, readOnly }) {
+  const [open, setOpen] = useState(false);
+  const dc = DECISIONS[rule.decision] || {};
+  const chips = type === "output"
+    ? [...(rule.match?.topics || []).map(t => ({ t, c: "#a78bfa" })), ...(rule.match?.detectors || []).map(d => ({ t: d, c: "#fb923c" }))]
+    : [...(rule.match?.capabilities || []).map(c => ({ t: c, c: "#60a5fa" })), ...(rule.match?.risk_tags || []).map(t => ({ t, c: "#fbbf24" })), ...(rule.match?.topics || []).map(t => ({ t, c: "#a78bfa" }))];
+
+  const scopeColor = rule.source === "global" ? "#6e8cff" : rule.source === "tenant" ? "#a78bfa" : rule.source === "workflow" ? "#2dd4bf" : "#fbbf24";
+
+  return (
+    <div className={`rc ${open ? "rc-open" : ""} ${simMatch ? "rc-sim" : ""}`} style={{ animationDelay: `${delay}ms` }}
+      onMouseEnter={() => onHover?.(rule.id)} onMouseLeave={() => onHover?.(null)}>
+      <div className="rc-bar" style={{ background: dc.color }} />
+      <div className="rc-head" onClick={() => setOpen(!open)}>
+        <div className="rc-n">{index + 1}</div>
+        {rule.source && (
+          <span className="scope-tag" style={{ color: scopeColor, borderColor: scopeColor + "40", background: scopeColor + "10" }}>
+            {rule.source}
+          </span>
+        )}
+        <div className="rc-id">{rule.id}</div>
+        <div className="rc-chips">
+          {chips.slice(0, 3).map((ch, i) => (
+            <span key={i} className="ch" style={{ color: ch.c, background: ch.c + "14", borderColor: ch.c + "30" }}>{ch.t}</span>
+          ))}
+          {chips.length > 3 && <span className="ch-m">+{chips.length - 3}</span>}
+        </div>
+        {type === "output" && rule.severity && (
+          <span className="sev" style={{ color: rule.severity === "critical" ? "#f87171" : rule.severity === "high" ? "#fbbf24" : "#60a5fa" }}>
+            {rule.severity}
+          </span>
+        )}
+        <div className="rc-db" style={{ color: dc.color, background: dc.glow, borderColor: dc.border }}>
+          <span style={{ fontSize: 11 }}>{dc.icon}</span>{dc.label}
+        </div>
+        {!readOnly && onMove && (
+          <div className="rc-arrows">
+            <button disabled={index === 0} onClick={e => { e.stopPropagation(); onMove(-1); }} className="ab">↑</button>
+            <button disabled={index === total - 1} onClick={e => { e.stopPropagation(); onMove(1); }} className="ab">↓</button>
+          </div>
+        )}
+        <div className={`rc-chev ${open ? "rc-chev-o" : ""}`}>›</div>
+      </div>
+      {open && (
+        <div className="rc-body">
+          <div className="rc-reason">{rule.reason}</div>
+          {!readOnly && onDelete && (
+            <div className="rc-acts">
+              <button className="rc-del" onClick={onDelete}><span>✕</span> Delete</button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Scope: Global ──────────────────────────────────────────────────
+function GlobalScope({ rules, outputRules, setRules, setOutputRules, hovered, setHovered }) {
+  const [tab, setTab] = useState("input");
+  const cur = tab === "input" ? rules : outputRules;
+  const setCur = tab === "input" ? setRules : setOutputRules;
+
+  const move = (i, d) => { const n = [...cur]; const t = i + d; if (t < 0 || t >= n.length) return; [n[i], n[t]] = [n[t], n[i]]; setCur(n); };
+
+  return (
+    <>
+      <div className="tabs">
+        {[{ id: "input", l: "Input Rules", n: rules.length }, { id: "output", l: "Output Rules", n: outputRules.length }].map(t => (
+          <button key={t.id} className={`tb ${tab === t.id ? "on" : ""}`} onClick={() => setTab(t.id)}>
+            {t.l}<span className="tc">{t.n}</span>
+          </button>
+        ))}
+        <div className="tabs-r">
+          <button className="abtn" onClick={() => {
+            if (tab === "input") setRules([...rules, { id: `rule-${Date.now().toString(36).slice(-4)}`, match: { capabilities: [], risk_tags: [], topics: [], tenants: [] }, decision: "deny", reason: "", source: "global" }]);
+            else setOutputRules([...outputRules, { id: `out-${Date.now().toString(36).slice(-4)}`, enabled: true, severity: "medium", match: { topics: [], detectors: [], content_patterns: [] }, decision: "quarantine", reason: "", source: "global" }]);
+          }}>＋ Add Rule</button>
+        </div>
+      </div>
+      <div className="fmw"><div className="fmw-d" />First match wins — rules evaluate top to bottom</div>
+      <div className="rl">
+        {cur.map((r, i) => (
+          <RuleCard key={r.id + i} rule={r} index={i} total={cur.length} type={tab} delay={i * 50}
+            onUpdate={u => { const n = [...cur]; n[i] = u; setCur(n); }}
+            onDelete={() => setCur(cur.filter((_, j) => j !== i))}
+            onMove={d => move(i, d)} onHover={setHovered} />
+        ))}
+      </div>
+    </>
+  );
+}
+
+// ─── Scope: Tenant ──────────────────────────────────────────────────
+function TenantScope({ tenant }) {
+  const p = tenant.policy;
+  return (
+    <div className="rl" style={{ padding: 20 }}>
+      <div className="scope-card">
+        <div className="sc-header">
+          <span className="sc-icon" style={{ background: "#a78bfa20", color: "#a78bfa" }}>◈</span>
+          <div>
+            <div className="sc-title">{tenant.label}</div>
+            <div className="sc-sub">Tenant ID: {tenant.id}</div>
+          </div>
+          <span className="sc-badge">{p.max_concurrent} max concurrent</span>
+        </div>
+
+        <div className="sc-section">
+          <div className="sc-section-title">Topic Access Control</div>
+          <div className="sc-row">
+            <TagInput label="Allowed Topics" tags={p.allow_topics} onChange={() => {}} accent="#34d399" readOnly />
+            <TagInput label="Denied Topics" tags={p.deny_topics} onChange={() => {}} accent="#f87171" readOnly />
+          </div>
+        </div>
+
+        <div className="sc-section">
+          <div className="sc-section-title">MCP Tool Governance</div>
+          <div className="sc-row">
+            <TagInput label="Allow Servers" tags={p.mcp.allow_servers} onChange={() => {}} accent="#34d399" readOnly />
+            <TagInput label="Deny Servers" tags={p.mcp.deny_servers} onChange={() => {}} accent="#f87171" readOnly />
+          </div>
+          <div className="sc-row">
+            <TagInput label="Allow Tools" tags={p.mcp.allow_tools} onChange={() => {}} accent="#34d399" readOnly />
+            <TagInput label="Deny Tools" tags={p.mcp.deny_tools} onChange={() => {}} accent="#f87171" readOnly />
+          </div>
+        </div>
+
+        {p.rules?.length > 0 && (
+          <div className="sc-section">
+            <div className="sc-section-title">Tenant-Scoped Rules <span className="tc">{p.rules.length}</span></div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {p.rules.map((r, i) => (
+                <RuleCard key={r.id} rule={r} index={i} total={p.rules.length} type="input" delay={i * 50} readOnly />
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Scope: Workflow ────────────────────────────────────────────────
+function WorkflowScope({ workflow }) {
+  const o = workflow.overrides;
+  return (
+    <div className="rl" style={{ padding: 20 }}>
+      <div className="scope-card">
+        <div className="sc-header">
+          <span className="sc-icon" style={{ background: "#2dd4bf20", color: "#2dd4bf" }}>◇</span>
+          <div>
+            <div className="sc-title">{workflow.label}</div>
+            <div className="sc-sub">cfg:workflow:{workflow.id}</div>
+          </div>
+        </div>
+
+        {o.budgets && (
+          <div className="sc-section">
+            <div className="sc-section-title">Budget Constraints</div>
+            <div className="budget-grid">
+              {o.budgets.max_runtime_ms && (
+                <div className="budget-item">
+                  <div className="budget-val">{(o.budgets.max_runtime_ms / 1000)}s</div>
+                  <div className="budget-label">Max Runtime</div>
+                </div>
+              )}
+              {o.budgets.max_retries !== undefined && (
+                <div className="budget-item">
+                  <div className="budget-val">{o.budgets.max_retries}</div>
+                  <div className="budget-label">Max Retries</div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {o.rules?.length > 0 && (
+          <div className="sc-section">
+            <div className="sc-section-title">Workflow Rules <span className="tc">{o.rules.length}</span></div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {o.rules.map((r, i) => (
+                <RuleCard key={r.id} rule={r} index={i} total={o.rules.length} type="input" delay={i * 50} readOnly />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {o.output_rules?.length > 0 && (
+          <div className="sc-section">
+            <div className="sc-section-title">Output Rules <span className="tc">{o.output_rules.length}</span></div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {o.output_rules.map((r, i) => (
+                <RuleCard key={r.id} rule={r} index={i} total={o.output_rules.length} type="output" delay={i * 50} readOnly />
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Scope: Effective ───────────────────────────────────────────────
+function EffectiveScope({ globalRules, tenants, workflows }) {
+  const [selTenant, setSelTenant] = useState(tenants[0]?.id || "");
+  const [selWorkflow, setSelWorkflow] = useState(workflows[0]?.id || "");
+
+  const t = tenants.find(x => x.id === selTenant);
+  const w = workflows.find(x => x.id === selWorkflow);
+
+  // Build merged chain
+  const chain = [];
+  // Workflow rules first (highest priority override)
+  w?.overrides.rules?.forEach(r => chain.push({ ...r, source: "workflow" }));
+  // Tenant rules
+  t?.policy.rules?.forEach(r => chain.push({ ...r, source: "tenant" }));
+  // Global rules
+  globalRules.forEach(r => chain.push({ ...r, source: "global" }));
+
+  return (
+    <div className="rl" style={{ padding: 20 }}>
+      <div className="eff-header">
+        <div className="eff-icon">⊕</div>
+        <div>
+          <div className="eff-title">Effective Policy</div>
+          <div className="eff-sub">Merged view: system → org → workflow</div>
+        </div>
+      </div>
+
+      <div className="eff-selectors">
+        <div>
+          <div className="fl">Tenant</div>
+          <select className="eff-sel" value={selTenant} onChange={e => setSelTenant(e.target.value)}>
+            {tenants.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+          </select>
+        </div>
+        <div>
+          <div className="fl">Workflow</div>
+          <select className="eff-sel" value={selWorkflow} onChange={e => setSelWorkflow(e.target.value)}>
+            <option value="">— None —</option>
+            {workflows.map(w => <option key={w.id} value={w.id}>{w.label}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {/* Cascade visualization */}
+      <div className="cascade">
+        <div className="cascade-title">Evaluation Order</div>
+        <div className="cascade-flow">
+          {[
+            { label: "Global", count: globalRules.length, color: "#6e8cff" },
+            { label: t?.label || "—", count: t?.policy.rules?.length || 0, color: "#a78bfa" },
+            { label: w?.label || "—", count: w?.overrides.rules?.length || 0, color: "#2dd4bf" },
+          ].map((s, i) => (
+            <div key={i} className="cascade-node">
+              <div className="cascade-dot" style={{ background: s.color, boxShadow: `0 0 8px ${s.color}60` }} />
+              <div className="cascade-label">{s.label}</div>
+              <div className="cascade-count">{s.count} rules</div>
+              {i < 2 && <div className="cascade-arrow">→</div>}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Merged rules */}
+      <div className="sc-section-title" style={{ marginTop: 20 }}>
+        Merged Rule Chain <span className="tc">{chain.length}</span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {chain.map((r, i) => (
+          <RuleCard key={r.id + r.source + i} rule={r} index={i} total={chain.length} type="input" delay={i * 40} readOnly />
+        ))}
+      </div>
+
+      {/* Tenant constraints summary */}
+      {t && (
+        <div className="eff-constraints" style={{ marginTop: 20 }}>
+          <div className="sc-section-title">Active Constraints</div>
+          <div className="constraint-grid">
+            <div className="constraint-card">
+              <div className="constraint-val">{t.policy.max_concurrent}</div>
+              <div className="constraint-label">Max Concurrent</div>
+            </div>
+            <div className="constraint-card">
+              <div className="constraint-val">{t.policy.mcp.allow_servers?.length || 0}</div>
+              <div className="constraint-label">MCP Servers</div>
+            </div>
+            <div className="constraint-card">
+              <div className="constraint-val">{t.policy.allow_topics?.length || 0}</div>
+              <div className="constraint-label">Allowed Topics</div>
+            </div>
+            {w?.overrides.budgets?.max_runtime_ms && (
+              <div className="constraint-card">
+                <div className="constraint-val">{w.overrides.budgets.max_runtime_ms / 1000}s</div>
+                <div className="constraint-label">Max Runtime</div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── YAML viewer ────────────────────────────────────────────────────
+function YamlViewer({ yaml, hId }) {
+  const lines = yaml.split("\n");
+  let hl = false;
+  return (
+    <div className="yb">
+      {lines.map((line, i) => {
+        if (line.trim().startsWith("- id:") || line.trim().startsWith("- rule:")) hl = hId && line.includes(hId);
+        if (line.trim() === "") hl = false;
+        return (
+          <div key={i} className={`yl ${hl ? "ylh" : ""}`}>
+            <span className="yln">{i + 1}</span>
+            <YSyn text={line} />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+function YSyn({ text }) {
+  const ind = text.match(/^(\s*)/)?.[1] || "";
+  const r = text.slice(ind.length);
+  if (!r) return <span>{text}</span>;
+  if (r.startsWith("#")) return <span>{ind}<span className="yc">{r}</span></span>;
+  if (r.match(/^[-\s]*id:|^[-\s]*rule:|^[a-z_]+:/)) {
+    const ci = r.indexOf(":"); const key = r.slice(0, ci); const val = r.slice(ci + 1);
+    let vc = "yv";
+    if (val.includes('"')) vc = "ys"; else if (["true","false"].includes(val.trim())) vc = "ybo"; else if (["allow","deny","require_approval","throttle","quarantine","redact","closed","open","global","tenant","workflow"].includes(val.trim())) vc = "yd";
+    return <span>{ind}<span className="yk">{key}</span><span className="yco">:</span><span className={vc}>{val}</span></span>;
+  }
+  if (r.startsWith("- ")) return <span>{ind}<span className="yda">- </span><span className={r.slice(2).startsWith('"') ? "ys" : "yv"}>{r.slice(2)}</span></span>;
+  return <span className="yv">{text}</span>;
+}
+
+// ─── Main ───────────────────────────────────────────────────────────
+export default function PolicyStudio() {
+  const [scope, setScope] = useState("global");
+  const [selTenant, setSelTenant] = useState(tenants[0]?.id || "");
+  const [selWorkflow, setSelWorkflow] = useState(workflows[0]?.id || "");
+  const [rules, setRules] = useState(globalRules);
+  const [outRules, setOutRules] = useState(globalOutputRules);
+  const [hovered, setHovered] = useState(null);
+  const [view, setView] = useState("split");
+  const [ready, setReady] = useState(false);
+  useEffect(() => { requestAnimationFrame(() => setReady(true)); }, []);
+
+  const tenant = tenants.find(t => t.id === selTenant);
+  const workflow = workflows.find(w => w.id === selWorkflow);
+
+  let yamlData;
+  if (scope === "global") yamlData = toYaml("global", { rules, outputRules: outRules, defaultDecision: "deny" });
+  else if (scope === "tenant" && tenant) yamlData = toYaml("tenant", { tenant });
+  else if (scope === "workflow" && workflow) yamlData = toYaml("workflow", { workflow });
+  else {
+    const chain = [];
+    workflow?.overrides.rules?.forEach(r => chain.push({ ...r, source: "workflow" }));
+    tenant?.policy.rules?.forEach(r => chain.push({ ...r, source: "tenant" }));
+    rules.forEach(r => chain.push({ ...r, source: "global" }));
+    yamlData = toYaml("effective", { chain, tenantId: selTenant, workflowId: selWorkflow });
+  }
+
+  return (
+    <div className={`root ${ready ? "root-in" : ""}`}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
+        :root{--b0:#06070b;--b1:#0c0e15;--b2:#12141e;--b3:#1a1d2c;--bd:#1c2035;--bdh:#262b45;--t0:#eef1fa;--t1:#a8aec6;--t2:#636a8a;--t3:#3a3f5c;--ac:#6e8cff;--acd:#6e8cff1a;--ff:'Outfit',sans-serif;--fm:'IBM Plex Mono',monospace}
+        *{box-sizing:border-box;margin:0;padding:0}
+        .root{width:100%;height:100vh;background:var(--b0);font-family:var(--ff);color:var(--t0);display:flex;flex-direction:column;overflow:hidden;opacity:0;transform:translateY(6px);transition:all .6s cubic-bezier(.22,1,.36,1)}
+        .root-in{opacity:1;transform:none}
+        .root::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;background:radial-gradient(ellipse 800px 600px at 15% 10%,#6e8cff05,transparent),radial-gradient(ellipse 600px 800px at 85% 90%,#a78bfa04,transparent),linear-gradient(0deg,#1c203506 1px,transparent 1px),linear-gradient(90deg,#1c203506 1px,transparent 1px);background-size:100%,100%,48px 48px,48px 48px}
+        ::-webkit-scrollbar{width:5px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#262b45;border-radius:3px}
+        input::placeholder{color:var(--t3)}
+
+        /* header */
+        .hd{position:relative;z-index:10;padding:12px 20px;display:flex;align-items:center;gap:14;border-bottom:1px solid var(--bd);background:var(--b1)}
+        .logo{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#6e8cff,#a78bfa);box-shadow:0 0 20px #6e8cff28;font-size:16px;color:#fff}
+        .hd-t{font-size:16px;font-weight:800;letter-spacing:-.4px}
+        .hd-s{font-size:10px;color:var(--t2);font-family:var(--fm);margin-top:1px}
+        .hd-r{margin-left:auto;display:flex;gap:8;align-items:center}
+        .vt{display:flex;border-radius:8px;overflow:hidden;border:1px solid var(--bd);background:var(--b2)}
+        .vb{padding:5px 12px;font-size:10px;font-weight:600;border:none;cursor:pointer;background:transparent;color:var(--t3);font-family:var(--fm);transition:all .15s}
+        .vb.on{background:var(--acd);color:var(--ac)}
+        .pb{padding:6px 18px;border-radius:8px;font-size:11px;font-weight:700;border:none;cursor:pointer;font-family:var(--fm);background:linear-gradient(135deg,#34d399,#2dd4bf);color:#042f2e;box-shadow:0 0 16px #34d39925;transition:all .2s}
+        .pb:hover{box-shadow:0 0 24px #34d39940;transform:translateY(-1px)}
+
+        /* layout */
+        .main{flex:1;display:flex;overflow:hidden;position:relative;z-index:1}
+        .sidebar{width:220px;border-right:1px solid var(--bd);background:var(--b1);display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto}
+we shiu        .pv{flex:1;display:flex;flex-direction:column;overflow:hidden;border-right:1px solid var(--bd)}
+        .py{display:flex;flex-direction:column;overflow:hidden;background:var(--b0)}
+
+        /* sidebar scope nav */
+        .scope-nav{padding:12px}
+        .scope-group{margin-bottom:16px}
+        .scope-group-title{font-size:9px;color:var(--t3);font-family:var(--fm);text-transform:uppercase;letter-spacing:1.2px;padding:0 10px 6px;font-weight:700}
+        .scope-btn{width:100%;display:flex;align-items:center;gap:9;padding:9px 12px;border-radius:9px;border:1px solid transparent;background:transparent;color:var(--t2);cursor:pointer;font-family:var(--ff);font-size:12px;font-weight:600;transition:all .15s;text-align:left;margin-bottom:2px}
+        .scope-btn:hover{background:var(--b2);border-color:var(--bd)}
+        .scope-btn.on{background:var(--b2);border-color:var(--bdh);color:var(--t0)}
+        .scope-btn .sb-icon{width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0;transition:all .15s}
+        .scope-btn.on .sb-icon{box-shadow:0 0 10px currentColor}
+        .scope-btn .sb-desc{font-size:10px;color:var(--t3);font-family:var(--fm);margin-top:1px}
+
+        .sub-select{width:100%;padding:7px 10px;background:var(--b2);border:1px solid var(--bd);border-radius:7px;color:var(--t0);font-size:11px;font-family:var(--fm);outline:none;cursor:pointer;margin-top:6px;margin-bottom:2px}
+
+        .sidebar-divider{height:1px;background:var(--bd);margin:4px 12px 12px}
+
+        /* tabs */
+        .tabs{display:flex;align-items:center;padding:8px 16px;border-bottom:1px solid var(--bd);gap:4;background:var(--b1);flex-shrink:0}
+        .tb{padding:6px 14px;border-radius:8px;font-size:11px;font-weight:600;border:none;cursor:pointer;background:transparent;color:var(--t3);font-family:var(--fm);transition:all .15s;display:flex;align-items:center;gap:6}
+        .tb.on{background:var(--acd);color:var(--ac)}
+        .tc{padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;background:var(--b3)}
+        .tb.on .tc{background:#6e8cff25}
+        .tabs-r{margin-left:auto;display:flex;gap:8;align-items:center}
+        .abtn{display:flex;align-items:center;gap:5;padding:5px 14px;background:var(--acd);color:var(--ac);border:1px solid #6e8cff28;border-radius:8px;font-size:11px;font-weight:600;cursor:pointer;font-family:var(--fm);transition:all .15s}
+        .abtn:hover{background:#6e8cff22;border-color:#6e8cff40}
+        .fmw{padding:7px 16px;display:flex;align-items:center;gap:8;flex-shrink:0;background:#fbbf2404;border-bottom:1px solid #fbbf2410;font-size:10px;color:#d4a017;font-family:var(--fm)}
+        .fmw-d{width:5px;height:5px;border-radius:50%;background:#fbbf24;box-shadow:0 0 6px #fbbf2460;animation:pls 2s ease infinite}
+        @keyframes pls{0%,100%{opacity:1}50%{opacity:.3}}
+        .rl{flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:5}
+
+        /* rule card */
+        .rc{border-radius:12px;overflow:hidden;position:relative;border:1px solid var(--bd);background:var(--b1);transition:all .25s cubic-bezier(.22,1,.36,1);opacity:0;animation:sIn .35s ease forwards}
+        @keyframes sIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+        .rc:hover{border-color:var(--bdh);background:#0f1120}
+        .rc-sim{border-color:var(--ac)!important;box-shadow:0 0 20px #6e8cff12}
+        .rc-bar{position:absolute;left:0;top:0;bottom:0;width:3px;transition:width .2s}
+        .rc:hover .rc-bar{width:4px}
+        .rc-head{display:flex;align-items:center;gap:8;padding:11px 14px 11px 18px;cursor:pointer}
+        .rc-n{width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;font-family:var(--fm);background:var(--b2);color:var(--t3);border:1px solid var(--bd);flex-shrink:0}
+        .scope-tag{padding:2px 7px;border-radius:5px;font-size:9px;font-weight:700;font-family:var(--fm);border:1px solid;text-transform:uppercase;letter-spacing:.8px;flex-shrink:0}
+        .rc-id{font-size:12px;font-weight:700;font-family:var(--fm);color:var(--t0);min-width:100px;flex-shrink:0;letter-spacing:-.2px}
+        .rc-chips{display:flex;gap:4;flex-wrap:wrap;flex:1;min-width:0}
+        .ch{padding:2px 7px;border-radius:5px;font-size:10px;font-family:var(--fm);border:1px solid;white-space:nowrap}
+        .ch-m{padding:2px 5px;font-size:9px;color:var(--t3);font-family:var(--fm)}
+        .sev{padding:2px 7px;border-radius:5px;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.8px;font-family:var(--fm);flex-shrink:0}
+        .rc-db{display:flex;align-items:center;gap:4;padding:4px 10px;border-radius:6px;font-size:10px;font-weight:700;font-family:var(--fm);border:1px solid;flex-shrink:0;white-space:nowrap}
+        .rc-arrows{display:flex;gap:1;flex-shrink:0}
+        .ab{width:20px;height:20px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid transparent;border-radius:5px;color:var(--t3);font-size:10px;cursor:pointer;font-family:var(--fm);transition:all .15s}
+        .ab:not(:disabled):hover{background:var(--b3);border-color:var(--bd);color:var(--t1)}
+        .ab:disabled{opacity:.15;cursor:default}
+        .rc-chev{font-size:18px;color:var(--t3);transition:transform .25s cubic-bezier(.22,1,.36,1);flex-shrink:0;font-family:var(--fm);width:18px;text-align:center}
+        .rc-chev-o{transform:rotate(90deg)}
+        .rc-body{padding:12px 18px 16px;border-top:1px solid var(--bd);animation:fe .25s ease}
+        @keyframes fe{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+        .rc-reason{font-size:12px;color:var(--t1);font-family:var(--fm);line-height:1.5}
+        .rc-acts{display:flex;gap:6;margin-top:12px;padding-top:12px;border-top:1px solid var(--bd)}
+        .rc-del{display:flex;align-items:center;gap:4;padding:5px 12px;background:#f8717108;color:#f87171;border:1px solid #f8717118;border-radius:7px;font-size:10px;font-weight:600;cursor:pointer;font-family:var(--fm);transition:all .15s}
+        .rc-del:hover{background:#f8717115;border-color:#f8717135}
+
+        .fl{font-size:9px;color:var(--t2);font-family:var(--fm);text-transform:uppercase;letter-spacing:.8px;margin-bottom:5px;font-weight:600}
+        .ti-wrap{display:flex;flex-wrap:wrap;gap:4;padding:6px 10px;background:var(--b0);border:1px solid var(--bd);border-radius:8px;min-height:34px;align-items:center}
+        .tg{display:inline-flex;align-items:center;gap:3;padding:2px 8px;border-radius:5px;font-size:10px;font-family:var(--fm);border:1px solid}
+        .tg-x{cursor:pointer;opacity:.5;font-size:13px;line-height:1}.tg-x:hover{opacity:1}
+        .ti{flex:1;min-width:60px;background:transparent;border:none;outline:none;color:var(--t0);font-size:11px;font-family:var(--fm)}
+
+        /* scope cards */
+        .scope-card{background:var(--b1);border:1px solid var(--bd);border-radius:14px;padding:20px;animation:fe .3s ease}
+        .sc-header{display:flex;align-items:center;gap:12;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--bd)}
+        .sc-icon{width:36px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+        .sc-title{font-size:16px;font-weight:800;letter-spacing:-.4px}
+        .sc-sub{font-size:11px;color:var(--t2);font-family:var(--fm);margin-top:2px}
+        .sc-badge{margin-left:auto;padding:4px 12px;border-radius:7px;font-size:11px;font-family:var(--fm);font-weight:600;background:var(--b2);color:var(--t1);border:1px solid var(--bd)}
+        .sc-section{margin-top:20px;padding-top:16px;border-top:1px solid var(--bd)}
+        .sc-section-title{font-size:12px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8}
+        .sc-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+
+        .budget-grid{display:flex;gap:12px}
+        .budget-item{padding:14px 20px;background:var(--b2);border:1px solid var(--bd);border-radius:10px;min-width:100px}
+        .budget-val{font-size:22px;font-weight:800;color:var(--t0);font-family:var(--fm);letter-spacing:-1px}
+        .budget-label{font-size:10px;color:var(--t2);font-family:var(--fm);text-transform:uppercase;letter-spacing:.8px;margin-top:4px}
+
+        /* effective */
+        .eff-header{display:flex;align-items:center;gap:12;margin-bottom:20px}
+        .eff-icon{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;background:#fbbf2415;color:#fbbf24;box-shadow:0 0 16px #fbbf2420}
+        .eff-title{font-size:18px;font-weight:800;letter-spacing:-.4px}
+        .eff-sub{font-size:11px;color:var(--t2);font-family:var(--fm)}
+        .eff-selectors{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px}
+        .eff-sel{width:100%;padding:8px 12px;background:var(--b2);border:1px solid var(--bd);border-radius:8px;color:var(--t0);font-size:12px;font-family:var(--fm);outline:none;cursor:pointer}
+
+        .cascade{background:var(--b1);border:1px solid var(--bd);border-radius:12px;padding:16px 20px;margin-bottom:16px}
+        .cascade-title{font-size:10px;color:var(--t2);font-family:var(--fm);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;font-weight:700}
+        .cascade-flow{display:flex;align-items:center;gap:4}
+        .cascade-node{display:flex;align-items:center;gap:8;padding:8px 14px;background:var(--b2);border:1px solid var(--bd);border-radius:8px}
+        .cascade-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+        .cascade-label{font-size:12px;font-weight:700}
+        .cascade-count{font-size:10px;color:var(--t2);font-family:var(--fm)}
+        .cascade-arrow{font-size:14px;color:var(--t3);padding:0 4px}
+
+        .constraint-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+        .constraint-card{padding:12px 16px;background:var(--b2);border:1px solid var(--bd);border-radius:9px;text-align:center}
+        .constraint-val{font-size:20px;font-weight:800;color:var(--t0);font-family:var(--fm)}
+        .constraint-label{font-size:9px;color:var(--t2);font-family:var(--fm);text-transform:uppercase;letter-spacing:.8px;margin-top:4px}
+
+        /* yaml */
+        .yh{padding:10px 16px;display:flex;align-items:center;gap:8;border-bottom:1px solid var(--bd);flex-shrink:0;background:var(--b1)}
+        .yfn{font-size:11px;font-weight:600;color:var(--t2);font-family:var(--fm)}
+        .ybg{padding:2px 7px;border-radius:5px;font-size:9px;font-family:var(--fm);color:var(--t3);background:var(--b2);border:1px solid var(--bd)}
+        .ycp{margin-left:auto;padding:4px 10px;background:transparent;color:var(--t3);border:1px solid var(--bd);border-radius:6px;font-size:9px;cursor:pointer;font-family:var(--fm);transition:all .15s}
+        .ycp:hover{border-color:var(--bdh);color:var(--t1)}
+        .yb{flex:1;overflow-y:auto;padding:10px 0;font-family:var(--fm);font-size:12px;line-height:1.7}
+        .yl{padding:0 16px;border-left:2px solid transparent;transition:all .15s;white-space:pre}
+        .ylh{background:#6e8cff08;border-left-color:var(--ac)}
+        .yln{color:var(--t3);margin-right:14px;user-select:none;display:inline-block;width:22px;text-align:right;font-size:10px}
+        .yk{color:#e06c75}.yco{color:var(--t3)}.ys{color:#98c379}.yv{color:#abb2bf}.ybo{color:#d19a66}.yd{color:#c678dd}.yda{color:#56b6c2}.yc{color:#5c6370;font-style:italic}
+      `}</style>
+
+      {/* Header */}
+      <div className="hd">
+        <div className="logo">🛡</div>
+        <div>
+          <div className="hd-t">Policy Studio</div>
+          <div className="hd-s">secops/production</div>
+        </div>
+        <div className="hd-r">
+          <div className="vt">
+            {["visual", "split", "yaml"].map(v => (
+              <button key={v} className={`vb ${view === v ? "on" : ""}`} onClick={() => setView(v)}>
+                {v.charAt(0).toUpperCase() + v.slice(1)}
+              </button>
+            ))}
+          </div>
+          <button className="pb">Publish</button>
+        </div>
+      </div>
+
+      <div className="main">
+        {/* Sidebar */}
+        <div className="sidebar">
+          <div className="scope-nav">
+            <div className="scope-group">
+              <div className="scope-group-title">Policy Scope</div>
+              {SCOPES.map(s => (
+                <div key={s.id}>
+                  <button className={`scope-btn ${scope === s.id ? "on" : ""}`} onClick={() => setScope(s.id)}>
+                    <span className="sb-icon" style={{ background: s.color + "18", color: s.color }}>{s.icon}</span>
+                    <div>
+                      {s.label}
+                      <div className="sb-desc">{s.desc}</div>
+                    </div>
+                  </button>
+                  {s.id === "tenant" && scope === "tenant" && (
+                    <select className="sub-select" value={selTenant} onChange={e => setSelTenant(e.target.value)}>
+                      {tenants.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+                    </select>
+                  )}
+                  {s.id === "workflow" && scope === "workflow" && (
+                    <select className="sub-select" value={selWorkflow} onChange={e => setSelWorkflow(e.target.value)}>
+                      {workflows.map(w => <option key={w.id} value={w.id}>{w.label}</option>)}
+                    </select>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="sidebar-divider" />
+            <div className="scope-group">
+              <div className="scope-group-title">Stats</div>
+              <div style={{ padding: "0 10px", fontFamily: "var(--fm)", fontSize: 11 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                  <span style={{ color: "var(--t2)" }}>Input rules</span><span style={{ color: "var(--t0)" }}>{rules.length}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                  <span style={{ color: "var(--t2)" }}>Output rules</span><span style={{ color: "var(--t0)" }}>{outRules.length}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                  <span style={{ color: "var(--t2)" }}>Tenants</span><span style={{ color: "var(--t0)" }}>{tenants.length}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span style={{ color: "var(--t2)" }}>Workflows</span><span style={{ color: "var(--t0)" }}>{workflows.length}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Visual Panel */}
+        {view !== "yaml" && (
+          <div className="pv" style={{ flex: view === "split" ? "1 1 56%" : "1 1 100%" }}>
+            {scope === "global" && <GlobalScope rules={rules} outputRules={outRules} setRules={setRules} setOutputRules={setOutRules} hovered={hovered} setHovered={setHovered} />}
+            {scope === "tenant" && tenant && <TenantScope tenant={tenant} />}
+            {scope === "workflow" && workflow && <WorkflowScope workflow={workflow} />}
+            {scope === "effective" && <EffectiveScope globalRules={rules} tenants={tenants} workflows={workflows} />}
+          </div>
+        )}
+
+        {/* YAML Panel */}
+        {view !== "visual" && (
+          <div className="py" style={{ flex: view === "split" ? "1 1 44%" : "1 1 100%" }}>
+            <div className="yh">
+              <span className="yfn">safety.yaml</span>
+              <span className="ybg">{scope}</span>
+              <button className="ycp" onClick={() => navigator.clipboard?.writeText(yamlData)}>⎘ Copy</button>
+            </div>
+            <YamlViewer yaml={yamlData} hId={hovered} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

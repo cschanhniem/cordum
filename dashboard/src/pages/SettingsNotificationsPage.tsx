@@ -44,8 +44,8 @@ export default function SettingsNotificationsPage() {
   const { data: channels, isLoading } = useQuery({
     queryKey: ["notification-channels"],
     queryFn: async () => {
-      const res: any = await get("/notifications/channels");
-      return (res.data || []) as Channel[];
+      const res = await get<{ data?: Channel[] }>("/notifications/channels");
+      return res.data || [];
     },
   });
 

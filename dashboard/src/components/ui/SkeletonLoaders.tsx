@@ -9,7 +9,7 @@ export function DashboardSkeleton() {
       {/* KPI Row */}
       <div className="grid grid-cols-4 gap-4">
         {[...Array(4)].map((_, i) => (
-          <div key={i} className="instrument-card p-5 space-y-3">
+          <div key={i} className="instrument-card space-y-3">
             <div className="skeleton h-3 w-20" />
             <div className="skeleton h-8 w-24" />
             <div className="skeleton h-2.5 w-16" />
@@ -17,12 +17,12 @@ export function DashboardSkeleton() {
         ))}
       </div>
       {/* Chart */}
-      <div className="instrument-card p-5">
+      <div className="instrument-card">
         <div className="skeleton h-3 w-32 mb-4" />
         <div className="skeleton h-48 w-full" />
       </div>
       {/* Table */}
-      <div className="instrument-card p-5 space-y-3">
+      <div className="instrument-card space-y-3">
         <div className="skeleton h-3 w-28 mb-4" />
         {[...Array(5)].map((_, i) => (
           <div key={i} className="flex gap-4">
@@ -90,7 +90,7 @@ export function DetailSkeleton() {
       </div>
       {/* Content */}
       <div className="grid grid-cols-2 gap-4">
-        <div className="instrument-card p-5 space-y-3">
+        <div className="instrument-card space-y-3">
           {[...Array(6)].map((_, i) => (
             <div key={i} className="flex justify-between">
               <div className="skeleton h-3 w-20" />
@@ -98,7 +98,7 @@ export function DetailSkeleton() {
             </div>
           ))}
         </div>
-        <div className="instrument-card p-5">
+        <div className="instrument-card">
           <div className="skeleton h-48 w-full" />
         </div>
       </div>
@@ -118,7 +118,7 @@ export function CardGridSkeleton({ count = 6 }: { count?: number }) {
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {[...Array(count)].map((_, i) => (
-          <div key={i} className="instrument-card p-5 space-y-3">
+          <div key={i} className="instrument-card space-y-3">
             <div className="flex items-center gap-3">
               <div className="skeleton w-10 h-10 rounded-lg" />
               <div className="space-y-1.5 flex-1">

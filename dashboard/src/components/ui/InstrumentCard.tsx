@@ -5,11 +5,11 @@ type AccentVariant = "healthy" | "warning" | "danger" | "info" | "muted" | "cord
 
 const statusClass: Record<AccentVariant, string> = {
   healthy: "",
-  warning: "status-warning",
-  danger: "status-danger",
+  warning: "status-warning glow-warning",
+  danger: "status-danger glow-danger",
   info: "status-info",
-  muted: "",
-  cordum: "",
+  muted: "status-muted",
+  cordum: "glow-cordum",
 };
 
 interface InstrumentCardProps {
@@ -31,9 +31,9 @@ export function InstrumentCard({
     <div
       onClick={onClick}
       className={cn(
-        "instrument-card",
+        "instrument-card p-5 flex flex-col",
         statusClass[accent],
-        hoverable && "hover:shadow-lg hover:border-cordum/15 cursor-pointer",
+        hoverable && "instrument-card-hover cursor-pointer",
         onClick && "cursor-pointer",
         className,
       )}
@@ -59,21 +59,23 @@ export function InstrumentCardHeader({
   className,
 }: InstrumentCardHeaderProps) {
   return (
-    <div className={cn("flex items-center justify-between px-5 pt-4 pb-2", className)}>
-      <div className="flex items-center gap-2.5">
+    <div className={cn("flex items-start justify-between mb-4 gap-4", className)}>
+      <div className="min-w-0">
+        <h3 className="text-sm font-semibold font-display text-foreground tracking-tight leading-snug truncate">
+          {title}
+        </h3>
+        {subtitle && (
+          <p className="text-[11px] text-muted-foreground mt-1 leading-normal">{subtitle}</p>
+        )}
+      </div>
+      <div className="flex items-center gap-3 shrink-0">
         {icon && (
-          <div className="w-8 h-8 rounded-md bg-cordum/10 flex items-center justify-center text-cordum">
+          <div className="text-cordum/60">
             {icon}
           </div>
         )}
-        <div>
-          <h3 className="text-sm font-semibold font-display text-foreground">{title}</h3>
-          {subtitle && (
-            <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>
-          )}
-        </div>
+        {action && <div>{action}</div>}
       </div>
-      {action && <div>{action}</div>}
     </div>
   );
 }
@@ -84,7 +86,7 @@ interface InstrumentCardBodyProps {
 }
 
 export function InstrumentCardBody({ className, children }: InstrumentCardBodyProps) {
-  return <div className={cn("px-5 pb-5", className)}>{children}</div>;
+  return <div className={cn("min-w-0 flex-1", className)}>{children}</div>;
 }
 
 interface InstrumentCardFooterProps {
@@ -94,7 +96,7 @@ interface InstrumentCardFooterProps {
 
 export function InstrumentCardFooter({ className, children }: InstrumentCardFooterProps) {
   return (
-    <div className={cn("px-5 py-3 border-t border-border bg-surface-2/30", className)}>
+    <div className={cn("-mx-5 -mb-5 mt-5 px-5 py-3 border-t border-border/40 bg-surface-2/30", className)}>
       {children}
     </div>
   );

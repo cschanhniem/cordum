@@ -13,10 +13,12 @@ import { Save, RotateCcw, AlertTriangle, Settings, Shield, Clock, Database, Zap 
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
+type ConfigValue = string | number | boolean;
+
 interface ConfigGroup {
   id: string;
   label: string;
-  icon: any;
+  icon: React.ComponentType<{ className?: string }>;
   fields: ConfigField[];
 }
 
@@ -24,7 +26,7 @@ interface ConfigField {
   key: string;
   label: string;
   type: "text" | "number" | "toggle" | "select";
-  value: any;
+  value: ConfigValue;
   description?: string;
   options?: string[];
 }
@@ -62,26 +64,27 @@ const GROUPS: ConfigGroup[] = [
 
 export default function SettingsConfigPage() {
   const queryClient = useQueryClient();
-  const [values, setValues] = useState<Record<string, any>>({});
-  const [originalValues, setOriginalValues] = useState<Record<string, any>>({});
+  const [values, setValues] = useState<Record<string, ConfigValue>>({});
+  const [originalValues, setOriginalValues] = useState<Record<string, ConfigValue>>({});
   const [activeGroup, setActiveGroup] = useState("general");
 
   const { data: configData, isLoading } = useQuery({
     queryKey: ["config"],
     queryFn: async () => {
-      const res: any = await get("/config");
-      return res.data;
+      const res = await get<Record<string, unknown>>("/config");
+      return res;
     },
   });
 
   // Initialize values from groups defaults, then overlay backend config when available
   useEffect(() => {
-    const initial: Record<string, any> = {};
+    const initial: Record<string, ConfigValue> = {};
     GROUPS.forEach(g => g.fields.forEach(f => { initial[f.key] = f.value; }));
     if (configData && typeof configData === "object") {
       for (const key of Object.keys(initial)) {
-        if (key in configData && configData[key] !== undefined) {
-          initial[key] = configData[key];
+        const raw = (configData as Record<string, unknown>)[key];
+        if (raw !== undefined && (typeof raw === "string" || typeof raw === "number" || typeof raw === "boolean")) {
+          initial[key] = raw;
         }
       }
     }
@@ -97,7 +100,7 @@ export default function SettingsConfigPage() {
     onError: () => toast.error("Failed to save configuration"),
   });
 
-  const updateValue = (key: string, value: any) => {
+  const updateValue = (key: string, value: ConfigValue) => {
     setValues(prev => ({ ...prev, [key]: value }));
   };
 
@@ -173,24 +176,24 @@ export default function SettingsConfigPage() {
                       {field.type === "text" && (
                         <input
                           type="text"
-                          value={values[field.key] || ""}
+                          value={String(values[field.key] ?? "")}
                           onChange={(e) => updateValue(field.key, e.target.value)}
-                          className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+                          className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
                         />
                       )}
                       {field.type === "number" && (
                         <input
                           type="number"
-                          value={values[field.key] || 0}
+                          value={Number(values[field.key] ?? 0)}
                           onChange={(e) => updateValue(field.key, Number(e.target.value))}
-                          className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+                          className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
                         />
                       )}
                       {field.type === "select" && (
                         <select
-                          value={values[field.key] || ""}
+                          value={String(values[field.key] ?? "")}
                           onChange={(e) => updateValue(field.key, e.target.value)}
-                          className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+                          className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
                         >
                           {field.options?.map(o => <option key={o} value={o}>{o}</option>)}
                         </select>

@@ -1,7 +1,9 @@
 import { useState, useRef, useEffect, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Bell, CheckCircle2, XCircle, AlertTriangle, Info, X, Check } from "lucide-react";
 import { useEventStore } from "@/state/events";
+import { useDialogA11y } from "@/hooks/useDialogA11y";
 import { formatRelativeTime } from "@/lib/utils";
 
 interface Notification {
@@ -66,6 +68,7 @@ const bgMap = {
 };
 
 export function NotificationPopover() {
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [readIds, setReadIds] = useState<Set<string>>(new Set());
@@ -89,6 +92,8 @@ export function NotificationPopover() {
   }, [events, dismissed, readIds]);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
+
+  const dialogRef = useDialogA11y(() => setOpen(false));
 
   // Close on outside click
   useEffect(() => {
@@ -114,10 +119,14 @@ export function NotificationPopover() {
       <button
         onClick={() => setOpen(!open)}
         className="relative p-2 rounded-md hover:bg-surface-2 transition-colors"
+        aria-label="Notifications"
       >
         <Bell className="w-4 h-4 text-muted-foreground" />
         {unreadCount > 0 && (
-          <span className="absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-amber-400 border-2 border-surface-0 status-pulse" />
+          <>
+            <span className="absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-amber-400 border-2 border-surface-0 status-pulse" />
+            <span className="sr-only">{unreadCount} unread notifications</span>
+          </>
         )}
       </button>
 
@@ -128,6 +137,10 @@ export function NotificationPopover() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 4, scale: 0.97 }}
             transition={{ duration: 0.15 }}
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Notifications"
             className="absolute right-0 top-full mt-2 w-96 bg-surface-1 border border-border rounded-xl shadow-2xl overflow-hidden z-[90]"
           >
             {/* Header */}
@@ -197,7 +210,10 @@ export function NotificationPopover() {
 
             {/* Footer */}
             <div className="px-4 py-2.5 border-t border-border">
-              <button className="w-full text-center text-[11px] text-cordum hover:text-cordum-bright transition-colors font-medium">
+              <button
+                onClick={() => { setOpen(false); navigate("/audit"); }}
+                className="w-full text-center text-[11px] text-cordum hover:text-cordum-bright transition-colors font-medium"
+              >
                 View all notifications
               </button>
             </div>

@@ -3,42 +3,62 @@
  * Matches cordumds-gj5mw4zm.manus.space showcase patterns
  */
 import { useParams, useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { get } from "@/api/client";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Skeleton } from "@/components/ui/Skeleton";
-import { ArrowLeft, Play, Edit, GitBranch, Workflow, Eye, Shield, Link2 } from "lucide-react";
-import { useState } from "react";
-import { cn, formatRelativeTime } from "@/lib/utils";
-
-interface WorkflowDetail {
-  id: string;
-  name: string;
-  description?: string;
-  version?: number;
-  status?: string;
-  steps?: Array<{ id: string; name: string; type: string; topic?: string; dependsOn?: string[] }>;
-  runs?: Array<{ id: string; status: string; startedAt?: string; completedAt?: string; stepResults?: Record<string, string> }>;
-  createdAt?: string;
-  updatedAt?: string;
-}
+import { ArrowLeft, Play, Edit, GitBranch, Workflow, Eye, Shield, Save } from "lucide-react";
+import { useMemo, useState } from "react";
+import { cn, formatRelativeTime, clickableRowProps } from "@/lib/utils";
+import { useWorkflow, useRuns, useStartRun, useUpdateWorkflow } from "@/hooks/useWorkflows";
+import { useRunStream } from "@/hooks/useRunStream";
+import { toast } from "sonner";
+import type { PolicyConstraints, WorkflowRun } from "@/api/types";
+import { WorkflowPolicyOverrides, extractConstraints } from "@/components/workflows/WorkflowPolicyOverrides";
+import { WorkflowPolicyOverrideRules, extractWorkflowRules } from "@/components/workflows/WorkflowPolicyOverrideRules";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { InstrumentCard, InstrumentCardHeader } from "@/components/ui/InstrumentCard";
 
 export default function WorkflowDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("steps");
+  const startRun = useStartRun();
+  const updateWorkflow = useUpdateWorkflow();
+  const [constraintDraft, setConstraintDraft] = useState<PolicyConstraints | null>(null);
 
-  const { data: workflow, isLoading } = useQuery({
-    queryKey: ["workflow", id],
-    queryFn: async () => {
-      const res = await get<WorkflowDetail>(`/workflows/${id}`);
-      return res;
-    },
-    enabled: !!id,
-  });
+  // Subscribe to WebSocket run events — patches React Query cache for instant status updates
+  useRunStream(null);
+
+  const { data: workflow, isLoading } = useWorkflow(id);
+  const { data: runs } = useRuns(id);
+
+  const savedConstraints = useMemo(
+    () => extractConstraints(workflow?.config, workflow?.metadata),
+    [workflow?.config, workflow?.metadata],
+  );
+  const workflowRules = useMemo(
+    () => extractWorkflowRules(workflow?.config, workflow?.metadata),
+    [workflow?.config, workflow?.metadata],
+  );
+  const activeConstraints = constraintDraft ?? savedConstraints;
+  const constraintsDirty = constraintDraft !== null;
+
+  const saveConstraints = async () => {
+    if (!workflow || !constraintDraft) return;
+    try {
+      await updateWorkflow.mutateAsync({
+        id: workflow.id,
+        name: workflow.name,
+        config: { ...(workflow.config ?? {}), constraints: constraintDraft },
+      });
+      setConstraintDraft(null);
+      toast.success("Policy overrides saved");
+    } catch {
+      toast.error("Failed to save policy overrides");
+    }
+  };
 
   if (isLoading) {
     return (
@@ -66,7 +86,7 @@ export default function WorkflowDetailPage() {
 
   const tabs = [
     { id: "steps", label: "Steps", count: workflow.steps?.length },
-    { id: "runs", label: "Runs", count: workflow.runs?.length },
+    { id: "runs", label: "Runs", count: runs?.length },
     { id: "config", label: "Configuration" },
     { id: "policy", label: "Policy" },
   ];
@@ -89,8 +109,8 @@ export default function WorkflowDetailPage() {
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-lg font-bold font-display text-foreground">{workflow.name}</h1>
-                <StatusBadge variant={workflow.status === "active" ? "healthy" : "muted"}>
-                  {workflow.status ?? "active"}
+                <StatusBadge variant="healthy">
+                  active
                 </StatusBadge>
                 <span className="text-xs font-mono text-muted-foreground px-1.5 py-0.5 rounded bg-surface-2">v{workflow.version ?? 1}</span>
               </div>
@@ -103,7 +123,18 @@ export default function WorkflowDetailPage() {
             <Edit className="w-3 h-3 mr-1" />
             Edit
           </Button>
-          <Button variant="primary" size="sm">
+          <Button
+            variant="primary"
+            size="sm"
+            loading={startRun.isPending}
+            onClick={() => { if (!id) return; startRun.mutate({ workflowId: id }, {
+              onSuccess: (data) => {
+                toast.success("Workflow run started");
+                if (data?.run_id) navigate(`/workflows/${id}/runs/${data.run_id}`);
+              },
+              onError: () => toast.error("Failed to start workflow run"),
+            }); }}
+          >
             <Play className="w-3 h-3 mr-1" />
             Run
           </Button>
@@ -167,10 +198,10 @@ export default function WorkflowDetailPage() {
                     <td className="px-5 py-3 font-mono text-xs text-muted-foreground">{s.topic ?? "—"}</td>
                     <td className="px-5 py-3">
                       <div className="flex gap-1">
-                        {(s.dependsOn ?? []).map((d) => (
+                        {(s.depends_on ?? []).map((d) => (
                           <span key={d} className="text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-cordum/10 text-cordum border border-cordum/20">{d}</span>
                         ))}
-                        {(!s.dependsOn || s.dependsOn.length === 0) && <span className="text-xs text-muted-foreground">—</span>}
+                        {(!s.depends_on || s.depends_on.length === 0) && <span className="text-xs text-muted-foreground">—</span>}
                       </div>
                     </td>
                   </tr>
@@ -183,13 +214,24 @@ export default function WorkflowDetailPage() {
 
       {/* Runs Tab */}
       {activeTab === "runs" && (
-        (workflow.runs?.length ?? 0) === 0 ? (
+        (runs?.length ?? 0) === 0 ? (
           <EmptyState
             icon={<Play className="w-5 h-5" />}
             title="No runs yet"
             description="Run this workflow to see execution history"
             action={
-              <Button variant="primary" size="sm">
+              <Button
+                variant="primary"
+                size="sm"
+                loading={startRun.isPending}
+                onClick={() => { if (!id) return; startRun.mutate({ workflowId: id }, {
+                  onSuccess: (data) => {
+                    toast.success("Workflow run started");
+                    if (data?.run_id) navigate(`/workflows/${id}/runs/${data.run_id}`);
+                  },
+                  onError: () => toast.error("Failed to start workflow run"),
+                }); }}
+              >
                 <Play className="w-3 h-3 mr-1" />
                 Run Now
               </Button>
@@ -213,15 +255,15 @@ export default function WorkflowDetailPage() {
                 </tr>
               </thead>
               <tbody>
-                {(workflow.runs ?? []).map((r) => (
+                {(runs ?? []).map((r: WorkflowRun) => (
                   <tr
                     key={r.id}
-                    onClick={() => navigate(`/workflows/${id}/runs/${r.id}`)}
+                    {...clickableRowProps(() => navigate(`/workflows/${id}/runs/${r.id}`))}
                     className="border-b border-border hover:bg-surface-1 transition-colors cursor-pointer"
                   >
                     <td className="px-5 py-3">
                       <StatusBadge
-                        variant={r.status === "completed" ? "healthy" : r.status === "running" ? "info" : r.status === "failed" ? "danger" : "muted"}
+                        variant={r.status === "succeeded" ? "healthy" : r.status === "running" ? "info" : r.status === "failed" ? "danger" : "muted"}
                         dot
                         pulse={r.status === "running"}
                       >
@@ -250,10 +292,10 @@ export default function WorkflowDetailPage() {
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3 }}
-          className="instrument-card p-5"
+          className="instrument-card"
         >
-          <h3 className="font-display font-semibold text-sm text-foreground mb-3">Workflow Configuration</h3>
-          <div className="rounded-md bg-surface-0 border border-border p-4 font-mono text-xs text-foreground overflow-auto max-h-[400px]">
+          <InstrumentCardHeader title="Workflow Configuration" icon={<Workflow className="w-4 h-4" />} />
+          <div className="surface-inset p-4 font-mono text-xs text-foreground overflow-auto max-h-[400px]">
             <pre>{JSON.stringify(workflow, null, 2)}</pre>
           </div>
         </motion.div>
@@ -262,48 +304,41 @@ export default function WorkflowDetailPage() {
       {/* Policy Tab */}
       {activeTab === "policy" && (
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }} className="space-y-4">
-          {/* Bound Bundles */}
-          <div className="instrument-card p-5">
-            <div className="flex items-center gap-2 mb-4">
-              <Shield className="w-4 h-4 text-cordum" />
-              <h3 className="font-display font-semibold text-sm text-foreground">Policy Bindings</h3>
+          {constraintsDirty && (
+            <div className="flex items-center justify-between rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+              <span className="text-xs text-amber-200">Unsaved constraint changes</span>
+              <Button
+                size="sm"
+                loading={updateWorkflow.isPending}
+                onClick={() => void saveConstraints()}
+              >
+                <Save className="w-3 h-3 mr-1" />
+                Save Overrides
+              </Button>
             </div>
-            <p className="text-xs text-muted-foreground mb-4">
-              Policy bundles bound to this workflow. Rules in these bundles are evaluated for every job dispatched by this workflow.
-            </p>
-            <div className="space-y-2">
-              <div className="rounded-lg bg-surface-0 border border-border p-4 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-cordum/10 flex items-center justify-center">
-                    <Shield className="w-4 h-4 text-cordum" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-foreground">No bundles bound</p>
-                    <p className="text-xs text-muted-foreground">Bind a policy bundle to enforce rules on this workflow</p>
-                  </div>
-                </div>
-                <Button variant="outline" size="sm" onClick={() => navigate("/policies/bundles")}>
-                  <Link2 className="w-3 h-3 mr-1" />Bind Bundle
-                </Button>
-              </div>
-            </div>
-          </div>
+          )}
+
+          <WorkflowPolicyOverrides
+            constraints={activeConstraints}
+            readOnly={false}
+            onChange={setConstraintDraft}
+          />
+
+          <WorkflowPolicyOverrideRules rules={workflowRules} />
 
           {/* Step-Level Overrides */}
-          <div className="instrument-card p-5">
-            <div className="flex items-center gap-2 mb-4">
-              <Shield className="w-4 h-4 text-cordum" />
-              <h3 className="font-display font-semibold text-sm text-foreground">Step-Level Overrides</h3>
-            </div>
-            <p className="text-xs text-muted-foreground mb-4">
-              Override policy rules for specific steps in this workflow.
-            </p>
+          <div className="instrument-card">
+            <InstrumentCardHeader
+              title="Step-Level Overrides"
+              subtitle="Each step inherits workflow-level constraints."
+              icon={<Shield className="w-4 h-4" />}
+            />
             {(workflow.steps?.length ?? 0) === 0 ? (
               <p className="text-xs text-muted-foreground">No steps defined in this workflow.</p>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-2 mt-1">
                 {(workflow.steps ?? []).map((step) => (
-                  <div key={step.id} className="rounded-lg bg-surface-0 border border-border p-3 flex items-center justify-between">
+                  <div key={step.id} className="surface-inset p-3 flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-surface-2 border border-border text-muted-foreground">{step.type}</span>
                       <span className="text-sm font-medium text-foreground">{step.name}</span>
@@ -315,15 +350,18 @@ export default function WorkflowDetailPage() {
             )}
           </div>
 
-          {/* Evaluation Summary */}
-          <div className="instrument-card p-5">
-            <div className="flex items-center gap-2 mb-4">
-              <Shield className="w-4 h-4 text-cordum" />
-              <h3 className="font-display font-semibold text-sm text-foreground">Evaluation Summary</h3>
+          {/* Global Policy Link */}
+          <div className="instrument-card">
+            <InstrumentCardHeader
+              title="Global Policy"
+              subtitle="Workflow constraints merge with global policy rules during evaluation."
+              icon={<Shield className="w-4 h-4" />}
+            />
+            <div className="mt-1">
+              <Button variant="outline" size="sm" onClick={() => navigate("/govern/input-rules")}>
+                <Shield className="w-3 h-3 mr-1" />View Global Rules
+              </Button>
             </div>
-            <p className="text-xs text-muted-foreground">
-              Connect to a live Cordum instance to see policy evaluation statistics for this workflow.
-            </p>
           </div>
         </motion.div>
       )}

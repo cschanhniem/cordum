@@ -4,9 +4,7 @@ import { get } from "../api/client";
 import type { Job, Worker } from "../api/types";
 import {
   mapHeartbeatToWorker,
-  mapJobRecord,
   type BackendHeartbeat,
-  type BackendJobRecord,
 } from "../api/transform";
 
 // ---------------------------------------------------------------------------
@@ -17,8 +15,11 @@ export function useWorkers() {
   return useQuery<Worker[]>({
     queryKey: ["workers"],
     queryFn: async () => {
-      const res = await get<BackendHeartbeat[]>("/workers");
-      return (res ?? [])
+      const res = await get<{ items?: BackendHeartbeat[] } | BackendHeartbeat[]>(
+        "/workers",
+      );
+      const items = Array.isArray(res) ? res : (res.items ?? []);
+      return items
         .map(mapHeartbeatToWorker)
         .filter((w): w is Worker => !!w);
     },
@@ -35,8 +36,11 @@ export function useWorker(id: string | null | undefined) {
     queryKey: ["worker", id],
     queryFn: async () => {
       if (!id) throw new Error("worker id is required");
-      const res = await get<BackendHeartbeat[]>("/workers");
-      const match = (res ?? [])
+      const res = await get<{ items?: BackendHeartbeat[] } | BackendHeartbeat[]>(
+        "/workers",
+      );
+      const items = Array.isArray(res) ? res : (res.items ?? []);
+      const match = items
         .map(mapHeartbeatToWorker)
         .find((w): w is Worker => !!w && w.id === id);
       if (!match) throw new Error("worker not found");
@@ -54,10 +58,9 @@ export function useWorkerJobs(workerId: string | null | undefined) {
   return useQuery<Job[]>({
     queryKey: ["worker-jobs", workerId],
     queryFn: async () => {
-      // Backend has no worker_id filter on /jobs — fetch recent jobs
-      // and return them as "recent system jobs" for the drawer context
-      const res = await get<{ items: BackendJobRecord[] }>("/jobs?limit=20");
-      return (res.items ?? []).map(mapJobRecord);
+      // Backend has no worker_id filter or worker→job tracking.
+      // Return empty — the agent detail page shows an honest empty state.
+      return [];
     },
     enabled: !!workerId,
     staleTime: 15_000,

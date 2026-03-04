@@ -41,8 +41,16 @@ export default function AuditLogPage() {
     queryFn: async () => {
       const params = new URLSearchParams({ limit: "200" });
       if (actionFilter) params.set("action", actionFilter);
-      const res = await get<{ items: AuditEvent[] }>(`/audit?${params}`);
-      return res.items ?? [];
+      const res = await get<{ items: Record<string, unknown>[] }>(`/policy/audit?${params}`);
+      return (res.items ?? []).map((e): AuditEvent => ({
+        id: (e.id as string) ?? "",
+        action: (e.action as string) ?? "",
+        actor: (e.actor_id as string) || (e.role as string) || (e.actor as string) || "unknown",
+        resource: (e.resource_type as string) || (e.resource as string) || "",
+        resourceId: (e.resource_id as string) || (e.resourceId as string) || undefined,
+        detail: (e.message as string) || (e.detail as string) || undefined,
+        timestamp: (e.created_at as string) || (e.timestamp as string) || "",
+      }));
     },
   });
 
@@ -112,7 +120,7 @@ export default function AuditLogPage() {
 
       {/* Table — showcase style */}
       {isLoading ? (
-        <div className="instrument-card p-5">
+        <div className="instrument-card">
           <SkeletonTable rows={10} />
         </div>
       ) : events.length === 0 ? (
@@ -128,11 +136,11 @@ export default function AuditLogPage() {
           <table className="w-full min-w-[700px]">
             <thead>
               <tr className="border-b border-border bg-surface-0">
-                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Time</th>
-                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Action</th>
-                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Actor</th>
-                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Resource</th>
-                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Detail</th>
+                <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Time</th>
+                <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Action</th>
+                <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Actor</th>
+                <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Resource</th>
+                <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Detail</th>
               </tr>
             </thead>
             <tbody>

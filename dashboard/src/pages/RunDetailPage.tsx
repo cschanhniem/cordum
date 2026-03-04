@@ -93,7 +93,7 @@ export default function WorkflowRunDetailPage() {
   const rerunMutation = useRerunRun();
 
   // Chat: try real endpoint, fall back to timeline events as messages
-  const { data: chatData } = useQuery<ChatMessage[]>({
+  const { data: chatData, error: chatError } = useQuery<ChatMessage[]>({
     queryKey: ["run-chat", runId],
     queryFn: async () => {
       if (!runId) throw new Error("run id required");
@@ -128,6 +128,9 @@ export default function WorkflowRunDetailPage() {
         timestamp: e.time ? formatRelativeTime(e.time) : "",
       }));
   }, [chatData, timeline]);
+
+  // True when chat API failed or returned empty and we're showing timeline-derived messages
+  const isChatFallback = (!chatData || chatData.length === 0) && messages.length > 0;
 
   // Derive steps from run data + timeline
   const steps = useMemo<RunStep[]>(() => {
@@ -420,7 +423,7 @@ export default function WorkflowRunDetailPage() {
                     <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Step Output</p>
                     {selectedStep.output && (
                       <button
-                        onClick={() => { navigator.clipboard.writeText(selectedStep.output!); toast.success("Copied"); }}
+                        onClick={() => { if (selectedStep.output) { navigator.clipboard.writeText(selectedStep.output); toast.success("Copied"); } }}
                         className="p-1 rounded hover:bg-surface-2 transition-colors"
                       >
                         <Copy className="w-3 h-3 text-muted-foreground" />
@@ -455,6 +458,12 @@ export default function WorkflowRunDetailPage() {
             <span className="text-sm font-display font-semibold text-foreground">Run Chat</span>
             <span className="text-[10px] font-mono text-muted-foreground ml-auto">{messages.length} messages</span>
           </div>
+          {isChatFallback && (
+            <div className="flex items-center gap-2 px-5 py-1.5 border-b border-amber-500/20 bg-amber-500/5 text-[11px] text-amber-200">
+              <AlertTriangle className="w-3 h-3 shrink-0" />
+              Showing timeline events {chatError ? "(chat unavailable)" : "(no chat messages)"}
+            </div>
+          )}
 
           {/* Messages */}
           <div className="flex-1 overflow-y-auto p-5 space-y-3">

@@ -19,23 +19,9 @@ import {
   BarChart, Bar, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid,
 } from "recharts";
 import { useWorker, useWorkerJobs } from "@/hooks/useWorkers";
+import { usePolicyBundles } from "@/hooks/usePolicies";
+import { ChartTooltipCompact as ChartTooltip } from "@/components/ui/ChartTooltip";
 import type { Job } from "@/api/types";
-
-function ChartTooltip({ active, payload, label }: any) {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="bg-surface-2 border border-border rounded-lg p-2 shadow-xl">
-      <p className="font-mono text-[10px] text-muted-foreground mb-1">{label}</p>
-      {payload.map((entry: any, i: number) => (
-        <div key={i} className="flex items-center gap-2 text-[10px]">
-          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
-          <span className="text-muted-foreground">{entry.name}:</span>
-          <span className="font-mono text-foreground">{entry.value}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
 
 function SafetyBadge({ decision }: { decision: string }) {
   const config: Record<string, { color: string; bg: string; label: string }> = {
@@ -103,6 +89,8 @@ export default function AgentDetailPage() {
 
   const { data: agent, isLoading: agentLoading, error: agentError } = useWorker(id);
   const { data: jobs, isLoading: jobsLoading } = useWorkerJobs(id);
+  const { data: bundlesData } = usePolicyBundles();
+  const bundles = bundlesData?.items ?? [];
 
   const safetyBreakdown = useMemo(() => deriveSafetyBreakdown(jobs ?? []), [jobs]);
   const hourlyActivity = useMemo(() => deriveHourlyActivity(jobs ?? []), [jobs]);
@@ -113,6 +101,10 @@ export default function AgentDetailPage() {
     queryClient.invalidateQueries({ queryKey: ["worker", id] });
     queryClient.invalidateQueries({ queryKey: ["worker-jobs", id] });
   };
+
+  const isOnline = agent
+    ? ["online", "active", "idle", "busy"].includes(agent.status)
+    : false;
 
   if (agentError) {
     return (
@@ -189,17 +181,17 @@ export default function AgentDetailPage() {
       {/* Agent Status + Metrics */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Agent Info Card */}
-        <div className="instrument-card p-5">
+        <div className="instrument-card">
           <div className="flex items-center gap-3 mb-4">
             <div className={cn(
               "w-10 h-10 rounded-lg flex items-center justify-center",
-              agent?.status === "online" || agent?.status === "active" ? "bg-emerald-400/10" : "bg-red-400/10"
+              isOnline ? "bg-emerald-400/10" : "bg-red-400/10"
             )}>
-              <Cpu className={cn("w-5 h-5", agent?.status === "online" || agent?.status === "active" ? "text-emerald-400" : "text-red-400")} />
+              <Cpu className={cn("w-5 h-5", isOnline ? "text-emerald-400" : "text-red-400")} />
             </div>
             <div>
               <p className="font-mono text-sm text-foreground font-medium">{agent?.id}</p>
-              <StatusBadge variant={agent?.status === "online" || agent?.status === "active" ? "healthy" : "danger"}>
+              <StatusBadge variant={isOnline ? "healthy" : "danger"}>
                 {agent?.status ?? "unknown"}
               </StatusBadge>
             </div>
@@ -255,7 +247,7 @@ export default function AgentDetailPage() {
         </div>
 
         {/* Safety Breakdown */}
-        <div className="instrument-card p-5">
+        <div className="instrument-card">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-display font-semibold text-sm text-foreground">Safety Decisions</h3>
             <span className="font-mono text-xs text-muted-foreground">{totalDecisions.toLocaleString()} total</span>
@@ -294,11 +286,28 @@ export default function AgentDetailPage() {
         </div>
 
         {/* Policy Bindings */}
-        <div className="instrument-card p-5">
+        <div className="instrument-card">
           <h3 className="font-display font-semibold text-sm text-foreground mb-4">Active Policy Bindings</h3>
-          <div className="py-6 text-center">
-            <p className="text-xs text-muted-foreground">No policy binding data available</p>
-          </div>
+          {bundles.length === 0 ? (
+            <div className="py-6 text-center">
+              <p className="text-xs text-muted-foreground">No policy bundles bound to this agent's pool</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {bundles.map((b) => (
+                <div key={b.id} className="flex items-center justify-between rounded-lg bg-surface-0 border border-border p-3">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="w-3.5 h-3.5 text-cordum" />
+                    <span className="text-sm font-medium text-foreground">{b.name || b.id}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-mono text-muted-foreground">{b.rule_count ?? b.rules?.length ?? 0} rules</span>
+                    <StatusBadge variant={b.status === "published" ? "healthy" : "muted"}>{b.status ?? "published"}</StatusBadge>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* Capabilities */}
           <div className="mt-4 pt-3 border-t border-border">
@@ -319,7 +328,7 @@ export default function AgentDetailPage() {
       </div>
 
       {/* Hourly Activity Chart */}
-      <div className="instrument-card p-5">
+      <div className="instrument-card">
         <div className="flex items-center justify-between mb-4">
           <div>
             <h3 className="font-display font-semibold text-sm text-foreground">Hourly Activity</h3>
@@ -358,7 +367,7 @@ export default function AgentDetailPage() {
           </div>
         ) : !jobs || jobs.length === 0 ? (
           <div className="py-8 text-center">
-            <p className="text-xs text-muted-foreground">No recent jobs</p>
+            <p className="text-xs text-muted-foreground">Per-agent job tracking is not yet available</p>
           </div>
         ) : (
           <table className="w-full">

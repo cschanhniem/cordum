@@ -352,7 +352,7 @@ export default function JobsPage() {
 
       {/* Jobs Table */}
       {isLoading ? (
-        <div className="instrument-card p-5">
+        <div className="instrument-card">
           <SkeletonTable rows={8} />
         </div>
       ) : filtered.length === 0 ? (
@@ -439,7 +439,7 @@ export default function JobsPage() {
                     {job.updatedAt ? formatRelativeTime(new Date(job.updatedAt).toISOString()) : "—"}
                   </td>
                   <td className="px-5 py-2.5">
-                    <button className="p-1 rounded hover:bg-surface-2 transition-colors">
+                    <button className="p-1 rounded hover:bg-surface-2 transition-colors" aria-label="View details">
                       <Eye className="w-3.5 h-3.5 text-muted-foreground" />
                     </button>
                   </td>

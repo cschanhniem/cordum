@@ -13,8 +13,8 @@ const settingsCards = [
   { icon: Server, title: "MCP Server", description: "Configure MCP server connections", path: "/settings/mcp" },
   { icon: Bell, title: "Notifications", description: "Notification channels and preferences", path: "/settings/notifications" },
   { icon: Users, title: "Users & RBAC", description: "User management and role assignments", path: "/settings/users" },
-  { icon: ShieldCheck, title: "Input Safety", description: "Configure input safety policies", path: "/safety/input" },
-  { icon: ShieldAlert, title: "Output Safety", description: "Configure output quarantine settings", path: "/safety/output" },
+  { icon: ShieldCheck, title: "Input Safety", description: "Configure input safety policies", path: "/govern/input-rules" },
+  { icon: ShieldAlert, title: "Output Safety", description: "Configure output quarantine settings", path: "/govern/output-rules" },
 ];
 
 export default function SettingsHubPage() {
@@ -36,7 +36,7 @@ export default function SettingsHubPage() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.04, duration: 0.3 }}
             onClick={() => navigate(card.path)}
-            className="instrument-card p-5 text-left hover:bg-surface-2/50 transition-all duration-200 group"
+            className="instrument-card text-left hover:bg-surface-2/50 transition-all duration-200 group"
           >
             <div className="flex items-start gap-4">
               <div className="w-10 h-10 rounded-lg bg-cordum/10 flex items-center justify-center shrink-0 group-hover:bg-cordum/20 transition-colors">

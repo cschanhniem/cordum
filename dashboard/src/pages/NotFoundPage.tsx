@@ -24,7 +24,7 @@ export default function NotFoundPage() {
           The resource you're looking for doesn't exist or has been moved.
         </p>
         <div className="flex gap-3 justify-center mt-6">
-          <Button variant="outline" size="sm" onClick={() => navigate(-1 as any)}>
+          <Button variant="outline" size="sm" onClick={() => navigate(-1)}>
             <ArrowLeft className="w-3 h-3 mr-1" />
             Go Back
           </Button>

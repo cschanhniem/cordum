@@ -2,10 +2,9 @@
  * DESIGN: "Control Surface" — Dead Letter Queue
  * PRD: Bulk actions with checkbox selection + floating action bar
  */
-import { useState, useMemo } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Fragment, useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { get, post } from "@/api/client";
+import { useDLQ, useRetryDLQ, useDeleteDLQ, useBulkRetryDLQ, useBulkDeleteDLQ } from "@/hooks/useDLQ";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -15,89 +14,59 @@ import { Search, RefreshCw, AlertTriangle, Play, Trash2, CheckCircle2, Download,
 import { cn, formatRelativeTime, clickableRowProps } from "@/lib/utils";
 import { toast } from "sonner";
 
-interface DLQItem {
-  id: string;
+// ---------------------------------------------------------------------------
+// Exported for unit tests (following SettingsKeysPage pattern)
+// ---------------------------------------------------------------------------
+
+/** Builds the structured diagnostics object shown in the expanded DLQ row. */
+export function buildDLQEntryDetails(d: {
   jobId: string;
-  topic?: string;
-  error?: string;
-  attempts: number;
-  failedAt: string;
-  payload?: Record<string, unknown>;
+  status?: string;
+  reasonCode?: string;
+  lastState?: string;
+  originalTopic?: string;
+  attempts?: number;
+  retryCount?: number;
+  failedAt?: string;
+  createdAt?: string;
+}) {
+  return {
+    jobId: d.jobId,
+    status: d.status,
+    reasonCode: d.reasonCode,
+    lastState: d.lastState,
+    originalTopic: d.originalTopic,
+    attempts: d.attempts ?? d.retryCount ?? 0,
+    failedAt: d.failedAt ?? d.createdAt,
+  };
+}
+
+/** Resolves the error message for the expanded DLQ row, with fallback chain. */
+export function resolveDLQError(d: { error?: string; reason?: string }): string {
+  return d.error || d.reason || "No error message";
 }
 
 export default function DLQPage() {
-  const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirmBulk, setConfirmBulk] = useState<"retry" | "purge" | null>(null);
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
 
-  const { data, isLoading, refetch } = useQuery({
-    queryKey: ["dlq"],
-    queryFn: async () => {
-      const res = await get<{ items: DLQItem[]; total?: number }>("/dlq?limit=200");
-      return { items: res.items ?? [], total: res.total ?? (res.items ?? []).length };
-    },
-    refetchInterval: 15_000,
-  });
-
-  const retryMutation = useMutation({
-    mutationFn: async (id: string) => { await post(`/dlq/${encodeURIComponent(id)}/retry`, {}); },
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["dlq"] }); toast.success("Retry queued"); },
-    onError: (err: Error) => toast.error("Retry failed", { description: err.message }),
-  });
-
-  const purgeMutation = useMutation({
-    mutationFn: async (id: string) => { await post(`/dlq/${encodeURIComponent(id)}/purge`, {}); },
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["dlq"] }); toast.success("Purged"); },
-    onError: (err: Error) => toast.error("Purge failed", { description: err.message }),
-  });
-
-  const bulkRetryMutation = useMutation({
-    mutationFn: async (ids: string[]) => {
-      return Promise.allSettled(ids.map((id) => post(`/dlq/${encodeURIComponent(id)}/retry`, {})));
-    },
-    onSuccess: (results, ids) => {
-      queryClient.invalidateQueries({ queryKey: ["dlq"] });
-      const failed = results.filter((r) => r.status === "rejected").length;
-      if (failed > 0) {
-        toast.warning(`Retried ${ids.length - failed}/${ids.length} items — ${failed} failed`);
-      } else {
-        toast.success(`Retrying ${ids.length} items`);
-      }
-      setSelected(new Set());
-      setConfirmBulk(null);
-    },
-    onError: (err: Error) => toast.error("Bulk retry failed", { description: err.message }),
-  });
-
-  const bulkPurgeMutation = useMutation({
-    mutationFn: async (ids: string[]) => {
-      return Promise.allSettled(ids.map((id) => post(`/dlq/${encodeURIComponent(id)}/purge`, {})));
-    },
-    onSuccess: (results, ids) => {
-      queryClient.invalidateQueries({ queryKey: ["dlq"] });
-      const failed = results.filter((r) => r.status === "rejected").length;
-      if (failed > 0) {
-        toast.warning(`Purged ${ids.length - failed}/${ids.length} items — ${failed} failed`);
-      } else {
-        toast.success(`Purged ${ids.length} items`);
-      }
-      setSelected(new Set());
-      setConfirmBulk(null);
-    },
-    onError: (err: Error) => toast.error("Bulk purge failed", { description: err.message }),
-  });
+  const { data, isLoading, refetch } = useDLQ({ limit: 200 });
+  const retryMutation = useRetryDLQ();
+  const purgeMutation = useDeleteDLQ();
+  const bulkRetryMutation = useBulkRetryDLQ();
+  const bulkPurgeMutation = useBulkDeleteDLQ();
 
   const items = useMemo(() => {
     return (data?.items ?? []).filter((d) => {
       if (!search) return true;
       const q = search.toLowerCase();
-      return d.jobId.toLowerCase().includes(q) || (d.topic ?? "").toLowerCase().includes(q) || (d.error ?? "").toLowerCase().includes(q);
+      return d.jobId.toLowerCase().includes(q) || (d.originalTopic ?? "").toLowerCase().includes(q) || (d.error ?? "").toLowerCase().includes(q);
     });
   }, [data, search]);
 
-  const avgAttempts = items.length > 0 ? (items.reduce((s, i) => s + i.attempts, 0) / items.length).toFixed(1) : "0";
+  const avgAttempts = items.length > 0 ? (items.reduce((s, i) => s + (i.attempts ?? i.retryCount ?? 0), 0) / items.length).toFixed(1) : "0";
   const allSelected = items.length > 0 && items.every((i) => selected.has(i.id));
 
   const toggleAll = () => {
@@ -118,7 +87,7 @@ export default function DLQPage() {
   };
 
   const exportCSV = () => {
-    const rows = items.map((d) => [d.id, d.jobId, d.topic ?? "", d.error ?? "", d.attempts, d.failedAt].join(","));
+    const rows = items.map((d) => [d.id, d.jobId, d.originalTopic ?? "", d.error ?? "", d.attempts ?? d.retryCount ?? 0, d.failedAt ?? d.createdAt ?? ""].join(","));
     const csv = ["id,jobId,topic,error,attempts,failedAt", ...rows].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -161,22 +130,22 @@ export default function DLQPage() {
           Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} />)
         ) : (
           <>
-            <div className={cn("instrument-card p-5", items.length > 0 ? "status-danger" : "")}>
+            <div className={cn("instrument-card", items.length > 0 ? "status-danger" : "")}>
               <div className="flex items-center justify-between mb-3">
                 <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Dead Letters</span>
                 <AlertTriangle className={cn("w-4 h-4", items.length > 0 ? "text-red-400" : "text-emerald-400")} />
               </div>
-              <span className={cn("font-mono text-2xl font-bold", items.length > 0 ? "text-red-400" : "text-emerald-400")}>{data?.total ?? 0}</span>
+              <span className={cn("font-mono text-2xl font-bold", items.length > 0 ? "text-red-400" : "text-emerald-400")}>{data?.items?.length ?? 0}</span>
               <p className="text-xs text-muted-foreground mt-1">{items.length > 0 ? "Requires attention" : "Queue clear"}</p>
             </div>
-            <div className="instrument-card p-5">
+            <div className="instrument-card">
               <div className="flex items-center justify-between mb-3">
                 <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Avg Attempts</span>
               </div>
               <span className="font-mono text-2xl font-bold text-foreground">{avgAttempts}</span>
               <p className="text-xs text-muted-foreground mt-1">Before dead-lettering</p>
             </div>
-            <div className="instrument-card p-5">
+            <div className="instrument-card">
               <div className="flex items-center justify-between mb-3">
                 <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Status</span>
                 <span className={cn("w-1.5 h-1.5 rounded-full status-pulse", items.length > 0 ? "bg-red-400" : "bg-emerald-400")} />
@@ -203,7 +172,7 @@ export default function DLQPage() {
 
       {/* Table with checkboxes */}
       {isLoading ? (
-        <div className="instrument-card p-5">
+        <div className="instrument-card">
           <SkeletonTable rows={6} />
         </div>
       ) : items.length === 0 ? (
@@ -241,9 +210,8 @@ export default function DLQPage() {
             </thead>
             <tbody>
               {items.map((d) => (
-                <>
+                <Fragment key={d.id}>
                   <tr
-                    key={d.id}
                     className={cn(
                       "border-b border-border hover:bg-surface-1 transition-colors cursor-pointer",
                       selected.has(d.id) && "bg-cordum/5",
@@ -259,25 +227,27 @@ export default function DLQPage() {
                         className="w-3.5 h-3.5 rounded border-border bg-surface-0 text-cordum focus:ring-cordum accent-[oklch(0.82_0.18_165)]"
                       />
                     </td>
-                    <td className="px-4 py-3 font-mono text-sm text-foreground">{d.jobId.slice(0, 16)}</td>
-                    <td className="px-4 py-3 text-sm text-foreground">{d.topic ?? "—"}</td>
+                    <td className="px-4 py-3 font-mono text-sm text-foreground">{(d.jobId ?? d.id ?? "").slice(0, 16)}</td>
+                    <td className="px-4 py-3 text-sm text-foreground">{d.originalTopic ?? "—"}</td>
                     <td className="px-4 py-3">
                       <span className="text-xs text-red-400 truncate max-w-[250px] block font-mono">{d.error ?? "—"}</span>
                     </td>
-                    <td className="px-4 py-3 text-center font-mono text-xs text-muted-foreground">{d.attempts}</td>
-                    <td className="px-4 py-3 text-right text-xs text-muted-foreground font-mono">{formatRelativeTime(d.failedAt)}</td>
+                    <td className="px-4 py-3 text-center font-mono text-xs text-muted-foreground">{d.attempts ?? d.retryCount ?? 0}</td>
+                    <td className="px-4 py-3 text-right text-xs text-muted-foreground font-mono">{formatRelativeTime(d.failedAt ?? d.createdAt ?? "")}</td>
                     <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                       <div className="flex gap-1 justify-end">
                         <button
-                          onClick={() => retryMutation.mutate(d.id)}
-                          className="p-1.5 rounded hover:bg-surface-2 transition-colors text-cordum"
+                          onClick={() => retryMutation.mutate({ id: d.id })}
+                          disabled={retryMutation.isPending || purgeMutation.isPending}
+                          className="p-1.5 rounded hover:bg-surface-2 transition-colors text-cordum disabled:opacity-50 disabled:pointer-events-none"
                           title="Retry"
                         >
                           <Play className="w-3.5 h-3.5" />
                         </button>
                         <button
                           onClick={() => purgeMutation.mutate(d.id)}
-                          className="p-1.5 rounded hover:bg-surface-2 transition-colors text-red-400"
+                          disabled={purgeMutation.isPending || retryMutation.isPending}
+                          className="p-1.5 rounded hover:bg-surface-2 transition-colors text-red-400 disabled:opacity-50 disabled:pointer-events-none"
                           title="Purge"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -297,20 +267,24 @@ export default function DLQPage() {
                             transition={{ duration: 0.2 }}
                             className="overflow-hidden"
                           >
-                            <div className="px-12 py-4 bg-surface-0/50 border-b border-border">
-                              <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-2">Payload</p>
-                              <pre className="text-xs font-mono text-foreground bg-surface-0 border border-border rounded-md p-3 max-h-40 overflow-auto">
-                                {d.payload ? JSON.stringify(d.payload, null, 2) : "No payload data"}
-                              </pre>
-                              <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mt-3 mb-1">Full Error</p>
-                              <p className="text-xs font-mono text-red-400">{d.error ?? "No error message"}</p>
+                            <div className="px-12 py-4 bg-surface-0/50 border-b border-border space-y-3">
+                              <div>
+                                <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-2">Entry Details</p>
+                                <pre className="text-xs font-mono text-foreground bg-surface-0 border border-border rounded-md p-3 max-h-40 overflow-auto">
+                                  {JSON.stringify(buildDLQEntryDetails(d), null, 2)}
+                                </pre>
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-1">Full Error</p>
+                                <p className="text-xs font-mono text-red-400">{resolveDLQError(d)}</p>
+                              </div>
                             </div>
                           </motion.div>
                         </td>
                       </tr>
                     )}
                   </AnimatePresence>
-                </>
+                </Fragment>
               ))}
             </tbody>
           </table>
@@ -335,14 +309,16 @@ export default function DLQPage() {
               <div className="w-px h-5 bg-border" />
               <button
                 onClick={() => setConfirmBulk("retry")}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-cordum/10 text-cordum hover:bg-cordum/20 transition-colors"
+                disabled={bulkRetryMutation.isPending || bulkPurgeMutation.isPending}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-cordum/10 text-cordum hover:bg-cordum/20 transition-colors disabled:opacity-50 disabled:pointer-events-none"
               >
                 <Play className="w-3 h-3" />
                 Retry All
               </button>
               <button
                 onClick={() => setConfirmBulk("purge")}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
+                disabled={bulkRetryMutation.isPending || bulkPurgeMutation.isPending}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors disabled:opacity-50 disabled:pointer-events-none"
               >
                 <Trash2 className="w-3 h-3" />
                 Purge All
@@ -362,7 +338,7 @@ export default function DLQPage() {
       <ConfirmDialog
         open={confirmBulk === "retry"}
         onClose={() => setConfirmBulk(null)}
-        onConfirm={() => bulkRetryMutation.mutate([...selected])}
+        onConfirm={() => bulkRetryMutation.mutate([...selected], { onSuccess: () => { setSelected(new Set()); setConfirmBulk(null); } })}
         title={`Retry ${selected.size} items?`}
         description={`This will re-queue ${selected.size} dead letter items for processing.`}
         confirmLabel="Retry All"
@@ -371,7 +347,7 @@ export default function DLQPage() {
       <ConfirmDialog
         open={confirmBulk === "purge"}
         onClose={() => setConfirmBulk(null)}
-        onConfirm={() => bulkPurgeMutation.mutate([...selected])}
+        onConfirm={() => bulkPurgeMutation.mutate([...selected], { onSuccess: () => { setSelected(new Set()); setConfirmBulk(null); } })}
         title={`Purge ${selected.size} items?`}
         description="This will permanently delete the selected items. This action cannot be undone."
         confirmLabel="Purge All"

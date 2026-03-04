@@ -33,16 +33,44 @@ export default function SchemaDetailPage() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("fields");
 
+  const isCreateMode = id === "new";
+
   const { data: schema, isLoading } = useQuery({
     queryKey: ["schema", id],
     queryFn: async () => {
-      const res: any = await get(`/schemas/${id}`);
-      return res.data as { id: string; name: string; type: string; versions: SchemaVersion[]; currentVersion: string };
+      const res = await get<{ data?: { id: string; name: string; type: string; versions: SchemaVersion[]; currentVersion: string } }>(`/schemas/${id}`);
+      return res.data;
     },
+    enabled: !isCreateMode,
   });
 
   const tabs = ["fields", "versions", "json"];
   const currentVersion = schema?.versions?.find(v => v.version === schema.currentVersion) || schema?.versions?.[0];
+
+  if (isCreateMode) {
+    return (
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <button onClick={() => navigate("/schemas")} className="p-1.5 rounded-md hover:bg-surface-2 transition-colors">
+              <ArrowLeft className="w-4 h-4 text-muted-foreground" />
+            </button>
+            <FileJson className="w-5 h-5 text-cordum" />
+            <div>
+              <h1 className="text-lg font-display font-bold text-foreground">New Schema</h1>
+              <p className="text-xs text-muted-foreground">Define a new schema for your platform</p>
+            </div>
+          </div>
+        </div>
+        <div className="instrument-card p-6">
+          <p className="text-sm text-muted-foreground">Schema creation form coming soon.</p>
+          <Button variant="outline" size="sm" className="mt-4" onClick={() => navigate("/schemas")}>
+            Back to Schemas
+          </Button>
+        </div>
+      </motion.div>
+    );
+  }
 
   if (isLoading) {
     return (

@@ -16,6 +16,7 @@ import {
   FileText, AlertTriangle, CheckCircle2, Workflow, Layers, Eye,
 } from "lucide-react";
 import { cn, formatRelativeTime, formatDuration } from "@/lib/utils";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
 import { useEventStore } from "@/state/events";
@@ -90,7 +91,7 @@ function BlobViewer({ label, pointer, data, emptyText }: {
 
   if (!pointer && data == null) {
     return (
-      <div className="rounded-md bg-surface-0 border border-border p-4 font-mono text-xs">
+      <div className="surface-inset p-4 font-mono text-xs">
         <p className="text-muted-foreground italic">{emptyText}</p>
       </div>
     );
@@ -103,7 +104,7 @@ function BlobViewer({ label, pointer, data, emptyText }: {
   return (
     <div className="space-y-3">
       {pointer && (
-        <div className="rounded-md bg-surface-0 border border-border p-4 font-mono text-xs flex items-center justify-between gap-3">
+        <div className="surface-inset p-4 font-mono text-xs flex items-center justify-between gap-3">
           <div className="min-w-0">
             <span className="text-muted-foreground">{label} pointer: </span>
             <span className="text-foreground break-all">{pointer}</span>
@@ -122,7 +123,7 @@ function BlobViewer({ label, pointer, data, emptyText }: {
         </div>
       )}
       {(expanded || !pointer) && formatted && (
-        <div className="rounded-md bg-surface-0 border border-border p-4 font-mono text-xs text-foreground overflow-auto max-h-[500px]">
+        <div className="surface-inset p-4 font-mono text-xs text-foreground overflow-auto max-h-[500px]">
           <pre className="whitespace-pre-wrap break-all">{formatted}</pre>
         </div>
       )}
@@ -269,7 +270,7 @@ function JobTimeline({ job }: { job: Job }) {
     <div className="relative pl-6 space-y-4">
       <div className="absolute left-[9px] top-1 bottom-1 w-px bg-border" />
       {entries.map((entry, i) => (
-        <div key={i} className="relative flex items-start gap-3">
+        <div key={`${entry.label}-${i}`} className="relative flex items-start gap-3">
           <div
             className={cn(
               "absolute left-[-15px] top-1.5 w-[10px] h-[10px] rounded-full border-2",
@@ -366,57 +367,51 @@ export default function JobDetailPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header — showcase style */}
-      <div className="flex items-start justify-between">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => navigate("/jobs")}
-            className="p-2 rounded-md hover:bg-surface-2 transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4 text-muted-foreground" />
-          </button>
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-cordum/10 border border-cordum/20 flex items-center justify-center">
-              <Layers className="w-5 h-5 text-cordum" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-lg font-bold font-display text-foreground">
-                  Job {id?.slice(0, 12)}…
-                </h1>
-                <button onClick={copyId} className="text-muted-foreground hover:text-foreground transition-colors">
-                  <Copy className="w-3.5 h-3.5" />
-                </button>
-                <StatusBadge variant={jobStatusVariant(job.status)} dot pulse={job.status === "running"}>
-                  {job.status}
-                </StatusBadge>
-              </div>
-              <p className="text-xs text-muted-foreground mt-0.5 font-mono">{id}</p>
-            </div>
+      <PageHeader
+        label="Operate / Jobs"
+        title={`Job ${id?.slice(0, 12)}…`}
+        subtitle={id || ""}
+        actions={
+          <div className="flex gap-2">
+            <StatusBadge variant={jobStatusVariant(job.status)} dot pulse={job.status === "running"}>
+              {job.status}
+            </StatusBadge>
+            <button onClick={copyId} className="p-2 rounded-md hover:bg-surface-2 text-muted-foreground hover:text-foreground transition-colors" title="Copy Job ID">
+              <Copy className="w-3.5 h-3.5" />
+            </button>
+            {job.status === "failed" && (
+              <Button
+                variant="primary"
+                size="sm"
+                loading={retryMut.isPending}
+                onClick={() => retryMut.mutate({ id: job.id, topic: job.topic }, {
+                  onSuccess: () => toast.success("Job resubmitted for retry"),
+                  onError: () => toast.error("Failed to retry job"),
+                })}
+              >
+                <Play className="w-3 h-3 mr-1" />
+                Retry
+              </Button>
+            )}
+            {(job.status === "running" || job.status === "pending") && (
+              <Button variant="danger" size="sm" disabled={cancelMut.isPending} onClick={() => setShowCancelConfirm(true)}>
+                <XCircle className="w-3 h-3 mr-1" />
+                Cancel
+              </Button>
+            )}
           </div>
-        </div>
-        <div className="flex gap-2">
-          {job.status === "failed" && (
-            <Button
-              variant="primary"
-              size="sm"
-              loading={retryMut.isPending}
-              onClick={() => retryMut.mutate({ id: job.id, topic: job.topic }, {
-                onSuccess: () => toast.success("Job resubmitted for retry"),
-                onError: () => toast.error("Failed to retry job"),
-              })}
-            >
-              <Play className="w-3 h-3 mr-1" />
-              Retry
-            </Button>
-          )}
-          {(job.status === "running" || job.status === "pending") && (
-            <Button variant="danger" size="sm" onClick={() => setShowCancelConfirm(true)}>
-              <XCircle className="w-3 h-3 mr-1" />
-              Cancel
-            </Button>
-          )}
-        </div>
+        }
+      />
+
+      <div className="flex items-center gap-3">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => navigate("/jobs")}
+        >
+          <ArrowLeft className="w-4 h-4 mr-1" />
+          Back to Jobs
+        </Button>
       </div>
 
       {/* State Machine — showcase instrument card */}
@@ -424,7 +419,7 @@ export default function JobDetailPage() {
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3 }}
-        className="instrument-card py-4 flex items-center justify-center"
+        className="instrument-card flex items-center justify-center"
       >
         <StateMachine currentState={job.status} />
       </motion.div>
@@ -456,7 +451,7 @@ export default function JobDetailPage() {
           className="grid grid-cols-1 lg:grid-cols-2 gap-4"
         >
           {/* Job Info */}
-          <div className="instrument-card p-5">
+          <div className="instrument-card">
             <div className="flex items-center gap-2 mb-4">
               <FileText className="w-4 h-4 text-cordum" />
               <h3 className="font-display font-semibold text-sm text-foreground">Job Info</h3>
@@ -483,7 +478,7 @@ export default function JobDetailPage() {
 
           {/* Safety Decision */}
           <div className={cn(
-            "instrument-card p-5",
+            "instrument-card",
             job.safetyDecision?.type === "deny" ? "status-danger" : job.safetyDecision?.type === "allow" ? "" : "",
           )}>
             <div className="flex items-center gap-2 mb-4">
@@ -521,7 +516,7 @@ export default function JobDetailPage() {
 
           {/* Workflow link */}
           {job.workflowId && (
-            <div className="instrument-card p-5 lg:col-span-2">
+            <div className="instrument-card lg:col-span-2">
               <div className="flex items-center gap-2 mb-4">
                 <Workflow className="w-4 h-4 text-cordum" />
                 <h3 className="font-display font-semibold text-sm text-foreground">Workflow Context</h3>
@@ -569,7 +564,7 @@ export default function JobDetailPage() {
 
           {/* Labels */}
           {job.labels && Object.keys(job.labels).length > 0 && (
-            <div className="instrument-card p-5 lg:col-span-2">
+            <div className="instrument-card lg:col-span-2">
               <h3 className="font-display font-semibold text-sm text-foreground mb-3">Labels</h3>
               <div className="flex flex-wrap gap-2">
                 {Object.entries(job.labels).map(([k, v]) => (
@@ -589,7 +584,7 @@ export default function JobDetailPage() {
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3 }}
-          className="instrument-card p-5"
+          className="instrument-card"
         >
           <div className="flex items-center gap-2 mb-4">
             <FileText className="w-4 h-4 text-cordum" />
@@ -605,7 +600,7 @@ export default function JobDetailPage() {
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3 }}
-          className="instrument-card p-5"
+          className="instrument-card"
         >
           <div className="flex items-center gap-2 mb-4">
             <CheckCircle2 className="w-4 h-4 text-cordum" />
@@ -655,10 +650,10 @@ export default function JobDetailPage() {
                 <div className="mt-3">
                   <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-2">Evaluation Path</p>
                   <div className="flex items-center gap-1 flex-wrap">
-                    {job.safetyDecision.evalPath.map((step, i) => (
-                      <span key={i} className="inline-flex items-center">
+                    {job.safetyDecision.evalPath.map((step, stepIdx) => (
+                      <span key={step} className="inline-flex items-center">
                         <span className="px-2 py-0.5 rounded bg-surface-1 border border-border text-[10px] font-mono text-foreground">{step}</span>
-                        {i < (job.safetyDecision?.evalPath?.length ?? 0) - 1 && <span className="text-muted-foreground mx-1">&rarr;</span>}
+                        {stepIdx < (job.safetyDecision?.evalPath?.length ?? 0) - 1 && <span className="text-muted-foreground mx-1">&rarr;</span>}
                       </span>
                     ))}
                   </div>
@@ -715,11 +710,11 @@ export default function JobDetailPage() {
                       </div>
                     )}
                   </dl>
-                  {job.output_safety.findings && job.output_safety.findings.length > 0 && (
+                  {Array.isArray(job.output_safety.findings) && job.output_safety.findings.length > 0 && (
                     <div className="mt-3 space-y-2">
                       <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Findings</p>
-                      {job.output_safety.findings.map((f: OutputFinding, i: number) => (
-                        <div key={i} className="rounded-md bg-surface-0 border border-border p-3">
+                      {job.output_safety.findings.map((f: OutputFinding) => (
+                        <div key={`${f.type}-${f.scanner ?? ""}-${f.detail.slice(0, 40)}`} className="surface-inset p-3">
                           <div className="flex items-center gap-2 mb-1">
                             <StatusBadge variant={f.severity === "critical" ? "danger" : f.severity === "high" ? "warning" : "muted"}>{f.severity}</StatusBadge>
                             <span className="text-xs font-mono text-foreground">{f.type}</span>
@@ -754,12 +749,12 @@ export default function JobDetailPage() {
 
       {/* Terminal Tab */}
       {activeTab === "terminal" && (
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }} className="instrument-card p-5">
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }} className="instrument-card">
           <div className="flex items-center gap-2 mb-4">
             <FileText className="w-4 h-4 text-cordum" />
             <h3 className="font-display font-semibold text-sm text-foreground">Terminal Output</h3>
           </div>
-          <div className="bg-surface-0 rounded-lg border border-border p-4 font-mono text-xs text-foreground min-h-[200px] max-h-[500px] overflow-auto">
+          <div className="surface-inset p-4 font-mono text-xs text-foreground min-h-[200px] max-h-[500px] overflow-auto">
             <JobTerminal job={job} />
           </div>
         </motion.div>
@@ -771,7 +766,7 @@ export default function JobDetailPage() {
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3 }}
-          className="instrument-card p-5"
+          className="instrument-card"
         >
           <div className="flex items-center gap-2 mb-4">
             <Clock className="w-4 h-4 text-cordum" />
@@ -786,10 +781,15 @@ export default function JobDetailPage() {
         onClose={() => setShowCancelConfirm(false)}
         onConfirm={() => {
           cancelMut.mutate(job.id, {
-            onSuccess: () => toast.success("Job cancelled"),
-            onError: () => toast.error("Failed to cancel job"),
+            onSuccess: () => {
+              toast.success("Job cancelled");
+              setShowCancelConfirm(false);
+            },
+            onError: () => {
+              toast.error("Failed to cancel job");
+              setShowCancelConfirm(false);
+            },
           });
-          setShowCancelConfirm(false);
         }}
         title="Cancel Job"
         description={`Cancel job ${job.id.slice(0, 12)}…? This will stop the job if it is currently running.`}

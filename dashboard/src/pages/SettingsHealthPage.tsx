@@ -1,15 +1,14 @@
 /*
  * DESIGN: "Control Surface" — System Health
- * PRD Section 29: Service health table + resource charts
+ * PRD Section 29: Service health table + system info
  */
-import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { get } from "@/api/client";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { SkeletonCard, SkeletonTable } from "@/components/ui/Skeleton";
-import { Activity, Server, Database, Wifi, Clock, Cpu, HardDrive, MemoryStick } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Activity, Server, Database, Wifi, Clock, GitCommit, Hash } from "lucide-react";
+import { useStatus } from "@/hooks/useStatus";
+import type { GatewayStatus } from "@/hooks/useStatus";
 
 interface ServiceHealth {
   name: string;
@@ -19,58 +18,93 @@ interface ServiceHealth {
   lastCheck: string;
 }
 
-export default function SettingsHealthPage() {
-  const { data: health, isLoading } = useQuery({
-    queryKey: ["health"],
-    queryFn: async () => {
-      const res: any = await get("/health");
-      return res.data as { services: ServiceHealth[]; cpu: number; memory: number; disk: number };
-    },
-    refetchInterval: 10000,
-  });
+function formatUptime(seconds?: number): string {
+  if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds < 0) return "—";
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  if (days > 0) return `${days}d ${hours}h`;
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+}
 
-  const services = health?.services || [];
+function deriveServices(status?: GatewayStatus): ServiceHealth[] {
+  if (!status) return [];
+
+  const lastCheck = status.time
+    ? new Date(status.time).toLocaleTimeString()
+    : "—";
+
+  const uptimeStr = formatUptime(status.uptime_seconds);
+
+  return [
+    {
+      name: "API Gateway",
+      status: "healthy",
+      latency: "—",
+      uptime: uptimeStr,
+      lastCheck,
+    },
+    {
+      name: "NATS Bus",
+      status: status.nats?.connected ? "healthy" : "down",
+      latency: "—",
+      uptime: "—",
+      lastCheck,
+    },
+    {
+      name: "Redis Store",
+      status: status.redis?.ok ? "healthy" : "down",
+      latency: "—",
+      uptime: "—",
+      lastCheck,
+    },
+    {
+      name: "Worker Pool",
+      status:
+        (status.workers?.count ?? 0) > 0 ? "healthy" : "degraded",
+      latency: "—",
+      uptime: "—",
+      lastCheck,
+    },
+  ];
+}
+
+export default function SettingsHealthPage() {
+  const { data: status, isLoading } = useStatus();
+
+  const services = deriveServices(status);
   const serviceIcon = (name: string) => {
     if (name.includes("API")) return Server;
-    if (name.includes("Database") || name.includes("DB")) return Database;
-    if (name.includes("Queue") || name.includes("Redis")) return Wifi;
+    if (name.includes("NATS")) return Wifi;
+    if (name.includes("Redis")) return Database;
+    if (name.includes("Worker")) return Activity;
     return Activity;
   };
 
   return (
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-      <PageHeader title="System Health" subtitle="Monitor service status and resource utilization" />
+      <PageHeader title="System Health" subtitle="Monitor service status and system information" />
 
-      {/* Resource Gauges */}
+      {/* System Info */}
       {isLoading ? (
         <div className="grid grid-cols-3 gap-4">{Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} />)}</div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {[
-            { label: "CPU", value: health?.cpu || 0, icon: Cpu, color: "cordum" },
-            { label: "Memory", value: health?.memory || 0, icon: MemoryStick, color: "blue-400" },
-            { label: "Disk", value: health?.disk || 0, icon: HardDrive, color: "amber-400" },
-          ].map((gauge, i) => {
-            const Icon = gauge.icon;
-            const isHigh = gauge.value > 80;
+            { label: "Version", value: status?.build?.version || "—", icon: GitCommit },
+            { label: "Uptime", value: formatUptime(status?.uptime_seconds), icon: Clock },
+            { label: "Instance", value: status?.instance_id ? status.instance_id.slice(0, 12) : "—", icon: Hash },
+          ].map((item, i) => {
+            const Icon = item.icon;
             return (
-              <motion.div key={gauge.label} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
-                className="instrument-card p-5">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <Icon className={cn("w-4 h-4", `text-${gauge.color}`)} />
-                    <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">{gauge.label}</span>
-                  </div>
-                  <span className={cn("text-lg font-mono font-bold", isHigh ? "text-red-400" : "text-foreground")}>{gauge.value}%</span>
+              <motion.div key={item.label} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
+                className="instrument-card">
+                <div className="flex items-center gap-2 mb-2">
+                  <Icon className="w-4 h-4 text-cordum" />
+                  <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">{item.label}</span>
                 </div>
-                <div className="h-2 rounded-full bg-surface-2 overflow-hidden">
-                  <motion.div
-                    className={cn("h-full rounded-full", isHigh ? "bg-red-400" : `bg-${gauge.color}`)}
-                    initial={{ width: 0 }}
-                    animate={{ width: `${gauge.value}%` }}
-                    transition={{ duration: 0.8, ease: "easeOut" }}
-                  />
-                </div>
+                <span className="text-lg font-mono font-bold text-foreground">{item.value}</span>
               </motion.div>
             );
           })}
@@ -78,7 +112,7 @@ export default function SettingsHealthPage() {
       )}
 
       {/* Services Table */}
-      {isLoading ? <SkeletonTable rows={5} /> : (
+      {isLoading ? <SkeletonTable rows={4} /> : (
         <div className="instrument-card overflow-hidden">
           <div className="px-4 py-3 border-b border-border bg-surface-0">
             <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Service Status</p>

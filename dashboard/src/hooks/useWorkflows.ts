@@ -600,9 +600,12 @@ export function useAllRuns(filters?: AllRunsParams) {
           updated_before: filters?.updatedBefore,
         })}`,
       );
+      const items = Array.isArray(res)
+        ? res
+        : (res as Record<string, unknown> | null)?.items as BackendWorkflowRun[] | undefined ?? [];
       return {
-        items: (res.items ?? []).map(mapWorkflowRun),
-        next_cursor: res.next_cursor ?? null,
+        items: items.map(mapWorkflowRun),
+        next_cursor: Array.isArray(res) ? null : (res as Record<string, unknown> | null)?.next_cursor as number | null ?? null,
       };
     },
   });
@@ -762,9 +765,12 @@ export function useActiveRuns() {
       const res = await get<{ items: BackendWorkflowRun[]; next_cursor?: number | null }>(
         `/workflow-runs${buildQuery({ limit: 50 })}`,
       );
+      const items = Array.isArray(res)
+        ? res
+        : (res as Record<string, unknown> | null)?.items as BackendWorkflowRun[] | undefined ?? [];
       return {
-        items: (res.items ?? []).map(mapWorkflowRun),
-        next_cursor: res.next_cursor ?? null,
+        items: items.map(mapWorkflowRun),
+        next_cursor: Array.isArray(res) ? null : (res as Record<string, unknown> | null)?.next_cursor as number | null ?? null,
       };
     },
     select: (data) => sortByAttention(data.items),

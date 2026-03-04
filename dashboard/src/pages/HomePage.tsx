@@ -26,8 +26,11 @@ import {
 import { cn, formatRelativeTime } from "@/lib/utils";
 import { Progress } from "@/components/ui/progress";
 import { useApproveJob, useRejectJob } from "@/hooks/useApprovals";
+import { useStatus } from "@/hooks/useStatus";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { ChartTooltip } from "@/components/ui/ChartTooltip";
+import { MetricValue } from "@/components/ui/MetricValue";
+import { InstrumentCard } from "@/components/ui/InstrumentCard";
 import { SafetyDecisionBadge } from "@/components/ui/SafetyDecisionBadge";
 
 export default function HomePage() {
@@ -64,14 +67,52 @@ export default function HomePage() {
     refetchInterval: 5_000,
   });
 
-  const { data: healthData, isLoading: healthLoading } = useQuery({
-    queryKey: ["health", "home"],
-    queryFn: async () => {
-      const res = await get<{ data?: { services: { name: string; status: string; latency: string }[] } }>("/health");
-      return res.data;
-    },
-    refetchInterval: 15_000,
-  });
+  const { data: statusData, isLoading: statusLoading } = useStatus();
+
+  const derivedServices = useMemo(() => {
+    if (!statusData) return [];
+    const svc: { name: string; status: string; latency: string }[] = [];
+    // API Gateway — if we got a response, it's healthy
+    const uptimeLabel = statusData.uptime_seconds != null
+      ? `up ${Math.floor(statusData.uptime_seconds / 3600)}h ${Math.floor((statusData.uptime_seconds % 3600) / 60)}m`
+      : "—";
+    svc.push({ name: "API Gateway", status: "healthy", latency: uptimeLabel });
+    // NATS
+    if (statusData.nats) {
+      svc.push({
+        name: "NATS",
+        status: statusData.nats.connected ? "healthy" : "down",
+        latency: statusData.nats.status ?? "—",
+      });
+    }
+    // Redis
+    if (statusData.redis) {
+      svc.push({
+        name: "Redis",
+        status: statusData.redis.ok ? "healthy" : "down",
+        latency: statusData.redis.error ?? (statusData.redis.ok ? "ok" : "—"),
+      });
+    }
+    // Workers
+    if (statusData.workers) {
+      const count = statusData.workers.count ?? 0;
+      svc.push({
+        name: "Workers",
+        status: count > 0 ? "healthy" : "degraded",
+        latency: `${count} connected`,
+      });
+    }
+    // Safety Kernel — derive from circuit breaker if available
+    if (statusData.circuit_breakers) {
+      const inputState = statusData.circuit_breakers.input?.state ?? "unknown";
+      svc.push({
+        name: "Safety Kernel",
+        status: inputState === "CLOSED" ? "healthy" : inputState === "OPEN" ? "down" : "degraded",
+        latency: inputState.toLowerCase(),
+      });
+    }
+    return svc;
+  }, [statusData]);
 
   const jobs = jobsData?.items ?? [];
   const activeWorkers = workers?.filter((w) => w.status === "idle" || w.status === "busy") ?? [];
@@ -144,7 +185,6 @@ export default function HomePage() {
         }
       />
 
-      {/* KPI Row — 2 Ops + 2 Governance (balanced for CTO + CISO) */}
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
@@ -155,80 +195,72 @@ export default function HomePage() {
           Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
         ) : (
           <>
-            {/* KPI 1: Total Jobs (CTO — throughput) */}
-            <div className="instrument-card p-5">
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">Total Jobs (24h)</span>
-                <Activity className="w-4 h-4 text-cordum" />
-              </div>
-              <span className="font-mono text-3xl font-bold text-foreground">{totalJobs.toLocaleString()}</span>
-              <div className="flex gap-3 mt-2 text-[10px] font-mono text-muted-foreground">
-                <span>{runningJobs} running</span>
-                <span className="text-emerald-400">{completedJobs} done</span>
-                <span className="text-red-400">{failedJobs} failed</span>
-              </div>
-            </div>
+            {/* KPI 1: Recent Jobs */}
+            <InstrumentCard>
+              <MetricValue label="Recent Jobs" value={totalJobs.toLocaleString()} icon={<Activity className="w-4 h-4" />}>
+                <div className="flex gap-3 mt-3 text-[10px] font-mono text-muted-foreground">
+                  <span>{runningJobs} running</span>
+                  <span className="text-emerald-400">{completedJobs} done</span>
+                  <span className="text-red-400">{failedJobs} failed</span>
+                </div>
+              </MetricValue>
+            </InstrumentCard>
 
-            {/* KPI 2: Active Agents (CTO — fleet health) */}
-            <div className="instrument-card p-5">
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">Active Agents</span>
-                <Cpu className="w-4 h-4 text-cordum" />
-              </div>
-              <div className="flex items-baseline gap-2">
-                <span className="font-mono text-3xl font-bold text-foreground">{activeWorkers.length}</span>
-                <span className="text-sm text-muted-foreground font-mono">/ {workers?.length ?? 0}</span>
-              </div>
-              <div className="flex gap-1 mt-3">
-                {(workers ?? []).slice(0, 20).map((w, i) => (
-                  <div
-                    key={i}
-                    className={cn(
-                      "w-2 h-2 rounded-sm",
-                      w.status === "idle" ? "bg-emerald-400" :
-                      w.status === "busy" ? "bg-cordum" :
-                      "bg-gray-600",
-                    )}
-                  />
-                ))}
-              </div>
-            </div>
+            {/* KPI 2: Active Agents */}
+            <InstrumentCard>
+              <MetricValue 
+                label="Active Agents" 
+                value={activeWorkers.length} 
+                unit={`/ ${workers?.length ?? 0}`}
+                icon={<Cpu className="w-4 h-4" />}
+              >
+                <div className="flex gap-1 mt-3.5">
+                  {(workers ?? []).slice(0, 20).map((w) => (
+                    <div
+                      key={w.id}
+                      className={cn(
+                        "w-2 h-2 rounded-sm",
+                        w.status === "idle" ? "bg-emerald-400" :
+                        w.status === "busy" ? "bg-cordum" :
+                        "bg-gray-600",
+                      )}
+                    />
+                  ))}
+                </div>
+              </MetricValue>
+            </InstrumentCard>
 
-            {/* KPI 3: Safety Decisions (CISO — governance) */}
-            <div className="instrument-card p-5">
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">Safety Decisions</span>
-                <ShieldCheck className="w-4 h-4 text-cordum" />
-              </div>
-              <div className="flex items-baseline gap-2">
-                <span className="font-mono text-3xl font-bold text-foreground">{safetyAllowRate}%</span>
-                <span className="text-xs font-mono text-muted-foreground">allowed</span>
-              </div>
-              <div className="flex gap-3 mt-2 text-[10px] font-mono">
-                <span className="text-emerald-400">{safetyAllowed} allow</span>
-                <span className="text-red-400">{safetyDenied} deny</span>
-                <span className="text-amber-400">{safetyApproval} review</span>
-              </div>
-            </div>
+            {/* KPI 3: Safety Decisions */}
+            <InstrumentCard>
+              <MetricValue 
+                label="Safety Decisions" 
+                value={`${safetyAllowRate}%`} 
+                unit="allowed"
+                icon={<ShieldCheck className="w-4 h-4" />}
+              >
+                <div className="flex gap-3 mt-3 text-[10px] font-mono">
+                  <span className="text-emerald-400">{safetyAllowed} allow</span>
+                  <span className="text-red-400">{safetyDenied} deny</span>
+                  <span className="text-amber-400">{safetyApproval} review</span>
+                </div>
+              </MetricValue>
+            </InstrumentCard>
 
-            {/* KPI 4: Pending Approvals (Both — urgency) */}
-            <div className={cn("instrument-card p-5", pendingApprovals.length > 0 && "status-warning")}>
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">Pending Approvals</span>
-                <UserCheck className={cn("w-4 h-4", pendingApprovals.length > 0 ? "text-amber-400" : "text-cordum")} />
-              </div>
-              <div className="flex items-baseline gap-2">
-                <span className={cn("font-mono text-3xl font-bold", pendingApprovals.length > 0 ? "text-amber-400" : "text-foreground")}>
-                  {pendingApprovals.length}
-                </span>
-                <span className="text-xs font-mono text-muted-foreground">awaiting</span>
-              </div>
-              {pendingApprovals.length > 0 && (
-                <Button variant="ghost" size="sm" className="mt-2 text-amber-400 hover:text-amber-300 p-0 h-auto" onClick={() => navigate("/approvals")}>
-                  Review now <ArrowRight className="w-3 h-3 ml-1" />
-                </Button>
-              )}
-            </div>
+            {/* KPI 4: Pending Approvals */}
+            <InstrumentCard accent={pendingApprovals.length > 0 ? "warning" : "cordum"}>
+              <MetricValue 
+                label="Pending Approvals" 
+                value={pendingApprovals.length} 
+                unit="awaiting"
+                icon={<UserCheck className={cn("w-4 h-4", pendingApprovals.length > 0 ? "text-amber-400" : "text-cordum")} />}
+              >
+                {pendingApprovals.length > 0 && (
+                  <Button variant="ghost" size="sm" className="mt-2.5 text-amber-400 hover:text-amber-300 p-0 h-auto font-mono text-[10px] uppercase tracking-widest" onClick={() => navigate("/approvals")}>
+                    Review now <ArrowRight className="w-3 h-3 ml-1" />
+                  </Button>
+                )}
+              </MetricValue>
+            </InstrumentCard>
           </>
         )}
       </motion.div>
@@ -240,14 +272,14 @@ export default function HomePage() {
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, delay: 0.1 }}
-          className="instrument-card p-5 lg:col-span-2"
+          className="instrument-card lg:col-span-2"
         >
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="font-display font-semibold text-sm text-foreground">Job Activity</h3>
-              <p className="text-xs text-muted-foreground mt-0.5">Safety overlay — allowed vs denied vs approval</p>
+          <div className="flex items-start justify-between mb-5">
+            <div className="min-w-0">
+              <h3 className="font-display font-semibold text-sm text-foreground tracking-tight">Job Activity</h3>
+              <p className="text-[11px] text-muted-foreground mt-1 leading-none">Safety overlay — allowed vs denied vs approval</p>
             </div>
-            <div className="flex items-center gap-4 text-[10px] font-mono">
+            <div className="flex items-center gap-4 text-[10px] font-mono shrink-0">
               <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-400" />Allowed</span>
               <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-400" />Denied</span>
               <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-amber-400" />Approval</span>
@@ -285,7 +317,7 @@ export default function HomePage() {
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, delay: 0.15 }}
-          className="instrument-card p-5"
+          className="instrument-card"
         >
           <h3 className="font-display font-semibold text-sm text-foreground mb-0.5">Decision Distribution</h3>
           <p className="text-xs text-muted-foreground mb-4">5 safety decision types</p>
@@ -300,8 +332,8 @@ export default function HomePage() {
                 paddingAngle={3}
                 dataKey="value"
               >
-                {decisionData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={entry.color} />
+                {decisionData.map((entry) => (
+                  <Cell key={entry.name} fill={entry.color} />
                 ))}
               </Pie>
               <Tooltip content={<ChartTooltip />} />
@@ -399,9 +431,9 @@ export default function HomePage() {
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3, delay: 0.25 }}
-        className="instrument-card p-5"
+        className="instrument-card"
       >
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-5">
           <div>
             <h3 className="font-display font-semibold text-sm text-foreground">Worker Pool Health</h3>
             <p className="text-xs text-muted-foreground mt-0.5">Real-time agent status</p>
@@ -414,39 +446,38 @@ export default function HomePage() {
           {(workers ?? []).slice(0, 12).map((w, idx) => {
             const isOnline = w.status === "idle" || w.status === "busy";
             return (
-              <div
+              <InstrumentCard
                 key={w.id}
                 onClick={() => navigate(`/agents/${w.id}`)}
-                className={cn(
-                  "rounded-lg border p-3 cursor-pointer transition-all hover:bg-surface-1",
-                  isOnline ? "border-emerald-500/20 bg-emerald-500/5" : "border-border bg-surface-0 opacity-50"
-                )}
+                hoverable
+                accent={isOnline ? "healthy" : "muted"}
+                className="p-3" // dense padding for high density grid
               >
                 <div className="flex items-center gap-2 mb-2">
                   <div className={cn("w-2 h-2 rounded-full", isOnline ? "bg-emerald-400 animate-pulse" : "bg-gray-500")} />
-                  <span className="font-mono text-xs text-foreground truncate">{w.name || w.id.slice(0, 10)}</span>
+                  <span className="font-mono text-[11px] text-foreground truncate">{w.name || w.id.slice(0, 10)}</span>
                 </div>
                 <div className="space-y-1.5">
-                  <div className="flex justify-between text-[10px]">
+                  <div className="flex justify-between text-[9px] uppercase tracking-wider font-mono">
                     <span className="text-muted-foreground">CPU</span>
-                    <span className="font-mono text-foreground">{w.cpuLoad ?? 0}%</span>
+                    <span className="text-foreground">{w.cpuLoad ?? 0}%</span>
                   </div>
                   <div className="w-full h-1 rounded-full bg-surface-2 overflow-hidden">
                     <div className="h-full rounded-full bg-cordum transition-all" style={{ width: `${w.cpuLoad ?? 0}%` }} />
                   </div>
-                  <div className="flex justify-between text-[10px]">
+                  <div className="flex justify-between text-[9px] uppercase tracking-wider font-mono">
                     <span className="text-muted-foreground">MEM</span>
-                    <span className="font-mono text-foreground">{w.memoryLoad ?? 0}%</span>
+                    <span className="text-foreground">{w.memoryLoad ?? 0}%</span>
                   </div>
                   <div className="w-full h-1 rounded-full bg-surface-2 overflow-hidden">
                     <div className="h-full rounded-full bg-blue-400 transition-all" style={{ width: `${w.memoryLoad ?? 0}%` }} />
                   </div>
                 </div>
                 {/* Last policy eval line */}
-                <div className="mt-2 pt-1.5 border-t border-border/50 text-[9px] font-mono text-muted-foreground">
+                <div className="mt-2 pt-1.5 border-t border-border/40 text-[9px] font-mono text-muted-foreground">
                   Jobs: {w.activeJobs ?? 0} / {w.capacity ?? 0}
                 </div>
-              </div>
+              </InstrumentCard>
             );
           })}
           {(!workers || workers.length === 0) && !workersLoading && (
@@ -462,11 +493,11 @@ export default function HomePage() {
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3, delay: 0.3 }}
-        className="instrument-card p-5"
+        className="instrument-card"
       >
-        <h3 className="font-display font-semibold text-sm text-foreground mb-4">Service Health</h3>
+        <h3 className="font-display font-semibold text-sm text-foreground mb-5">Service Health</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-          {healthLoading ? (
+          {statusLoading ? (
             Array.from({ length: 5 }).map((_, i) => (
               <div key={i} className="flex items-center gap-3 rounded-lg border border-border bg-surface-0 p-3 animate-pulse">
                 <div className="w-2 h-2 rounded-full shrink-0 bg-surface-2" />
@@ -476,18 +507,24 @@ export default function HomePage() {
                 </div>
               </div>
             ))
-          ) : (healthData?.services ?? []).length > 0 ? (
-            (healthData?.services ?? []).map((svc) => (
-              <div key={svc.name} className="flex items-center gap-3 rounded-lg border border-border bg-surface-0 p-3">
-                <div className={cn(
-                  "w-2 h-2 rounded-full shrink-0",
-                  svc.status === "healthy" ? "bg-emerald-400" : svc.status === "degraded" ? "bg-amber-400" : "bg-red-400"
-                )} />
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-foreground font-medium truncate">{svc.name}</p>
-                  <p className="text-[10px] text-muted-foreground font-mono">{svc.latency || "—"}</p>
+          ) : derivedServices.length > 0 ? (
+            derivedServices.map((svc) => (
+              <InstrumentCard
+                key={svc.name}
+                accent={svc.status === "healthy" ? "healthy" : svc.status === "degraded" ? "warning" : "danger"}
+                className="p-3"
+              >
+                <div className="flex items-center gap-3">
+                  <div className={cn(
+                    "w-2 h-2 rounded-full shrink-0",
+                    svc.status === "healthy" ? "bg-emerald-400" : svc.status === "degraded" ? "bg-amber-400" : "bg-red-400"
+                  )} />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-foreground font-semibold truncate">{svc.name}</p>
+                    <p className="text-[10px] text-muted-foreground font-mono">{svc.latency || "—"}</p>
+                  </div>
                 </div>
-              </div>
+              </InstrumentCard>
             ))
           ) : (
             <div className="col-span-full text-center py-4 text-sm text-muted-foreground">
@@ -512,24 +549,26 @@ export default function HomePage() {
             </Button>
           </div>
           {pendingApprovals.slice(0, 3).map((approval) => (
-            <div
+            <InstrumentCard
               key={approval.id}
-              className="instrument-card status-warning p-4"
+              accent="warning"
+              onClick={() => navigate("/approvals")}
+              hoverable
             >
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <div className="flex items-center gap-3 mb-1">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-3 mb-2">
                     <span className="font-mono text-sm text-cordum">{approval.id.slice(0, 12)}</span>
                     <span className="text-[10px] text-muted-foreground font-mono">
                       {approval.requestedAt ? formatRelativeTime(approval.requestedAt) : "—"}
                     </span>
                   </div>
-                  <p className="text-sm font-medium text-foreground">
+                  <h4 className="text-sm font-semibold font-display text-foreground leading-snug">
                     {approval.topic || "Pending Approval"}
-                  </p>
+                  </h4>
                 </div>
-                <div className="flex gap-2 ml-4 shrink-0">
-                  <Button size="sm" variant="danger" onClick={() => setDenyTarget(approval.id)}>
+                <div className="flex gap-2 shrink-0">
+                  <Button size="sm" variant="danger" onClick={(e) => { e.stopPropagation(); setDenyTarget(approval.id); }}>
                     <XCircle className="w-3.5 h-3.5 mr-1" />
                     Deny
                   </Button>
@@ -537,14 +576,14 @@ export default function HomePage() {
                     size="sm"
                     variant="primary"
                     loading={approveMut.isPending}
-                    onClick={() => approveMut.mutate({ id: approval.id })}
+                    onClick={(e) => { e.stopPropagation(); approveMut.mutate({ id: approval.id }); }}
                   >
                     <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
                     Approve
                   </Button>
                 </div>
               </div>
-            </div>
+            </InstrumentCard>
           ))}
         </motion.div>
       )}

@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 
-type BadgeVariant = "healthy" | "warning" | "danger" | "info" | "muted" | "cordum";
+export type BadgeVariant = "healthy" | "warning" | "danger" | "info" | "muted" | "cordum";
 
 /* Exact match to showcase: uses emerald/amber/red/blue Tailwind colors */
 const variants: Record<BadgeVariant, string> = {

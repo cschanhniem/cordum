@@ -18,7 +18,7 @@ export function PageHeader({
   className,
 }: PageHeaderProps) {
   return (
-    <div className={cn("flex items-start justify-between mb-6", className)}>
+    <div className={cn("flex items-start justify-between", className)}>
       <div>
         {label && (
           <span className="text-[10px] font-mono text-cordum uppercase tracking-widest block mb-1">

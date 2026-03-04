@@ -2,14 +2,14 @@ import { Suspense, lazy, useEffect, type ReactNode } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "sonner";
-import { useConfigStore } from "./state/config";
+import { useConfigStore, registerQueryClient } from "./state/config";
 import { useUiStore } from "./state/ui";
 import { AppShell } from "./components/layout/AppShell";
 import { LoadingScreen } from "./components/layout/LoadingScreen";
 import { useRequireAuth } from "./hooks/useAuth";
 import { useEventStream } from "./hooks/useEventStream";
-import { usePresenceCleanup } from "./state/events";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { ToastBridge } from "./components/ToastBridge";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -20,6 +20,9 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+// Register QueryClient so config store can clear cache on logout/tenant-switch
+registerQueryClient(queryClient);
 
 // Lazy-loaded pages
 const LoginPage = lazy(() => import("./pages/LoginPage"));
@@ -33,20 +36,11 @@ const WorkflowsPage = lazy(() => import("./pages/WorkflowsPage"));
 const WorkflowDetailPage = lazy(() => import("./pages/WorkflowDetailPage"));
 const WorkflowCreatePage = lazy(() => import("./pages/WorkflowCreatePage"));
 const RunDetailPage = lazy(() => import("./pages/RunDetailPage"));
-const PoliciesOverviewPage = lazy(() => import("./pages/PoliciesOverviewPage"));
-const PoliciesBundlesPage = lazy(() => import("./pages/PoliciesBundlesPage"));
-const PoliciesRulesPage = lazy(() => import("./pages/PoliciesRulesPage"));
-const PoliciesBuilderPage = lazy(() => import("./pages/PoliciesBuilderPage"));
-const PoliciesSimulatorPage = lazy(() => import("./pages/PoliciesSimulatorPage"));
-const PoliciesHistoryPage = lazy(() => import("./pages/PoliciesHistoryPage"));
-const PoliciesAnalyticsPage = lazy(() => import("./pages/PoliciesAnalyticsPage"));
-const PoliciesPublishPage = lazy(() => import("./pages/PoliciesPublishPage"));
 const PacksPage = lazy(() => import("./pages/PacksPage"));
 const SchemasPage = lazy(() => import("./pages/SchemasPage"));
 const SchemaDetailPage = lazy(() => import("./pages/SchemaDetailPage"));
 const AuditLogPage = lazy(() => import("./pages/AuditLogPage"));
 const DLQPage = lazy(() => import("./pages/DLQPage"));
-const TracesPage = lazy(() => import("./pages/TracesPage"));
 const SettingsHealthPage = lazy(() => import("./pages/SettingsHealthPage"));
 const SettingsKeysPage = lazy(() => import("./pages/SettingsKeysPage"));
 const SettingsUsersPage = lazy(() => import("./pages/SettingsUsersPage"));
@@ -54,15 +48,31 @@ const SettingsNotificationsPage = lazy(() => import("./pages/SettingsNotificatio
 const SettingsEnvironmentsPage = lazy(() => import("./pages/SettingsEnvironmentsPage"));
 const SettingsConfigPage = lazy(() => import("./pages/SettingsConfigPage"));
 const SettingsMcpPage = lazy(() => import("./pages/SettingsMcpPage"));
-const InputSafetyPage = lazy(() => import("./pages/InputSafetyPage"));
-const OutputSafetyPage = lazy(() => import("./pages/OutputSafetyPage"));
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage"));
 const SettingsHubPage = lazy(() => import("./pages/SettingsHubPage"));
-const SecurityOverviewPage = lazy(() => import("./pages/SecurityOverviewPage"));
-const PoliciesInputPage = lazy(() => import("./pages/PoliciesInputPage"));
-const PoliciesOutputPage = lazy(() => import("./pages/PoliciesOutputPage"));
-const PoliciesHierarchyPage = lazy(() => import("./pages/PoliciesHierarchyPage"));
-const QuarantineQueuePage = lazy(() => import("./pages/QuarantineQueuePage"));
+const GovernInputRulesPage = lazy(() => import("./pages/govern/InputRulesPage"));
+const GovernOutputRulesPage = lazy(() => import("./pages/govern/OutputRulesPage"));
+const GovernTenantsPage = lazy(() => import("./pages/govern/TenantsPage"));
+const GovernTenantDetailPage = lazy(() => import("./pages/govern/TenantDetailPage"));
+const GovernBundlesPage = lazy(() => import("./pages/govern/BundlesPage"));
+const GovernBundleDetailPage = lazy(() => import("./pages/govern/BundleDetailPage"));
+const GovernSimulatorPage = lazy(() => import("./pages/govern/SimulatorPage"));
+const GovernQuarantinePage = lazy(() => import("./pages/govern/QuarantinePage"));
+
+export const LEGACY_POLICY_ROUTE_REDIRECTS = {
+  root: "/govern/input-rules",
+  builder: "/govern/input-rules",
+  rules: "/govern/input-rules",
+  input: "/govern/input-rules",
+  output: "/govern/output-rules",
+  tenants: "/govern/tenants",
+  bundles: "/govern/bundles",
+  simulator: "/govern/simulator",
+  history: "/govern/bundles",
+  analytics: "/govern/simulator",
+  publish: "/govern/bundles",
+  quarantine: "/govern/quarantine",
+} as const;
 
 function ThemeSync() {
   const resolvedTheme = useUiStore((s) => s.resolvedTheme);
@@ -85,17 +95,17 @@ function ErrorBoundaryWrapper({ children }: { children: ReactNode }) {
 function ProtectedRoutes() {
   const isAuthenticated = useRequireAuth();
   useEventStream();
-  usePresenceCleanup();
   if (!isAuthenticated) return null;
 
   return (
+    <>
+    <ToastBridge />
     <AppShell>
       <ErrorBoundaryWrapper>
       <Suspense fallback={<LoadingScreen />}>
         <Routes>
           {/* OPERATE */}
           <Route path="/" element={<HomePage />} />
-          <Route path="/security" element={<SecurityOverviewPage />} />
           <Route path="/agents" element={<AgentsPage />} />
           <Route path="/agents/:id" element={<AgentDetailPage />} />
           <Route path="/jobs" element={<JobsPage />} />
@@ -110,20 +120,32 @@ function ProtectedRoutes() {
           <Route path="/approvals" element={<ApprovalsPage />} />
 
           {/* GOVERN */}
-          <Route path="/policies" element={<PoliciesOverviewPage />} />
-          <Route path="/policies/bundles" element={<PoliciesBundlesPage />} />
-          <Route path="/policies/rules" element={<PoliciesRulesPage />} />
-          <Route path="/policies/rules/new" element={<PoliciesBuilderPage />} />
-          <Route path="/policies/rules/:id" element={<PoliciesBuilderPage />} />
-          <Route path="/policies/builder" element={<PoliciesBuilderPage />} />
-          <Route path="/policies/simulator" element={<PoliciesSimulatorPage />} />
-          <Route path="/policies/history" element={<PoliciesHistoryPage />} />
-          <Route path="/policies/analytics" element={<PoliciesAnalyticsPage />} />
-          <Route path="/policies/publish" element={<PoliciesPublishPage />} />
-          <Route path="/policies/input" element={<PoliciesInputPage />} />
-          <Route path="/policies/output" element={<PoliciesOutputPage />} />
-          <Route path="/policies/hierarchy" element={<PoliciesHierarchyPage />} />
-          <Route path="/quarantine" element={<QuarantineQueuePage />} />
+          <Route path="/govern/input-rules" element={<GovernInputRulesPage />} />
+          <Route path="/govern/output-rules" element={<GovernOutputRulesPage />} />
+          <Route path="/govern/tenants" element={<GovernTenantsPage />} />
+          <Route path="/govern/tenants/:id" element={<GovernTenantDetailPage />} />
+          <Route path="/govern/bundles" element={<GovernBundlesPage />} />
+          <Route path="/govern/bundles/:id" element={<GovernBundleDetailPage />} />
+          <Route path="/govern/simulator" element={<GovernSimulatorPage />} />
+          <Route path="/govern/quarantine" element={<GovernQuarantinePage />} />
+          <Route path="/policies" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.root} replace />} />
+          <Route path="/policies/input" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.input} replace />} />
+          <Route path="/policies/rules" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.rules} replace />} />
+          <Route path="/policies/rules/new" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.rules} replace />} />
+          <Route path="/policies/rules/:id" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.rules} replace />} />
+          <Route
+            path="/policies/builder"
+            element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.builder} replace />}
+          />
+          <Route path="/policies/output" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.output} replace />} />
+          <Route path="/policies/hierarchy" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.tenants} replace />} />
+          <Route path="/policies/bundles" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.bundles} replace />} />
+          <Route path="/policies/simulator" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.simulator} replace />} />
+          <Route path="/policies/history" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.history} replace />} />
+          <Route path="/policies/analytics" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.analytics} replace />} />
+          <Route path="/policies/publish" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.publish} replace />} />
+          <Route path="/policies/*" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.root} replace />} />
+          <Route path="/quarantine" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.quarantine} replace />} />
 
           {/* EXTEND */}
           <Route path="/packs" element={<PacksPage />} />
@@ -131,13 +153,10 @@ function ProtectedRoutes() {
           <Route path="/schemas/:id" element={<SchemaDetailPage />} />
 
           {/* OBSERVE */}
-          <Route path="/traces" element={<TracesPage />} />
           <Route path="/audit" element={<AuditLogPage />} />
           <Route path="/dlq" element={<DLQPage />} />
 
           {/* SETTINGS */}
-          <Route path="/safety/input" element={<InputSafetyPage />} />
-          <Route path="/safety/output" element={<OutputSafetyPage />} />
           <Route path="/settings" element={<SettingsHubPage />} />
           <Route path="/settings/health" element={<SettingsHealthPage />} />
           <Route path="/settings/keys" element={<SettingsKeysPage />} />
@@ -150,11 +169,16 @@ function ProtectedRoutes() {
           {/* Legacy redirects */}
           <Route path="/pools" element={<Navigate to="/agents" replace />} />
           <Route path="/system" element={<Navigate to="/settings/health" replace />} />
+          <Route path="/security" element={<Navigate to="/" replace />} />
+          <Route path="/traces" element={<Navigate to="/jobs" replace />} />
+          <Route path="/safety/input" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.input} replace />} />
+          <Route path="/safety/output" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.output} replace />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </Suspense>
       </ErrorBoundaryWrapper>
     </AppShell>
+    </>
   );
 }
 

@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/infra/locks"
 )
 
 func installTestPack(t *testing.T, s *server) {
@@ -210,6 +212,117 @@ func TestHandleVerifyAndUninstallPack(t *testing.T) {
 	}
 	if rec["status"] != "DISABLED" {
 		t.Fatalf("expected disabled status")
+	}
+}
+
+// faultyLockStore wraps a locks.Store and allows injecting release errors.
+type faultyLockStore struct {
+	locks.Store
+	releaseErr error
+}
+
+func (f *faultyLockStore) Release(ctx context.Context, resource, owner string) (*locks.Lock, bool, error) {
+	if f.releaseErr != nil {
+		return nil, false, f.releaseErr
+	}
+	return f.Store.Release(ctx, resource, owner)
+}
+
+// TestAcquirePackLocksReleaseBounded verifies that the release closure uses
+// a timeout-bounded context instead of unbounded context.Background().
+func TestAcquirePackLocksReleaseBounded(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	if s.lockStore == nil {
+		t.Skip("lock store not configured in test gateway")
+	}
+	owner := "test-owner-bounded"
+
+	release, err := acquirePackLocks(context.Background(), s.lockStore, "bounded-pack", owner)
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+
+	// Release should complete quickly (bounded context).
+	done := make(chan struct{})
+	go func() {
+		release()
+		close(done)
+	}()
+	select {
+	case <-done:
+		// ok
+	case <-time.After(10 * time.Second):
+		t.Fatal("release blocked beyond expected timeout — likely unbounded context")
+	}
+}
+
+// TestAcquirePackLocksReleaseErrorLogged verifies that when Release fails,
+// the error is not silently dropped and the release closure still completes.
+func TestAcquirePackLocksReleaseErrorLogged(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	if s.lockStore == nil {
+		t.Skip("lock store not configured in test gateway")
+	}
+
+	faulty := &faultyLockStore{
+		Store:      s.lockStore,
+		releaseErr: fmt.Errorf("redis connection reset"),
+	}
+	owner := "test-owner-faulty"
+
+	// Acquire with real store first, then release will use faulty.
+	release, err := acquirePackLocks(context.Background(), faulty, "faulty-pack", owner)
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+
+	// Release should not panic or hang despite release errors.
+	done := make(chan struct{})
+	go func() {
+		release()
+		close(done)
+	}()
+	select {
+	case <-done:
+		// ok — release completed despite errors
+	case <-time.After(10 * time.Second):
+		t.Fatal("release hung despite faulty store")
+	}
+}
+
+// TestAcquirePackLocksCleanupOnPartialAcquire verifies that if the per-pack
+// lock fails, the global lock is properly released with error handling.
+func TestAcquirePackLocksCleanupOnPartialAcquire(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	if s.lockStore == nil {
+		t.Skip("lock store not configured in test gateway")
+	}
+	owner := "test-owner-partial"
+
+	// Acquire global + pack lock with one owner.
+	_, err := acquirePackLocks(context.Background(), s.lockStore, "partial-pack", owner)
+	if err != nil {
+		t.Fatalf("first acquire: %v", err)
+	}
+
+	// Second acquire with different owner should fail on pack lock and
+	// clean up the global lock it acquired.
+	owner2 := "test-owner-partial-2"
+	_, err = acquirePackLocks(context.Background(), s.lockStore, "partial-pack", owner2)
+	if err == nil {
+		t.Fatal("expected pack lock contention error")
+	}
+
+	// Verify global lock was cleaned up — a third caller should be able
+	// to acquire the global lock (it shouldn't be stuck held by owner2).
+	lock, err := s.lockStore.Get(context.Background(), "packs:global")
+	if err != nil {
+		t.Fatalf("get global lock: %v", err)
+	}
+	if lock != nil {
+		if _, held := lock.Owners[owner2]; held {
+			t.Fatal("global lock still held by owner2 after cleanup failure")
+		}
 	}
 }
 

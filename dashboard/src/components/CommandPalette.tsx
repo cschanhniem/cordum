@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
+import { useDialogA11y } from "@/hooks/useDialogA11y";
 import {
-  LayoutGrid, ListChecks, Workflow, Cpu, UserCheck, Shield, Boxes,
+  LayoutGrid, ListChecks, Workflow, Cpu, UserCheck, Shield, ShieldCheck, ShieldAlert, Boxes,
   AlertTriangle, FileText, Settings, Search, Activity, Key, Bell,
-  Users, Server, Globe, Monitor, ArrowRight,
+  Users, Server, Globe, Monitor, ArrowRight, GitBranch,
 } from "lucide-react";
 
 interface CommandItem {
@@ -16,23 +17,25 @@ interface CommandItem {
   keywords?: string[];
 }
 
-const commands: CommandItem[] = [
+/** @internal exported for unit tests */
+export const COMMAND_PALETTE_COMMANDS: CommandItem[] = [
   { id: "home", label: "Dashboard Overview", section: "Navigate", icon: LayoutGrid, path: "/", keywords: ["home", "overview", "dashboard"] },
   { id: "jobs", label: "Jobs", section: "Navigate", icon: ListChecks, path: "/jobs", keywords: ["jobs", "tasks", "queue"] },
   { id: "workflows", label: "Workflows", section: "Navigate", icon: Workflow, path: "/workflows", keywords: ["workflows", "orchestration", "pipeline"] },
   { id: "agents", label: "Agent Fleet", section: "Navigate", icon: Cpu, path: "/agents", keywords: ["agents", "workers", "fleet", "pool"] },
   { id: "approvals", label: "Approvals", section: "Navigate", icon: UserCheck, path: "/approvals", keywords: ["approvals", "pending", "approve", "deny"] },
-  { id: "policies", label: "Policy Studio", section: "Navigate", icon: Shield, path: "/policies", keywords: ["policies", "rules", "safety", "governance"] },
-  { id: "policy-rules", label: "Policy Rules", section: "Navigate", icon: Shield, path: "/policies/rules", keywords: ["rules", "policy"] },
-  { id: "policy-builder", label: "Policy Builder", section: "Navigate", icon: Shield, path: "/policies/rules/new", keywords: ["builder", "create", "policy"] },
-  { id: "policy-simulator", label: "Policy Simulator", section: "Navigate", icon: Shield, path: "/policies/simulator", keywords: ["simulator", "test", "dry run"] },
-  { id: "policy-analytics", label: "Policy Analytics", section: "Navigate", icon: Shield, path: "/policies/analytics", keywords: ["analytics", "metrics"] },
+  { id: "security", label: "Security Overview", section: "Navigate", icon: ShieldCheck, path: "/", keywords: ["security", "overview", "safety", "decisions"] },
+  { id: "input-rules", label: "Input Rules", section: "Govern", icon: Shield, path: "/govern/input-rules", keywords: ["input", "rules", "safety", "pii", "injection", "policies", "governance"] },
+  { id: "output-rules", label: "Output Rules", section: "Govern", icon: Shield, path: "/govern/output-rules", keywords: ["output", "rules", "safety", "quarantine", "policies"] },
+  { id: "tenants", label: "Tenants", section: "Govern", icon: Users, path: "/govern/tenants", keywords: ["tenants", "hierarchy", "inheritance", "scope", "multi-tenant"] },
+  { id: "bundles", label: "Bundles", section: "Govern", icon: GitBranch, path: "/govern/bundles", keywords: ["bundles", "policy", "publish", "deploy", "history", "changelog", "versions"] },
+  { id: "simulator", label: "Simulator", section: "Govern", icon: Shield, path: "/govern/simulator", keywords: ["simulator", "test", "dry run", "analytics"] },
+  { id: "quarantine", label: "Quarantine", section: "Govern", icon: ShieldAlert, path: "/govern/quarantine", keywords: ["quarantine", "output", "blocked", "review"] },
   { id: "packs", label: "Packs", section: "Navigate", icon: Boxes, path: "/packs", keywords: ["packs", "marketplace", "plugins"] },
   { id: "schemas", label: "Schemas", section: "Navigate", icon: Monitor, path: "/schemas", keywords: ["schemas", "types", "definitions"] },
   { id: "dlq", label: "Dead Letter Queue", section: "Navigate", icon: AlertTriangle, path: "/dlq", keywords: ["dlq", "dead letter", "failed", "retry"] },
+  { id: "traces", label: "Traces", section: "Navigate", icon: Activity, path: "/traces", keywords: ["traces", "spans", "observability", "telemetry"] },
   { id: "audit", label: "Audit Log", section: "Navigate", icon: FileText, path: "/audit", keywords: ["audit", "log", "events", "history"] },
-  { id: "input-safety", label: "Input Safety", section: "Navigate", icon: Shield, path: "/safety/input", keywords: ["input", "safety", "pii", "injection"] },
-  { id: "output-safety", label: "Output Safety", section: "Navigate", icon: Shield, path: "/safety/output", keywords: ["output", "safety", "quarantine"] },
   { id: "settings", label: "Settings Hub", section: "Settings", icon: Settings, path: "/settings", keywords: ["settings", "config"] },
   { id: "settings-config", label: "System Config", section: "Settings", icon: Settings, path: "/settings/config", keywords: ["config", "configuration", "system"] },
   { id: "settings-env", label: "Environments", section: "Settings", icon: Globe, path: "/settings/environments", keywords: ["environments", "production", "staging"] },
@@ -50,6 +53,7 @@ export function CommandPalette() {
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
+  const dialogRef = useDialogA11y(() => setOpen(false));
 
   // Cmd+K to open
   useEffect(() => {
@@ -76,9 +80,9 @@ export function CommandPalette() {
   }, [open]);
 
   const filtered = useMemo(() => {
-    if (!query.trim()) return commands;
+    if (!query.trim()) return COMMAND_PALETTE_COMMANDS;
     const q = query.toLowerCase();
-    return commands.filter(
+    return COMMAND_PALETTE_COMMANDS.filter(
       (c) =>
         c.label.toLowerCase().includes(q) ||
         c.section.toLowerCase().includes(q) ||
@@ -144,7 +148,13 @@ export function CommandPalette() {
             transition={{ duration: 0.15, ease: "easeOut" }}
             className="fixed top-[20%] left-1/2 -translate-x-1/2 z-[101] w-full max-w-lg"
           >
-            <div className="bg-surface-1 border border-border rounded-xl shadow-2xl overflow-hidden">
+            <div
+              ref={dialogRef}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Command palette"
+              className="bg-surface-1 border border-border rounded-xl shadow-2xl overflow-hidden"
+            >
               {/* Search input */}
               <div className="flex items-center gap-3 px-4 h-14 border-b border-border">
                 <Search className="w-4 h-4 text-muted-foreground shrink-0" />

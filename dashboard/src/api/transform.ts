@@ -216,6 +216,7 @@ export interface BackendApprovalItem {
   resolved_by?: string;
   resolved_comment?: string;
   constraints?: Record<string, unknown>;
+  job_input?: Record<string, unknown>;
   workflow_id?: string;
   workflow_run_id?: string;
   step_index?: number;
@@ -386,6 +387,7 @@ export function microsToISO(raw: unknown): string {
 export function normalizeJobStatus(raw?: string): JobStatus {
   switch ((raw || "").toUpperCase()) {
     case "PENDING":
+    case "":
       return "pending";
     case "SCHEDULED":
       return "scheduled";
@@ -410,6 +412,9 @@ export function normalizeJobStatus(raw?: string): JobStatus {
     case "OUTPUT_QUARANTINED":
       return "output_quarantined";
     default:
+      // Unknown backend states should not silently become "pending".
+      // Log and return "pending" but with visibility.
+      logger.warn("transform", "Unknown job status from backend, defaulting to pending", { raw });
       return "pending";
   }
 }
@@ -451,7 +456,7 @@ export function mapSafetyDecision(
   };
 }
 
-function normalizeOutputDecision(raw?: string): OutputDecision {
+export function normalizeOutputDecision(raw?: string): OutputDecision {
   switch ((raw || "").toUpperCase()) {
     case "ALLOW":
       return "ALLOW";
@@ -462,7 +467,12 @@ function normalizeOutputDecision(raw?: string): OutputDecision {
     case "DENY":
       return "QUARANTINE";
     default:
-      return "ALLOW";
+      // Fail-closed: unknown output decisions must NOT default to ALLOW.
+      // An unrecognized decision from the backend should quarantine for safety.
+      if (raw) {
+        logger.warn("transform", "Unknown output decision, defaulting to QUARANTINE", { raw });
+      }
+      return raw ? "QUARANTINE" : "ALLOW";
   }
 }
 
@@ -520,7 +530,7 @@ export function mapJobRecord(record: BackendJobRecord): Job {
   );
   return {
     id,
-    type: "",
+    type: record.topic || "",
     topic: record.topic || "",
     status: normalizeJobStatus(record.state),
     safetyDecision: mapSafetyDecision(
@@ -528,10 +538,15 @@ export function mapJobRecord(record: BackendJobRecord): Job {
       record.safety_reason,
       record.safety_rule_id,
     ),
-    pool: "",
+    pool: record.topic || "",
     capabilities,
     riskTags: record.risk_tags ?? [],
-    metadata: {},
+    metadata: {
+      ...(record.actor_id ? { actor_id: record.actor_id } : {}),
+      ...(record.actor_type ? { actor_type: record.actor_type } : {}),
+      ...(record.pack_id ? { pack_id: record.pack_id } : {}),
+      ...(record.tenant ? { tenant: record.tenant } : {}),
+    },
     contextPtr: undefined,
     resultPtr: undefined,
     workflowRunId: undefined,
@@ -553,6 +568,12 @@ export function mapJobDetail(detail: BackendJobDetail): Job {
   const base = mapJobRecord(detail);
   return {
     ...base,
+    metadata: {
+      ...base.metadata,
+      ...(detail.labels ? detail.labels : {}),
+      ...(detail.workflow_id ? { workflow_id: detail.workflow_id } : {}),
+      ...(detail.run_id ? { run_id: detail.run_id } : {}),
+    },
     contextPtr: detail.context_ptr,
     resultPtr: detail.result_ptr,
     context: detail.context,
@@ -892,12 +913,25 @@ export function mapWorkflow(def: BackendWorkflow): Workflow {
   };
 }
 
+const VALID_RUN_STATUSES = new Set<string>(["pending", "running", "waiting", "succeeded", "failed", "timed_out", "cancelled"]);
+
+function normalizeRunStatus(raw?: string): WorkflowStep["status"] {
+  const lower = (raw || "").toLowerCase();
+  if (VALID_RUN_STATUSES.has(lower)) return lower as WorkflowStep["status"];
+  // Map common backend variants
+  if (lower === "completed" || lower === "success") return "succeeded";
+  if (lower === "error" || lower === "errored") return "failed";
+  if (lower === "timeout" || lower === "timedout") return "timed_out";
+  if (lower === "canceled") return "cancelled";
+  return "pending";
+}
+
 export function mapWorkflowRunStep(step: BackendStepRun, fallbackId: string): WorkflowStep {
   return {
     id: step.step_id || fallbackId,
     name: step.step_id || fallbackId,
     type: "step",
-    status: step.status as WorkflowStep["status"],
+    status: normalizeRunStatus(step.status),
     output: (step.output as Record<string, unknown>) ?? undefined,
     error: step.error ? JSON.stringify(step.error) : undefined,
     startedAt: step.started_at || undefined,
@@ -912,11 +946,13 @@ export function mapWorkflowRun(run: BackendWorkflowRun): WorkflowRun {
   return {
     id: run.id,
     workflowId: run.workflow_id || "",
-    status: (run.status as WorkflowRun["status"]) || "pending",
+    status: normalizeRunStatus(run.status) as WorkflowRun["status"] || "pending",
     steps,
     startedAt: run.started_at ?? null,
     completedAt: run.completed_at ?? null,
-    duration: undefined,
+    duration: run.completed_at && run.started_at
+      ? new Date(run.completed_at).getTime() - new Date(run.started_at).getTime()
+      : undefined,
     createdAt: run.created_at,
     updatedAt: run.updated_at,
     orgId: run.org_id,
@@ -932,6 +968,7 @@ export function mapWorkflowRun(run: BackendWorkflowRun): WorkflowRun {
 }
 
 export function computeUrgencyLevel(waitMs: number): UrgencyLevel {
+  if (!Number.isFinite(waitMs) || waitMs < 0) return "fresh";
   if (waitMs < 2 * 60_000) return "fresh";
   if (waitMs < 15 * 60_000) return "aging";
   if (waitMs < 60 * 60_000) return "critical";
@@ -941,19 +978,23 @@ export function computeUrgencyLevel(waitMs: number): UrgencyLevel {
 export function deriveApprovalStatus(
   jobState: string | undefined,
   decision: string | undefined,
+  resolvedBy?: string,
 ): string {
-  if (decision === "approve" || decision === "approved") return "approved";
-  if (decision === "reject" || decision === "rejected" || decision === "deny")
-    return "rejected";
-  if (jobState === "denied") return "rejected";
-  if (jobState === "output_quarantined") return "quarantined";
-  if (jobState === "approval_required") return "pending";
-  if (
-    jobState === "succeeded" ||
-    jobState === "failed" ||
-    jobState === "cancelled"
-  )
-    return "resolved";
+  const d = (decision || "").toLowerCase();
+  const s = (jobState || "").toLowerCase();
+  if (d === "approve" || d === "approved") return "approved";
+  if (d === "reject" || d === "rejected" || d === "deny")
+    return "denied";
+  if (s === "denied") return "denied";
+  if (s === "output_quarantined") return "quarantined";
+  if (s === "approval_required") return "pending";
+  // Job resolved through approval flow — derive from post-approval state.
+  if (resolvedBy) {
+    if (s === "denied") return "denied";
+    return "approved";
+  }
+  if (s === "succeeded" || s === "failed" || s === "cancelled" || s === "pending")
+    return "approved";
   return "pending";
 }
 
@@ -991,7 +1032,7 @@ export function mapApprovalItem(item: BackendApprovalItem): Approval | null {
   return {
     id: item.approval_ref || job.id,
     jobId: job.id,
-    status: deriveApprovalStatus(item.job.state, item.decision),
+    status: deriveApprovalStatus(item.job.state, item.decision, item.resolved_by),
     requestedAt,
     resolvedAt: item.resolved_at ? microsToISO(item.resolved_at) : undefined,
     actor: item.resolved_by,
@@ -1022,6 +1063,7 @@ export function mapApprovalItem(item: BackendApprovalItem): Approval | null {
     approvalRef: item.approval_ref,
     tenant: job.tenant,
     contextPtr: item.context_ptr,
+    jobInput: item.job_input as Record<string, unknown> | undefined,
     constraints: item.constraints,
   };
 }
@@ -1065,6 +1107,7 @@ export function mapPolicyRule(raw: Record<string, unknown>): PolicyRule {
   return {
     id,
     name,
+    description: typeof raw.description === "string" ? raw.description : undefined,
     match: normalizedMatch,
     decision: normalizedDecision,
     matchCriteria: normalizedMatch as Record<string, unknown>,
@@ -1074,6 +1117,7 @@ export function mapPolicyRule(raw: Record<string, unknown>): PolicyRule {
     logic,
     source: typeof raw.source === "object" && raw.source ? (raw.source as Record<string, unknown>) : undefined,
     enabled: typeof raw.enabled === "boolean" ? raw.enabled : true,
+    constraints: raw.constraints && typeof raw.constraints === "object" ? (raw.constraints as Record<string, unknown>) : undefined,
   };
 }
 
@@ -1103,6 +1147,7 @@ export function mapPolicyBundleSummary(summary: BackendPolicyBundleSummary, cont
     updatedAt: summary.updated_at,
     installedAt: summary.installed_at,
     sha256: summary.sha256,
+    rule_count: summary.rule_count,
     healthStatus: undefined,
   };
 }
@@ -1196,7 +1241,7 @@ export function auditResourceLink(
     case "job": return `/jobs/${resourceId}`;
     case "workflow": return `/workflows/${resourceId}`;
     case "run": return `/workflows`;
-    case "policy": return `/policies`;
+    case "policy": return `/govern/bundles`;
     case "user": return `/settings`;
     case "pack": return `/packs`;
     case "approval": return `/approvals`;
@@ -1263,7 +1308,7 @@ export function mapPolicySnapshotSummary(snapshot: BackendPolicySnapshotSummary)
 export function mapPolicySnapshot(snapshot: BackendPolicySnapshot) {
   // Extract rules from all bundles in the snapshot
   const rules: ReturnType<typeof mapPolicyRule>[] = [];
-  if (snapshot.bundles) {
+  if (snapshot.bundles && typeof snapshot.bundles === "object") {
     for (const bundle of Object.values(snapshot.bundles)) {
       const b = bundle as Record<string, unknown>;
       const bundleRules = Array.isArray(b.rules) ? b.rules : [];
@@ -1375,7 +1420,7 @@ export function mapHeartbeatToWorker(hb: BackendHeartbeat): Worker | null {
   const name =
     (hb.labels && (hb.labels.name || hb.labels.worker_name || hb.labels.worker)) ||
     hb.worker_id;
-  const status = activeJobs > 0 ? "active" : "online";
+  const status = activeJobs > 0 ? "busy" : "idle";
   return {
     id: hb.worker_id,
     name,

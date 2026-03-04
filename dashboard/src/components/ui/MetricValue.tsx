@@ -9,6 +9,7 @@ interface MetricValueProps {
   icon?: React.ReactNode;
   className?: string;
   size?: "sm" | "md" | "lg";
+  children?: React.ReactNode;
 }
 
 export function MetricValue({
@@ -19,24 +20,25 @@ export function MetricValue({
   icon,
   className,
   size = "md",
+  children,
 }: MetricValueProps) {
   const trendDirection =
     trend && trend.value > 0 ? "up" : trend && trend.value < 0 ? "down" : "flat";
 
   return (
     <div className={cn("flex flex-col", className)}>
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">
+      <div className="flex items-center justify-between mb-4">
+        <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">
           {label}
         </span>
-        {icon && <span className="text-cordum">{icon}</span>}
+        {icon && <span className="text-cordum/60">{icon}</span>}
       </div>
       <div className="flex items-baseline gap-2">
         <span
           className={cn(
             "font-mono font-bold text-foreground",
             size === "sm" && "text-xl",
-            size === "md" && "text-2xl",
+            size === "md" && "text-3xl",
             size === "lg" && "text-4xl",
           )}
         >
@@ -65,6 +67,7 @@ export function MetricValue({
       {trend?.label && (
         <p className="text-xs text-muted-foreground mt-1">{trend.label}</p>
       )}
+      {children}
     </div>
   );
 }

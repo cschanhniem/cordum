@@ -37,45 +37,12 @@ type workerDef struct {
 }
 
 var bankWorkers = []workerDef{
-	// Transaction processing
-	{ID: "bank-validator-1", Pool: "bank-validators", Topics: []string{"job.bank-validators.process"}, Capacity: 8},
-	{ID: "bank-validator-2", Pool: "bank-validators", Topics: []string{"job.bank-validators.process"}, Capacity: 8},
-
-	// Fraud detection
-	{ID: "fraud-detector-1", Pool: "fraud-detection", Topics: []string{"job.fraud-detection.process"}, Capacity: 4},
-	{ID: "fraud-detector-2", Pool: "fraud-detection", Topics: []string{"job.fraud-detection.process"}, Capacity: 4},
-
-	// Bank executors
-	{ID: "bank-executor-1", Pool: "bank-executors", Topics: []string{"job.bank-executors.process"}, Capacity: 8},
-
-	// Compliance / KYC
-	{ID: "compliance-agent-1", Pool: "compliance-agents", Topics: []string{"job.compliance-agents.process"}, Capacity: 4},
-	{ID: "compliance-agent-2", Pool: "compliance-agents", Topics: []string{"job.compliance-agents.process"}, Capacity: 4},
-
-	// Credit agents
-	{ID: "credit-agent-1", Pool: "credit-agents", Topics: []string{"job.credit-agents.process"}, Capacity: 4},
-
-	// Risk agents
-	{ID: "risk-agent-1", Pool: "risk-agents", Topics: []string{"job.risk-agents.process"}, Capacity: 4},
-
-	// Loan agents
-	{ID: "loan-agent-1", Pool: "loan-agents", Topics: []string{"job.loan-agents.process"}, Capacity: 4},
-
-	// Valuation agents
-	{ID: "valuation-agent-1", Pool: "valuation-agents", Topics: []string{"job.valuation-agents.process"}, Capacity: 2},
-
-	// Underwriting agents
-	{ID: "underwriter-1", Pool: "underwriting-agents", Topics: []string{"job.underwriting-agents.process"}, Capacity: 2},
-
-	// Notification service
-	{ID: "notifier-1", Pool: "notification-service", Topics: []string{"job.notification-service.process"}, Capacity: 16},
-
-	// Legacy demo topics
-	{ID: "demo-mock-bank-worker", Pool: "demo-mock-bank", Topics: []string{
-		"job.demo-mock-bank.transfer.auto",
-		"job.demo-mock-bank.transfer.review",
-		"job.demo-mock-bank.transfer.blocked",
-	}, Capacity: 4},
+	{
+		ID:       "demo-mock-bank-worker",
+		Pool:     "demo-mock-bank",
+		Topics:   []string{"job.demo-mock-bank.transfer"},
+		Capacity: 4,
+	},
 }
 
 // ---------------------------------------------------------------------------

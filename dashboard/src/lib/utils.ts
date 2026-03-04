@@ -1,3 +1,4 @@
+import type React from "react";
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 
@@ -32,4 +33,19 @@ export function formatRelativeTime(dateStr: string): string {
 export function truncate(str: string, max: number): string {
   if (str.length <= max) return str;
   return str.slice(0, max - 1) + "…";
+}
+
+/** Accessibility props for clickable table rows (role, tabIndex, keyboard nav). */
+export function clickableRowProps(onClick: () => void) {
+  return {
+    onClick,
+    role: "link" as const,
+    tabIndex: 0,
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        onClick();
+      }
+    },
+  };
 }

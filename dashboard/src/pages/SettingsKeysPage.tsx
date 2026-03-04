@@ -4,7 +4,7 @@
  */
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { get, post, del } from "@/api/client";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
@@ -12,6 +12,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonTable } from "@/components/ui/Skeleton";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { DialogOverlay } from "@/components/ui/DialogOverlay";
 import { Key, Plus, Copy, Trash2, Eye, EyeOff, X, Shield } from "lucide-react";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import { toast } from "sonner";
@@ -23,6 +24,56 @@ interface ApiKey {
   createdAt: string;
   lastUsed?: string;
   scopes: string[];
+}
+
+interface InvalidateQueriesClient {
+  invalidateQueries: (options: { queryKey: string[] }) => unknown;
+}
+
+interface CreateKeyMutationDeps {
+  queryClient: InvalidateQueriesClient;
+  setCreatedKey: (key: string | null) => void;
+  setNewKeyName: (name: string) => void;
+}
+
+interface DeleteKeyMutationDeps {
+  queryClient: InvalidateQueriesClient;
+  setDeleteTarget: (key: ApiKey | null) => void;
+}
+
+function errorDescription(err: unknown): string {
+  if (err instanceof Error && err.message.trim()) {
+    return err.message;
+  }
+  if (typeof err === "string" && err.trim()) {
+    return err;
+  }
+  return "Unknown error";
+}
+
+export function handleCreateKeySuccess(data: { data?: { key?: string } } | undefined, deps: CreateKeyMutationDeps) {
+  deps.queryClient.invalidateQueries({ queryKey: ["api-keys"] });
+  const key = data?.data?.key;
+  if (key) {
+    deps.setCreatedKey(key);
+  } else {
+    toast.error("API key created but key value not returned");
+  }
+  deps.setNewKeyName("");
+}
+
+export function handleCreateKeyError(err: unknown) {
+  toast.error("Failed to create API key", { description: errorDescription(err) });
+}
+
+export function handleDeleteKeySuccess(deps: DeleteKeyMutationDeps) {
+  deps.queryClient.invalidateQueries({ queryKey: ["api-keys"] });
+  toast.success("API key revoked");
+  deps.setDeleteTarget(null);
+}
+
+export function handleDeleteKeyError(err: unknown) {
+  toast.error("Failed to revoke API key", { description: errorDescription(err) });
 }
 
 export default function SettingsKeysPage() {
@@ -43,25 +94,14 @@ export default function SettingsKeysPage() {
 
   const createMutation = useMutation({
     mutationFn: async () => post<{ data?: { key?: string } }>("/auth/keys", { name: newKeyName, scopes: newKeyScopes }),
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["api-keys"] });
-      const key = data?.data?.key;
-      if (key) {
-        setCreatedKey(key);
-      } else {
-        toast.error("API key created but key value not returned");
-      }
-      setNewKeyName("");
-    },
+    onSuccess: (data) => handleCreateKeySuccess(data, { queryClient, setCreatedKey, setNewKeyName }),
+    onError: handleCreateKeyError,
   });
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => del(`/auth/keys/${id}`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["api-keys"] });
-      toast.success("API key revoked");
-      setDeleteTarget(null);
-    },
+    onSuccess: () => handleDeleteKeySuccess({ queryClient, setDeleteTarget }),
+    onError: handleDeleteKeyError,
   });
 
   const SCOPES = ["read", "write", "admin"];
@@ -115,60 +155,52 @@ export default function SettingsKeysPage() {
       )}
 
       {/* Create Dialog */}
-      <AnimatePresence>
-        {createOpen && (
-          <>
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/50 z-50" onClick={() => setCreateOpen(false)} />
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
-              className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[420px] bg-surface-1 border border-border rounded-xl shadow-2xl z-50 p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-sm font-display font-semibold text-foreground">{createdKey ? "Key Created" : "Create API Key"}</h3>
-                <button onClick={() => setCreateOpen(false)} className="p-1 rounded hover:bg-surface-2"><X className="w-4 h-4 text-muted-foreground" /></button>
+      <DialogOverlay open={createOpen} onClose={() => setCreateOpen(false)} label={createdKey ? "Key Created" : "Create API key"} className="w-[420px] bg-surface-1 border border-border rounded-xl shadow-2xl p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-sm font-display font-semibold text-foreground">{createdKey ? "Key Created" : "Create API Key"}</h3>
+          <button onClick={() => setCreateOpen(false)} className="p-1 rounded hover:bg-surface-2"><X className="w-4 h-4 text-muted-foreground" /></button>
+        </div>
+        {createdKey ? (
+          <div className="space-y-4">
+            <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+              <p className="text-xs text-amber-200 mb-2">Copy this key now — it won't be shown again.</p>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 text-xs font-mono text-foreground bg-surface-2 px-3 py-2 rounded">{createdKey}</code>
+                <button onClick={() => { navigator.clipboard.writeText(createdKey); toast.success("Copied"); }} className="p-2 rounded hover:bg-surface-2">
+                  <Copy className="w-3.5 h-3.5 text-muted-foreground" />
+                </button>
               </div>
-              {createdKey ? (
-                <div className="space-y-4">
-                  <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
-                    <p className="text-xs text-amber-200 mb-2">Copy this key now — it won't be shown again.</p>
-                    <div className="flex items-center gap-2">
-                      <code className="flex-1 text-xs font-mono text-foreground bg-surface-2 px-3 py-2 rounded">{createdKey}</code>
-                      <button onClick={() => { navigator.clipboard.writeText(createdKey); toast.success("Copied"); }} className="p-2 rounded hover:bg-surface-2">
-                        <Copy className="w-3.5 h-3.5 text-muted-foreground" />
-                      </button>
-                    </div>
-                  </div>
-                  <Button variant="primary" size="sm" className="w-full" onClick={() => setCreateOpen(false)}>Done</Button>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div>
-                    <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Name</label>
-                    <input type="text" value={newKeyName} onChange={(e) => setNewKeyName(e.target.value)} placeholder="e.g., CI Pipeline"
-                      className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Scopes</label>
-                    <div className="flex gap-2">
-                      {SCOPES.map(s => (
-                        <button key={s} onClick={() => setNewKeyScopes(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s])}
-                          className={cn("px-3 py-1.5 text-xs rounded-md border transition-colors capitalize",
-                            newKeyScopes.includes(s) ? "bg-cordum/10 border-cordum/30 text-cordum" : "border-border text-muted-foreground hover:text-foreground")}>
-                          {s}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="flex justify-end gap-2 pt-2">
-                    <Button variant="ghost" size="sm" onClick={() => setCreateOpen(false)}>Cancel</Button>
-                    <Button variant="primary" size="sm" onClick={() => createMutation.mutate()} loading={createMutation.isPending} disabled={!newKeyName.trim()}>
-                      <Key className="w-3 h-3 mr-1" />Create
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </motion.div>
-          </>
+            </div>
+            <Button variant="primary" size="sm" className="w-full" onClick={() => setCreateOpen(false)}>Done</Button>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div>
+              <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Name</label>
+              <input type="text" value={newKeyName} onChange={(e) => setNewKeyName(e.target.value)} placeholder="e.g., CI Pipeline"
+                className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
+            </div>
+            <div>
+              <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Scopes</label>
+              <div className="flex gap-2">
+                {SCOPES.map(s => (
+                  <button key={s} onClick={() => setNewKeyScopes(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s])}
+                    className={cn("px-3 py-1.5 text-xs rounded-md border transition-colors capitalize",
+                      newKeyScopes.includes(s) ? "bg-cordum/10 border-cordum/30 text-cordum" : "border-border text-muted-foreground hover:text-foreground")}>
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="ghost" size="sm" onClick={() => setCreateOpen(false)}>Cancel</Button>
+              <Button variant="primary" size="sm" onClick={() => createMutation.mutate()} loading={createMutation.isPending} disabled={!newKeyName.trim()}>
+                <Key className="w-3 h-3 mr-1" />Create
+              </Button>
+            </div>
+          </div>
         )}
-      </AnimatePresence>
+      </DialogOverlay>
 
       <ConfirmDialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)}
         onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}

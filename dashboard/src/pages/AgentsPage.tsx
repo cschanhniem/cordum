@@ -39,8 +39,11 @@ export default function AgentsPage() {
   const { data: workers, isLoading, refetch } = useQuery({
     queryKey: ["workers"],
     queryFn: async () => {
-      const res = await get<BackendHeartbeat[]>("/workers");
-      return (res ?? []).map(mapHeartbeatToWorker).filter((w): w is Worker => !!w);
+      const res = await get<{ items?: BackendHeartbeat[] } | BackendHeartbeat[]>(
+        "/workers",
+      );
+      const items = Array.isArray(res) ? res : (res.items ?? []);
+      return items.map(mapHeartbeatToWorker).filter((w): w is Worker => !!w);
     },
     refetchInterval: 15_000,
   });
@@ -115,7 +118,7 @@ export default function AgentsPage() {
           Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
         ) : (
           <>
-            <div className="instrument-card p-5">
+            <div className="instrument-card">
               <div className="flex items-center justify-between mb-3">
                 <span className="text-xs font-mono text-muted-foreground uppercase tracking-widest">Total Agents</span>
                 <Cpu className="w-4 h-4 text-cordum" />
@@ -134,7 +137,7 @@ export default function AgentsPage() {
               </div>
             </div>
 
-            <div className="instrument-card p-5">
+            <div className="instrument-card">
               <div className="flex items-center justify-between mb-3">
                 <span className="text-xs font-mono text-muted-foreground uppercase tracking-widest">Idle</span>
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 status-pulse" />
@@ -143,7 +146,7 @@ export default function AgentsPage() {
               <p className="text-xs text-muted-foreground mt-1">Ready for work</p>
             </div>
 
-            <div className="instrument-card p-5">
+            <div className="instrument-card">
               <div className="flex items-center justify-between mb-3">
                 <span className="text-xs font-mono text-muted-foreground uppercase tracking-widest">Busy</span>
                 <Zap className="w-4 h-4 text-blue-400" />
@@ -152,7 +155,7 @@ export default function AgentsPage() {
               <p className="text-xs text-muted-foreground mt-1">Processing jobs</p>
             </div>
 
-            <div className={cn("instrument-card p-5", offlineCount > 0 && "status-danger")}>
+            <div className={cn("instrument-card", offlineCount > 0 && "status-danger")}>
               <div className="flex items-center justify-between mb-3">
                 <span className="text-xs font-mono text-muted-foreground uppercase tracking-widest">Offline</span>
               </div>
@@ -215,12 +218,12 @@ export default function AgentsPage() {
           <table className="w-full min-w-[750px]">
             <thead>
               <tr className="border-b border-border bg-surface-0">
-                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Worker</th>
-                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Status</th>
-                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Pool</th>
-                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Capabilities</th>
-                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Jobs</th>
-                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Last Seen</th>
+                <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Worker</th>
+                <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Status</th>
+                <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Pool</th>
+                <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Capabilities</th>
+                <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Jobs</th>
+                <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Last Seen</th>
               </tr>
             </thead>
             <tbody>

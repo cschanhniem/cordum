@@ -673,6 +673,7 @@ export type UrgencyLevel = "fresh" | "aging" | "critical" | "breach";
 export interface ApprovalWorkflowContext {
   workflowId: string;
   runId: string;
+  stepId?: string;
   stepIndex?: number;
   stepName?: string;
   totalSteps?: number;
@@ -704,6 +705,7 @@ export interface Approval {
   approvalRef?: string;
   tenant?: string;
   contextPtr?: string;
+  jobInput?: Record<string, unknown>;
   constraints?: Record<string, unknown>;
 }
 

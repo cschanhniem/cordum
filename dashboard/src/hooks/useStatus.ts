@@ -196,8 +196,8 @@ export function useWorkersSummary() {
   return useQuery<ApiResponse<Worker[]>>({
     queryKey: ["workers"],
     queryFn: async () => {
-      const res = await get<BackendHeartbeat[]>("/workers");
-      const items = (res ?? [])
+      const res = await get<{ items: BackendHeartbeat[] }>("/workers");
+      const items = (res.items ?? [])
         .map(mapHeartbeatToWorker)
         .filter((w): w is Worker => !!w);
       return { items };

@@ -17,6 +17,8 @@ import {
   Trash2,
   History,
   ArrowRightLeft,
+  ArrowUp,
+  ArrowDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { PolicyRule } from "@/api/types";
@@ -54,6 +56,10 @@ interface InputRuleCardProps {
   onDelete?: () => void;
   onViewHistory?: () => void;
   onMoveToBundle?: () => void;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  canMoveUp?: boolean;
+  canMoveDown?: boolean;
 }
 
 export function InputRuleCard({
@@ -72,6 +78,10 @@ export function InputRuleCard({
   onDelete,
   onViewHistory,
   onMoveToBundle,
+  onMoveUp,
+  onMoveDown,
+  canMoveUp = true,
+  canMoveDown = true,
 }: InputRuleCardProps) {
   const [moreOpen, setMoreOpen] = useState(false);
   const decision = (rule.decision?.toLowerCase() ?? "allow") as DecisionType;
@@ -229,6 +239,28 @@ export function InputRuleCard({
               {onExplain && (
                 <button onClick={onExplain} className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-surface-2 transition-colors" title="Explain">
                   <HelpCircle className="w-3.5 h-3.5" />
+                </button>
+              )}
+              {onMoveUp && (
+                <button
+                  onClick={onMoveUp}
+                  disabled={!canMoveUp}
+                  className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-surface-2 transition-colors disabled:opacity-40"
+                  title="Move up"
+                  aria-label="Move rule up"
+                >
+                  <ArrowUp className="w-3.5 h-3.5" />
+                </button>
+              )}
+              {onMoveDown && (
+                <button
+                  onClick={onMoveDown}
+                  disabled={!canMoveDown}
+                  className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-surface-2 transition-colors disabled:opacity-40"
+                  title="Move down"
+                  aria-label="Move rule down"
+                >
+                  <ArrowDown className="w-3.5 h-3.5" />
                 </button>
               )}
 

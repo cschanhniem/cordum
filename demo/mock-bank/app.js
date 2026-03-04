@@ -1,6 +1,6 @@
 const STORAGE_KEY = "cordum-mock-bank-config";
 const DEFAULT_CONFIG = {
-  apiBaseUrl: "http://localhost:8081",
+  apiBaseUrl: "",
   apiKey: "",
   tenantId: "default",
   principalId: "demo",
@@ -70,18 +70,12 @@ function handleChatMessage(text) {
     return;
   }
 
-  const route = routeForAmount(amount);
-  appendChat(
-    "agent",
-    `Understood. I will submit a transfer request for ${formatMoney(amount)}. ${route.preflight}`,
-  );
-
+  appendChat("agent", `Processing transfer request for ${formatMoney(amount)}.`);
   submitTransfer({
     amount,
     customer: "Alex Morgan",
     reason: "Client transfer request",
     note: text,
-    policyBucket: route.bucket,
   });
 }
 
@@ -151,26 +145,7 @@ function parseAmount(text) {
   return Number(match[1]);
 }
 
-function routeForAmount(amount) {
-  if (amount < 50) {
-    return {
-      bucket: "auto",
-      preflight: "This is a low-risk transfer and should process quickly.",
-    };
-  }
-  if (amount > 1000) {
-    return {
-      bucket: "blocked",
-      preflight: "This exceeds the $1,000 limit and will be blocked by policy.",
-    };
-  }
-  return {
-    bucket: "review",
-    preflight: "This will require manager approval before funds move.",
-  };
-}
-
-async function submitTransfer({ amount, customer, reason, note, policyBucket }) {
+async function submitTransfer({ amount, customer, reason, note }) {
   const request = {
     id: `req-${Date.now()}`,
     amount,
@@ -190,7 +165,6 @@ async function submitTransfer({ amount, customer, reason, note, policyBucket }) 
       reason,
       note,
       requested_by: "agent-demo",
-      policy_bucket: policyBucket,
     };
     const runResp = await apiRequest(`/api/v1/workflows/${WORKFLOW_ID}/runs`, {
       method: "POST",
@@ -198,44 +172,21 @@ async function submitTransfer({ amount, customer, reason, note, policyBucket }) 
       query: { org_id: state.config.orgId },
     });
     request.runId = runResp.run_id;
-    appendChat("agent", "Request received. Monitoring approval and execution.");
+    appendChat("agent", "Request submitted. Monitoring the workflow.");
 
-    const jobId = await waitForJobId(request.runId);
-    request.jobId = jobId;
-
-    await pollJob(request);
+    await pollRun(request);
   } catch (err) {
-    request.status = "blocked";
+    request.status = "error";
     appendChat("agent", buildErrorMessage(err));
   }
 }
 
-async function waitForJobId(runId) {
-  const maxAttempts = 30;
-  for (let i = 0; i < maxAttempts; i += 1) {
-    const run = await apiRequest(`/api/v1/workflow-runs/${runId}`);
-    const step = findStepWithJobId(run?.steps);
-    if (step) {
-      return step.job_id;
-    }
-    await sleep(500);
-  }
-  throw new Error("Timed out waiting for job id");
-}
-
-function findStepWithJobId(steps) {
-  if (!steps) {
-    return null;
-  }
-  return Object.values(steps).find((step) => step && step.job_id) || null;
-}
-
-async function pollJob(request) {
+async function pollRun(request) {
   let done = false;
   while (!done) {
-    let job;
+    let run;
     try {
-      job = await apiRequest(`/api/v1/jobs/${encodeURIComponent(request.jobId)}`);
+      run = await apiRequest(`/api/v1/workflow-runs/${encodeURIComponent(request.runId)}`);
     } catch (err) {
       if (isNotFound(err)) {
         await sleep(800);
@@ -243,26 +194,46 @@ async function pollJob(request) {
       }
       throw err;
     }
-    const stateValue = String(job.state || "").toUpperCase();
+    const status = String(run.status || "").toLowerCase();
 
-    if (stateValue === "APPROVAL_REQUIRED") {
+    if (status === "waiting") {
       setRequestStatus(request, "approval", () => {
-        appendChat("agent", "This transfer needs manager approval. I will notify you once cleared.");
+        appendChat(
+          "agent",
+          "This transfer needs manager approval. Open the Cordum dashboard to approve or reject.",
+        );
       });
-    } else if (stateValue === "DENIED") {
-      setRequestStatus(request, "blocked", () => {
-        appendChat("agent", "The transfer was declined by policy. No funds moved.");
-      });
+    } else if (status === "succeeded") {
+      const blockStep = run.steps && run.steps.block;
+      if (blockStep && blockStep.status === "succeeded" && isBlockStepReal(blockStep)) {
+        setRequestStatus(request, "blocked", () => {
+          appendChat(
+            "agent",
+            "The transfer was blocked by policy. Transfers over $1,000 are not permitted.",
+          );
+        });
+      } else {
+        setRequestStatus(request, "completed", () => {
+          applyTransaction(request);
+          appendChat("agent", "Transfer completed. Your balance has been updated.");
+        });
+      }
       done = true;
-    } else if (stateValue === "SUCCEEDED") {
-      setRequestStatus(request, "completed", () => {
-        applyTransaction(request);
-        appendChat("agent", "Transfer completed. Your balance has been updated.");
-      });
+    } else if (status === "failed") {
+      const approvalStep = run.steps && run.steps.approval_gate;
+      if (approvalStep && approvalStep.status === "failed") {
+        setRequestStatus(request, "blocked", () => {
+          appendChat("agent", "The transfer was denied by the approver.");
+        });
+      } else {
+        setRequestStatus(request, "blocked", () => {
+          appendChat("agent", "The transfer could not be completed.");
+        });
+      }
       done = true;
-    } else if (["FAILED", "CANCELLED", "TIMEOUT"].includes(stateValue)) {
+    } else if (["cancelled", "timed_out"].includes(status)) {
       setRequestStatus(request, "blocked", () => {
-        appendChat("agent", `The transfer did not complete (${stateValue.toLowerCase()}).`);
+        appendChat("agent", `The transfer was ${status.replace("_", " ")}.`);
       });
       done = true;
     }
@@ -271,6 +242,11 @@ async function pollJob(request) {
       await sleep(1200);
     }
   }
+}
+
+function isBlockStepReal(blockStep) {
+  const output = blockStep.output;
+  return output && output.blocked === true;
 }
 
 function applyTransaction(request) {
@@ -298,11 +274,8 @@ function setRequestStatus(request, status, onChange) {
 }
 
 async function apiRequest(path, options = {}) {
-  const base = state.config.apiBaseUrl || DEFAULT_CONFIG.apiBaseUrl;
-  if (!base) {
-    throw new Error("API base URL is missing.");
-  }
-  const url = new URL(path, base);
+  const base = state.config.apiBaseUrl;
+  const url = base ? new URL(path, base) : new URL(path, window.location.origin);
   if (options.query) {
     Object.entries(options.query).forEach(([key, value]) => {
       if (value === undefined || value === null || value === "") {

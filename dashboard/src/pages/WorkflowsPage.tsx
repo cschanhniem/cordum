@@ -34,8 +34,20 @@ export default function WorkflowsPage() {
   const { data: workflows, isLoading, refetch } = useQuery({
     queryKey: ["workflows"],
     queryFn: async () => {
-      const res = await get<{ items: WorkflowSummary[] }>("/workflows?limit=200");
-      return res.items ?? [];
+      const res = await get<WorkflowSummary[] | { items: WorkflowSummary[] }>("/workflows?limit=200");
+      // Backend may return a bare array or { items: [...] }
+      const items = Array.isArray(res) ? res : (res.items ?? []);
+      return items.map((w) => {
+        const raw = w as unknown as Record<string, unknown>;
+        const steps = raw.steps as Record<string, unknown> | undefined;
+        return {
+          ...w,
+          stepCount: w.stepCount ?? (steps ? Object.keys(steps).length : undefined),
+          lastRunAt: w.lastRunAt ?? raw.last_run_at as string | undefined,
+          createdAt: w.createdAt ?? raw.created_at as string | undefined,
+          updatedAt: w.updatedAt ?? raw.updated_at as string | undefined,
+        };
+      });
     },
     refetchInterval: 30_000,
   });
@@ -81,7 +93,7 @@ export default function WorkflowsPage() {
 
       {/* Workflows Table — showcase style */}
       {isLoading ? (
-        <div className="instrument-card p-5">
+        <div className="instrument-card">
           <SkeletonTable rows={6} />
         </div>
       ) : filtered.length === 0 ? (
@@ -107,11 +119,11 @@ export default function WorkflowsPage() {
           <table className="w-full min-w-[700px]">
             <thead>
               <tr className="border-b border-border bg-surface-0">
-                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Name</th>
-                <th className="text-center px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Version</th>
-                <th className="text-center px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Steps</th>
-                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Status</th>
-                <th className="text-right px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Last Run</th>
+                <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Name</th>
+                <th className="text-center px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Version</th>
+                <th className="text-center px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Steps</th>
+                <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Status</th>
+                <th className="text-right px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Last Run</th>
                 <th className="px-5 py-3"></th>
               </tr>
             </thead>
@@ -144,7 +156,7 @@ export default function WorkflowsPage() {
                     {w.lastRunAt ? formatRelativeTime(w.lastRunAt) : "Never"}
                   </td>
                   <td className="px-5 py-3">
-                    <button className="p-1 rounded hover:bg-surface-2 transition-colors">
+                    <button className="p-1 rounded hover:bg-surface-2 transition-colors" aria-label="View details">
                       <Eye className="w-3.5 h-3.5 text-muted-foreground" />
                     </button>
                   </td>
