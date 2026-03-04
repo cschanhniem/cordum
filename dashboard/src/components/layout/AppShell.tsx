@@ -539,7 +539,7 @@ export function AppShell({ children }: AppShellProps) {
         </header>
 
         {/* Page content */}
-        <main className="flex-1 overflow-y-auto">
+        <main className="flex-1 overflow-y-auto dot-grid">
           <motion.div
             key={location.pathname}
             initial={{ opacity: 0, y: 6 }}
