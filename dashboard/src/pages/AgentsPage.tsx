@@ -14,11 +14,13 @@ import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonCard, SkeletonTable } from "@/components/ui/Skeleton";
 import {
-  Cpu, Search, RefreshCw, Zap, Filter, X, Shield,
+  Cpu, Search, RefreshCw, Zap, Filter, X, Shield, Layers,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { cn, formatRelativeTime, clickableRowProps } from "@/lib/utils";
 import { useWorkers } from "@/hooks/useWorkers";
+import { PoolGroupedView } from "@/components/agents/PoolGroupedView";
+import { WorkerDetailDrawer } from "@/components/agents/WorkerDetailDrawer";
 
 function workerStatusVariant(status: string) {
   switch (status) {
@@ -33,7 +35,8 @@ function workerStatusVariant(status: string) {
 export default function AgentsPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [tab, setTab] = useState<"fleet" | "registry">("fleet");
+  const [tab, setTab] = useState<"fleet" | "registry" | "pools">("fleet");
+  const [drawerWorkerId, setDrawerWorkerId] = useState<string | null>(null);
   const navigate = useNavigate();
 
   const { data: workers, isLoading, refetch } = useQuery({
@@ -104,6 +107,15 @@ export default function AgentsPage() {
         >
           Agent Registry
         </button>
+        <button
+          onClick={() => setTab("pools")}
+          className={cn(
+            "pb-2 text-sm font-medium border-b-2 transition-colors",
+            tab === "pools" ? "border-cordum text-cordum" : "border-transparent text-muted-foreground hover:text-foreground"
+          )}
+        >
+          Pool Topology
+        </button>
       </div>
 
       {tab === "fleet" && (<>
@@ -130,7 +142,7 @@ export default function AgentsPage() {
                     key={i}
                     className={cn(
                       "w-2 h-2 rounded-full",
-                      w.status === "idle" || w.status === "busy" ? "bg-emerald-400" : "bg-gray-500",
+                      w.status === "idle" || w.status === "busy" ? "bg-[var(--color-success)]" : "bg-muted-foreground",
                     )}
                   />
                 ))}
@@ -140,18 +152,18 @@ export default function AgentsPage() {
             <div className="instrument-card">
               <div className="flex items-center justify-between mb-3">
                 <span className="text-xs font-mono text-muted-foreground uppercase tracking-widest">Idle</span>
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 status-pulse" />
+                <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-success)] status-pulse" />
               </div>
-              <span className="font-mono text-3xl font-bold text-emerald-400">{idleCount}</span>
+              <span className="font-mono text-3xl font-bold text-[var(--color-success)]">{idleCount}</span>
               <p className="text-xs text-muted-foreground mt-1">Ready for work</p>
             </div>
 
             <div className="instrument-card">
               <div className="flex items-center justify-between mb-3">
                 <span className="text-xs font-mono text-muted-foreground uppercase tracking-widest">Busy</span>
-                <Zap className="w-4 h-4 text-blue-400" />
+                <Zap className="w-4 h-4 text-[var(--color-info)]" />
               </div>
-              <span className="font-mono text-3xl font-bold text-blue-400">{busyCount}</span>
+              <span className="font-mono text-3xl font-bold text-[var(--color-info)]">{busyCount}</span>
               <p className="text-xs text-muted-foreground mt-1">Processing jobs</p>
             </div>
 
@@ -159,7 +171,7 @@ export default function AgentsPage() {
               <div className="flex items-center justify-between mb-3">
                 <span className="text-xs font-mono text-muted-foreground uppercase tracking-widest">Offline</span>
               </div>
-              <span className={cn("font-mono text-3xl font-bold", offlineCount > 0 ? "text-red-400" : "text-foreground")}>{offlineCount}</span>
+              <span className={cn("font-mono text-3xl font-bold", offlineCount > 0 ? "text-destructive" : "text-foreground")}>{offlineCount}</span>
               <p className="text-xs text-muted-foreground mt-1">Disconnected</p>
             </div>
           </>
@@ -175,11 +187,11 @@ export default function AgentsPage() {
             placeholder="Search agents..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="h-8 w-full pl-8 pr-3 text-xs bg-surface-1 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+            className="h-8 w-full pl-8 pr-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
           />
         </div>
-        <div className="flex items-center gap-1 bg-surface-1 border border-border rounded-md p-0.5">
-          {["all", "idle", "busy", "offline"].map((s) => (
+        <div className="flex items-center gap-1 bg-surface-1 border border-border rounded-2xl p-0.5">
+          {["all", "idle", "busy", "draining", "offline"].map((s) => (
             <button
               key={s}
               onClick={() => setStatusFilter(s)}
@@ -277,6 +289,18 @@ export default function AgentsPage() {
       {tab === "registry" && (
         <AgentRegistryTab />
       )}
+
+      {tab === "pools" && (
+        <PoolGroupedView
+          workers={allWorkers}
+          onWorkerClick={(id) => setDrawerWorkerId(id)}
+        />
+      )}
+
+      <WorkerDetailDrawer
+        workerId={drawerWorkerId}
+        onClose={() => setDrawerWorkerId(null)}
+      />
     </div>
   );
 }

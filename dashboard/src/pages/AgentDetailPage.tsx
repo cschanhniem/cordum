@@ -25,11 +25,11 @@ import type { Job } from "@/api/types";
 
 function SafetyBadge({ decision }: { decision: string }) {
   const config: Record<string, { color: string; bg: string; label: string }> = {
-    allow: { color: "text-emerald-400", bg: "bg-emerald-400/10", label: "ALLOW" },
-    deny: { color: "text-red-400", bg: "bg-red-400/10", label: "DENY" },
-    require_approval: { color: "text-amber-400", bg: "bg-amber-400/10", label: "APPROVAL" },
-    allow_with_constraints: { color: "text-blue-400", bg: "bg-blue-400/10", label: "CONSTRAINED" },
-    throttle: { color: "text-orange-400", bg: "bg-orange-400/10", label: "THROTTLE" },
+    allow: { color: "text-[var(--color-success)]", bg: "bg-[var(--color-success)]/10", label: "ALLOW" },
+    deny: { color: "text-destructive", bg: "bg-destructive/10", label: "DENY" },
+    require_approval: { color: "text-[var(--color-warning)]", bg: "bg-[var(--color-warning)]/10", label: "APPROVAL" },
+    allow_with_constraints: { color: "text-[var(--color-info)]", bg: "bg-[var(--color-info)]/10", label: "CONSTRAINED" },
+    throttle: { color: "text-[var(--color-warning)]", bg: "bg-[var(--color-warning)]/10", label: "THROTTLE" },
   };
   const c = config[decision] ?? { color: "text-muted-foreground", bg: "bg-surface-2", label: decision.toUpperCase() };
   return <span className={cn("px-1.5 py-0.5 rounded font-mono text-[10px] font-semibold", c.color, c.bg)}>{c.label}</span>;
@@ -120,7 +120,7 @@ export default function AgentDetailPage() {
           }
         />
         <div className="instrument-card p-8 text-center">
-          <AlertTriangle className="w-8 h-8 text-red-400 mx-auto mb-3" />
+          <AlertTriangle className="w-8 h-8 text-destructive mx-auto mb-3" />
           <p className="text-sm text-foreground font-medium mb-1">Failed to load agent</p>
           <p className="text-xs text-muted-foreground mb-4">
             {agentError instanceof Error ? agentError.message : "An unexpected error occurred"}
@@ -184,10 +184,10 @@ export default function AgentDetailPage() {
         <div className="instrument-card">
           <div className="flex items-center gap-3 mb-4">
             <div className={cn(
-              "w-10 h-10 rounded-lg flex items-center justify-center",
-              isOnline ? "bg-emerald-400/10" : "bg-red-400/10"
+              "w-10 h-10 rounded-2xl flex items-center justify-center",
+              isOnline ? "bg-[var(--color-success)]/10" : "bg-destructive/10"
             )}>
-              <Cpu className={cn("w-5 h-5", isOnline ? "text-emerald-400" : "text-red-400")} />
+              <Cpu className={cn("w-5 h-5", isOnline ? "text-[var(--color-success)]" : "text-destructive")} />
             </div>
             <div>
               <p className="font-mono text-sm text-foreground font-medium">{agent?.id}</p>
@@ -257,17 +257,19 @@ export default function AgentDetailPage() {
             <span className="text-xs text-muted-foreground ml-2">allow rate</span>
           </div>
           {totalDecisions === 0 ? (
-            <p className="text-xs text-muted-foreground text-center py-4">No safety decision data available</p>
+            <p className="text-xs text-muted-foreground text-center py-4">
+              {jobsLoading ? "Loading safety data..." : "No safety decision data available"}
+            </p>
           ) : (
             <div className="space-y-2">
               {Object.entries(safetyBreakdown).map(([key, value]) => {
                 const pct = totalDecisions > 0 ? (value / totalDecisions) * 100 : 0;
                 const colors: Record<string, string> = {
-                  allow: "bg-emerald-400",
-                  deny: "bg-red-400",
-                  require_approval: "bg-amber-400",
-                  allow_with_constraints: "bg-blue-400",
-                  throttle: "bg-orange-400",
+                  allow: "bg-[var(--color-success)]",
+                  deny: "bg-destructive",
+                  require_approval: "bg-[var(--color-warning)]",
+                  allow_with_constraints: "bg-[var(--color-info)]",
+                  throttle: "bg-[var(--color-warning)]",
                 };
                 return (
                   <div key={key}>
@@ -276,7 +278,7 @@ export default function AgentDetailPage() {
                       <span className="font-mono text-foreground">{value.toLocaleString()} ({pct.toFixed(1)}%)</span>
                     </div>
                     <div className="w-full h-1.5 rounded-full bg-surface-2 overflow-hidden">
-                      <div className={cn("h-full rounded-full transition-all", colors[key] ?? "bg-gray-400")} style={{ width: `${pct}%` }} />
+                      <div className={cn("h-full rounded-full transition-all", colors[key] ?? "bg-muted-foreground")} style={{ width: `${pct}%` }} />
                     </div>
                   </div>
                 );
@@ -295,7 +297,7 @@ export default function AgentDetailPage() {
           ) : (
             <div className="space-y-2">
               {bundles.map((b) => (
-                <div key={b.id} className="flex items-center justify-between rounded-lg bg-surface-0 border border-border p-3">
+                <div key={b.id} className="flex items-center justify-between rounded-2xl bg-surface-0 border border-border p-3">
                   <div className="flex items-center gap-2">
                     <AlertTriangle className="w-3.5 h-3.5 text-cordum" />
                     <span className="text-sm font-medium text-foreground">{b.name || b.id}</span>
@@ -343,11 +345,11 @@ export default function AgentDetailPage() {
           <ResponsiveContainer width="100%" height={200}>
             <BarChart data={hourlyActivity}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
-              <XAxis dataKey="hour" tick={{ fontSize: 9, fill: "#6B7A90" }} axisLine={false} tickLine={false} interval={3} />
-              <YAxis tick={{ fontSize: 9, fill: "#6B7A90" }} axisLine={false} tickLine={false} />
+              <XAxis dataKey="hour" tick={{ fontSize: 9, fill: "#5a6a70" }} axisLine={false} tickLine={false} interval={3} />
+              <YAxis tick={{ fontSize: 9, fill: "#5a6a70" }} axisLine={false} tickLine={false} />
               <Tooltip content={<ChartTooltip />} />
-              <Bar dataKey="jobs" fill="#14b8a6" radius={[2, 2, 0, 0]} name="Jobs" />
-              <Bar dataKey="denied" fill="#EF4444" radius={[2, 2, 0, 0]} name="Denied" />
+              <Bar dataKey="jobs" fill="#0f7f7a" radius={[2, 2, 0, 0]} name="Jobs" />
+              <Bar dataKey="denied" fill="#b83a3a" radius={[2, 2, 0, 0]} name="Denied" />
             </BarChart>
           </ResponsiveContainer>
         )}
@@ -367,7 +369,7 @@ export default function AgentDetailPage() {
           </div>
         ) : !jobs || jobs.length === 0 ? (
           <div className="py-8 text-center">
-            <p className="text-xs text-muted-foreground">Per-agent job tracking is not yet available</p>
+            <p className="text-xs text-muted-foreground">No recent jobs for this agent</p>
           </div>
         ) : (
           <table className="w-full">

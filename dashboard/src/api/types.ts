@@ -570,6 +570,16 @@ export interface Worker {
   memoryLoad?: number;
 }
 
+export interface Pool {
+  name: string;
+  workerCount: number;
+  activeJobs: number;
+  capacity: number;
+  utilization: number;
+  topics: string[];
+  workers: Worker[];
+}
+
 // ---------------------------------------------------------------------------
 // Packs
 // ---------------------------------------------------------------------------
@@ -707,6 +717,21 @@ export interface Approval {
   contextPtr?: string;
   jobInput?: Record<string, unknown>;
   constraints?: Record<string, unknown>;
+  // Backend-compatible fields
+  job?: {
+    id: string;
+    type?: string;
+    topic?: string;
+    status?: string;
+    metadata?: Record<string, unknown>;
+    risk_tags?: string[];
+    capabilities?: string[];
+  };
+  decision?: string;
+  policy_rule_id?: string;
+  policy_snapshot?: string;
+  policy_reason?: string;
+  approval_required?: boolean;
 }
 
 export interface ApprovalHistoryEntry {
@@ -993,6 +1018,13 @@ export interface StreamEvent {
   type: string;
   timestamp: string;
   payload: Record<string, unknown>;
+  severity?: string;
+  eventType?: string;
+  jobId?: string;
+  runId?: string;
+  workflowId?: string;
+  source?: string;
+  chatData?: unknown;
 }
 
 // ---------------------------------------------------------------------------

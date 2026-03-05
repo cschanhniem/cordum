@@ -182,6 +182,10 @@ func workerSummariesToHeartbeats(workers []registry.WorkerSummary) []*pb.Heartbe
 			Capabilities:    w.Capabilities,
 			CpuLoad:         w.CpuLoad,
 			GpuUtilization:  w.GpuUtilization,
+			MemoryLoad:      w.MemoryLoad,
+			Region:          w.Region,
+			Type:            w.Type,
+			Labels:          w.Labels,
 		}
 	}
 	return out
@@ -589,6 +593,10 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 
 	// 2. Workers (RPC via NATS)
 	mux.HandleFunc("GET /api/v1/workers", s.instrumented("/api/v1/workers", s.handleGetWorkers))
+	mux.HandleFunc("GET /api/v1/workers/{id}", s.instrumented("/api/v1/workers/{id}", s.handleGetWorker))
+	mux.HandleFunc("GET /api/v1/workers/{id}/jobs", s.instrumented("/api/v1/workers/{id}/jobs", s.handleGetWorkerJobs))
+	mux.HandleFunc("GET /api/v1/pools", s.instrumented("/api/v1/pools", s.handleListPools))
+	mux.HandleFunc("GET /api/v1/pools/{name}", s.instrumented("/api/v1/pools/{name}", s.handleGetPool))
 
 	// 2.5 Status snapshot (Redis/NATS/workers/uptime)
 	mux.HandleFunc("GET /api/v1/status", s.instrumented("/api/v1/status", s.handleStatus))

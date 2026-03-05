@@ -19,6 +19,7 @@ import type {
   WorkflowStep,
   PolicyBundle,
   Worker,
+  Pool,
   DLQEntry,
   Pack,
   MarketplacePack,
@@ -362,6 +363,8 @@ export interface BackendHeartbeat {
   memory_load?: number;
   progress_pct?: number;
   last_memo?: string;
+  last_heartbeat?: string;
+  status?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -1420,7 +1423,7 @@ export function mapHeartbeatToWorker(hb: BackendHeartbeat): Worker | null {
   const name =
     (hb.labels && (hb.labels.name || hb.labels.worker_name || hb.labels.worker)) ||
     hb.worker_id;
-  const status = activeJobs > 0 ? "busy" : "idle";
+  const status = hb.status ?? (activeJobs > 0 ? "busy" : "idle");
   return {
     id: hb.worker_id,
     name,
@@ -1430,10 +1433,38 @@ export function mapHeartbeatToWorker(hb: BackendHeartbeat): Worker | null {
     activeJobs,
     // capacity fallback: if backend reports 0 max_parallel_jobs, use at least 1
     capacity: capacity > 0 ? capacity : Math.max(1, activeJobs),
+    lastHeartbeat: hb.last_heartbeat,
     region: hb.region,
     type: hb.type,
     cpuLoad: hb.cpu_load,
     gpuUtilization: hb.gpu_utilization,
     memoryLoad: hb.memory_load,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Pool mapper
+// ---------------------------------------------------------------------------
+
+export interface BackendPoolSummary {
+  name: string;
+  workers: number;
+  active_jobs: number;
+  capacity: number;
+  utilization: number;
+  topics?: string[];
+  worker_list?: BackendHeartbeat[];
+  captured_at?: string;
+}
+
+export function mapPoolResponse(bp: BackendPoolSummary, mapWorker = mapHeartbeatToWorker): Pool {
+  return {
+    name: bp.name,
+    workerCount: bp.workers ?? 0,
+    activeJobs: bp.active_jobs ?? 0,
+    capacity: bp.capacity ?? 0,
+    utilization: Math.round((bp.utilization ?? 0) * 100),
+    topics: bp.topics ?? [],
+    workers: (bp.worker_list ?? []).map(mapWorker).filter((w): w is Worker => !!w),
   };
 }
