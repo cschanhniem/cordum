@@ -661,7 +661,7 @@ func TestInvariant_OnErrorActivatedOnFailedStep(t *testing.T) {
 
 	// Complete handler → run should succeed
 	engine.HandleJobResult(context.Background(), &pb.JobResult{
-		JobId:  fmt.Sprintf("run-onerror-fail:handler@1"),
+		JobId:  "run-onerror-fail:handler@1",
 		Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
 	})
 

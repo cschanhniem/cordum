@@ -23,7 +23,7 @@ import { Card, CardHeader, CardTitle } from "../ui/Card";
 import { cn } from "../../lib/utils";
 import { POLICY_STATS_SUPPORTED, usePolicyAudit, usePolicyRules } from "../../hooks/usePolicies";
 import { useJobs } from "../../hooks/useJobs";
-import { exportPdf, captureElement, type PdfSection } from "../../lib/pdfExport";
+import { exportPdf, type PdfSection } from "../../lib/pdfExport";
 import { useAuth } from "../../hooks/useAuth";
 
 // ---------------------------------------------------------------------------

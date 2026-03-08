@@ -65,7 +65,7 @@ export default function SettingsMcpPage() {
       ) : (
         <>
           {/* Disabled notice */}
-          {mcpConfig && !mcpConfig.enabled && (
+          {!mcpConfig.enabled && (
             <div className="instrument-card p-4 status-warning">
               <div className="flex items-center gap-3">
                 <AlertTriangle className="w-4 h-4 text-[var(--color-warning)]" />

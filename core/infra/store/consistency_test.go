@@ -607,8 +607,10 @@ func TestTenantActiveSetIsolation(t *testing.T) {
 	ctx := context.Background()
 
 	// Two tenants, each with a job
-	store.SetTenant(ctx, "job-t1", "tenant-1")
-	store.SetTenant(ctx, "job-t2", "tenant-2")
+	err = store.SetTenant(ctx, "job-t1", "tenant-1")
+	require.NoError(t, err)
+	err = store.SetTenant(ctx, "job-t2", "tenant-2")
+	require.NoError(t, err)
 
 	err = store.SetState(ctx, "job-t1", model.JobStatePending)
 	require.NoError(t, err)
@@ -667,7 +669,8 @@ func TestCancelJobUpdatesTenantActiveSet(t *testing.T) {
 	tenant := "tenant-cancel"
 
 	// Set up running job with tenant
-	store.SetTenant(ctx, jobID, tenant)
+	err = store.SetTenant(ctx, jobID, tenant)
+	require.NoError(t, err)
 	err = store.SetState(ctx, jobID, model.JobStatePending)
 	require.NoError(t, err)
 	err = store.SetState(ctx, jobID, model.JobStateRunning)

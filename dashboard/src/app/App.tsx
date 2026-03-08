@@ -1,5 +1,5 @@
-import { Suspense, lazy, useEffect, useMemo, type ReactNode } from "react";
-import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { Suspense, lazy, useEffect, type ReactNode } from "react";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AppShell } from "../components/layout/AppShell";
 import { CommandPalette } from "../components/CommandPalette";
 import { useLiveBus } from "../hooks/useLiveBus";
@@ -76,7 +76,6 @@ function AuthGate({ children }: { children: ReactNode }) {
 
 function MainApp() {
   useLiveBus();
-  const navigate = useNavigate();
   const setCommandOpen = useUiStore((state) => state.setCommandOpen);
 
   useEffect(() => {
@@ -89,54 +88,6 @@ function MainApp() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [setCommandOpen]);
-
-  const actions = useMemo(
-    () => [
-      { id: "home", title: "Go to Home", group: "Navigation", onSelect: () => navigate("/") },
-      { id: "runs", title: "Go to Runs", group: "Navigation", onSelect: () => navigate("/runs") },
-      { id: "jobs", title: "Go to Jobs", group: "Navigation", onSelect: () => navigate("/jobs") },
-      { id: "workflows", title: "Go to Workflows", group: "Navigation", onSelect: () => navigate("/workflows") },
-      { id: "packs", title: "Go to Marketplace", group: "Navigation", onSelect: () => navigate("/packs") },
-      { id: "pools", title: "Go to Worker Pools", group: "Navigation", onSelect: () => navigate("/pools") },
-      { id: "policy", title: "Go to Policy Studio", group: "Navigation", onSelect: () => navigate("/policy") },
-      { id: "context", title: "Go to Context Inspector", group: "Navigation", onSelect: () => navigate("/context") },
-      { id: "dlq", title: "Go to DLQ", group: "Navigation", onSelect: () => navigate("/dlq") },
-      { id: "audit", title: "Go to Audit Log", group: "Navigation", onSelect: () => navigate("/audit") },
-      { id: "system", title: "Go to Observability Center", group: "Navigation", onSelect: () => navigate("/system") },
-      { id: "tools", title: "Go to Tools", group: "Navigation", onSelect: () => navigate("/tools") },
-      { id: "trace", title: "Trace Explorer", group: "Navigation", onSelect: () => navigate("/trace") },
-      { id: "search", title: "Open Search", group: "Navigation", onSelect: () => navigate("/search") },
-      {
-        id: "start-run",
-        title: "Start new run",
-        description: "Pick a workflow and launch a run",
-        group: "Actions",
-        onSelect: () => navigate("/workflows"),
-      },
-      {
-        id: "approvals",
-        title: "Review pending approvals",
-        description: "Open the approvals inbox",
-        group: "Actions",
-        onSelect: () => navigate("/policy"),
-      },
-      {
-        id: "dlq-review",
-        title: "Review DLQ entries",
-        description: "Investigate failed jobs",
-        group: "Actions",
-        onSelect: () => navigate("/dlq"),
-      },
-      {
-        id: "audit-log",
-        title: "Open audit log",
-        description: "Track policy publishing activity",
-        group: "Actions",
-        onSelect: () => navigate("/audit"),
-      },
-    ],
-    [navigate]
-  );
 
   return (
     <>

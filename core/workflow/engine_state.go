@@ -639,10 +639,8 @@ func updateRunStatus(run *WorkflowRun, wfDef *Workflow, now time.Time) {
 				switch walkOnErrorChain(wfDef, run, stepID) {
 				case chainPending:
 					allDone = false
-					break
 				case chainRecovered:
 					completed++
-					break
 				case chainExhausted:
 					hasFailed = true
 				}
@@ -652,19 +650,17 @@ func updateRunStatus(run *WorkflowRun, wfDef *Workflow, now time.Time) {
 		case StepStatusCancelled:
 			if isSwitchBranchNotTaken(sr) {
 				completed++
-				break
+			} else {
+				hasFailed = true
 			}
-			hasFailed = true
 		case StepStatusTimedOut:
 			stepDef := wfDef.Steps[stepID]
 			if stepDef != nil && stepDef.OnError != "" {
 				switch walkOnErrorChain(wfDef, run, stepID) {
 				case chainPending:
 					allDone = false
-					break
 				case chainRecovered:
 					completed++
-					break
 				case chainExhausted:
 					hasTimedOut = true
 				}

@@ -320,20 +320,6 @@ export function AuditFiltersBar({ onChange }: AuditFiltersBarProps) {
   }, [setSearchParams]);
 
   // ---------------------------------------------------------------------------
-  // Active filter count
-  // ---------------------------------------------------------------------------
-
-  const activeCount =
-    eventType.length +
-    (actor ? 1 : 0) +
-    (resourceType ? 1 : 0) +
-    (resourceId ? 1 : 0) +
-    severity.length +
-    outcome.length +
-    (timeRange ? 1 : 0) +
-    (search ? 1 : 0);
-
-  // ---------------------------------------------------------------------------
   // Clear all
   // ---------------------------------------------------------------------------
 

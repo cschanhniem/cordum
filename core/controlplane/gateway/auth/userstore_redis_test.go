@@ -187,7 +187,9 @@ func TestLoginThrottleRecoveryFromRedisOutage(t *testing.T) {
 	}
 
 	// Phase 2: Redis comes back — should use Redis (fresh counters).
-	srv.Start()
+	if err := srv.Start(); err != nil {
+		t.Fatalf("failed to restart redis: %v", err)
+	}
 	if err := store.CheckLoginThrottle(ctx, "recovery-user", "10.0.0.1"); err != nil {
 		t.Fatalf("expected pass after Redis recovery, got: %v", err)
 	}

@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { ShieldCheck, ShieldAlert, ChevronRight } from "lucide-react";
+import { ShieldCheck, ChevronRight } from "lucide-react";
 import { Badge } from "../ui/Badge";
 import { cn } from "../../lib/utils";
 import type { SafetyDecision } from "../../api/types";

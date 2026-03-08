@@ -509,7 +509,7 @@ func TestProcessJobContextFencing(t *testing.T) {
 	// still allow processJob to proceed (GetAttempts error is non-fatal),
 	// but downstream store ops that return RetryAfter on context error
 	// will propagate the cancellation.
-	err = engine.processJob(cancelledCtx, req2, "trace-fence-2")
+	_ = engine.processJob(cancelledCtx, req2, "trace-fence-2") // error expected; we only verify engine.ctx survives
 	// With a cancelled context, store operations like SetDeadline or
 	// state transitions will fail, causing processJob to return an error
 	// or complete with degraded behavior (skipped store ops).

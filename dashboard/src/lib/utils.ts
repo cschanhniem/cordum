@@ -52,5 +52,5 @@ export function clickableRowProps(onClick: () => void) {
 
 export function isValidResourceId(id: unknown): boolean {
   if (typeof id !== "string" || !id || id.length > 128) return false;
-  return /^[a-zA-Z0-9][a-zA-Z0-9._:_\-]*$/.test(id);
+  return /^[a-zA-Z0-9][a-zA-Z0-9._:\-]*$/.test(id);
 }

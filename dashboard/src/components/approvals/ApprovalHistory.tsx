@@ -231,15 +231,6 @@ export function ApprovalHistory() {
     [filtered, page],
   );
 
-  const resetFilters = useCallback(() => {
-    setActionFilter("all");
-    setTimeRange("7d");
-    setSearch("");
-    setActorFilter("");
-    setWorkflowFilter("");
-    setPage(0);
-  }, [setPage]);
-
   return (
     <div className="space-y-4">
       {/* Metrics strip */}
