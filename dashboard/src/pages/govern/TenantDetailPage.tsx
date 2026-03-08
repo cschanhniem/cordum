@@ -158,7 +158,7 @@ export default function TenantDetailPage() {
             Bundle
             <select
               id="govern-tenant-detail-bundle-select"
-              className="ml-2 h-8 rounded-md border border-border bg-surface-2 px-2 text-xs text-foreground"
+              className="ml-2 h-8 rounded-2xl border border-border bg-surface-2 px-2 text-xs text-foreground"
               value={selectedBundleId}
               onChange={(event) => setSelectedBundleId(event.target.value)}
             >
@@ -185,7 +185,7 @@ export default function TenantDetailPage() {
       {loadError && (
         <InfoBanner variant="error" title="Unable to load tenant policy detail">
           <p>{loadError.message}</p>
-          {loadError.details && <p className="mt-1 text-red-300/90">{loadError.details}</p>}
+          {loadError.details && <p className="mt-1 text-destructive">{loadError.details}</p>}
           <Button
             variant="outline"
             size="sm"
@@ -205,9 +205,9 @@ export default function TenantDetailPage() {
       {saveError && (
         <InfoBanner variant="error" title="Tenant policy save failed">
           <p>{saveError.message}</p>
-          {saveError.details && <p className="mt-1 text-red-300/90">{saveError.details}</p>}
+          {saveError.details && <p className="mt-1 text-destructive">{saveError.details}</p>}
           {saveError.code === "conflict" && (
-            <p className="mt-1 text-red-300/90">
+            <p className="mt-1 text-destructive">
               Conflict detected: the bundle changed on server. Reload bundle content and retry.
             </p>
           )}
@@ -221,7 +221,7 @@ export default function TenantDetailPage() {
       )}
 
       {affordances.canEdit && (
-        <section className="rounded-lg border border-border bg-surface-0 p-4 space-y-3">
+        <section className="rounded-2xl border border-border bg-surface-0 p-4 space-y-3">
           <h3 className="font-display text-sm font-semibold text-foreground">
             Edit tenant policy fields
           </h3>
@@ -279,7 +279,7 @@ export default function TenantDetailPage() {
             <label className="text-xs text-muted-foreground">
               max_concurrent_jobs
               <input
-                className="mt-1 h-8 w-full rounded-md border border-border bg-surface-2 px-3 text-xs text-foreground"
+                className="mt-1 h-8 w-full rounded-2xl border border-border bg-surface-2 px-3 text-xs text-foreground"
                 type="number"
                 min={0}
                 step={1}

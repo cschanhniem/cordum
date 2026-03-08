@@ -8,15 +8,15 @@ interface TenantScopedRulesSectionProps {
 function decisionTone(decision: GlobalPolicyInputRule["decision"]): string {
   switch (decision) {
     case "allow":
-      return "bg-emerald-500/20 text-emerald-200";
+      return "bg-[var(--color-success)]/20 text-[var(--color-success)]";
     case "deny":
-      return "bg-red-500/20 text-red-200";
+      return "bg-destructive/20 text-destructive";
     case "allow_with_constraints":
-      return "bg-blue-500/20 text-blue-200";
+      return "bg-[var(--color-info)]/20 text-[var(--color-info)]";
     case "throttle":
-      return "bg-orange-500/20 text-orange-200";
+      return "bg-[var(--color-warning)]/20 text-[var(--color-warning)]";
     default:
-      return "bg-amber-500/20 text-amber-200";
+      return "bg-[var(--color-warning)]/20 text-[var(--color-warning)]";
   }
 }
 

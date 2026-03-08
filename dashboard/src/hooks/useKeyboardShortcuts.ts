@@ -142,4 +142,5 @@ export function useKeyboardShortcuts() {
 /** @internal exported for unit tests */
 export const __keyboardShortcutsInternal = {
   isEditableTarget,
+  NAV_MAP: new Map(Object.entries(G_KEY_MAP)),
 };

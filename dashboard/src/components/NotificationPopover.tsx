@@ -54,17 +54,17 @@ const iconMap = {
 };
 
 const colorMap = {
-  success: "text-emerald-400",
-  error: "text-red-400",
-  warning: "text-amber-400",
-  info: "text-blue-400",
+  success: "text-[var(--color-success)]",
+  error: "text-destructive",
+  warning: "text-[var(--color-warning)]",
+  info: "text-[var(--color-info)]",
 };
 
 const bgMap = {
-  success: "bg-emerald-500/10",
-  error: "bg-red-500/10",
-  warning: "bg-amber-500/10",
-  info: "bg-blue-500/10",
+  success: "bg-[var(--color-success)]/10",
+  error: "bg-destructive/10",
+  warning: "bg-[var(--color-warning)]/10",
+  info: "bg-[var(--color-info)]/10",
 };
 
 export function NotificationPopover() {
@@ -124,7 +124,7 @@ export function NotificationPopover() {
         <Bell className="w-4 h-4 text-muted-foreground" />
         {unreadCount > 0 && (
           <>
-            <span className="absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-amber-400 border-2 border-surface-0 status-pulse" />
+            <span className="absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-[var(--color-warning)] border-2 border-surface-0 status-pulse" />
             <span className="sr-only">{unreadCount} unread notifications</span>
           </>
         )}

@@ -117,11 +117,11 @@ export default function SettingsConfigPage() {
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
-            className="flex items-center justify-between px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/20"
+            className="flex items-center justify-between px-4 py-3 rounded-2xl bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/20"
           >
             <div className="flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-amber-400" />
-              <span className="text-sm text-amber-200">You have unsaved changes</span>
+              <AlertTriangle className="w-4 h-4 text-[var(--color-warning)]" />
+              <span className="text-sm text-[var(--color-warning)]">You have unsaved changes</span>
             </div>
             <div className="flex items-center gap-2">
               <Button variant="ghost" size="sm" onClick={() => setValues({ ...originalValues })}>
@@ -148,7 +148,7 @@ export default function SettingsConfigPage() {
                   key={g.id}
                   onClick={() => setActiveGroup(g.id)}
                   className={cn(
-                    "w-full flex items-center gap-2 px-3 py-2 rounded-md text-xs font-medium transition-colors text-left",
+                    "w-full flex items-center gap-2 px-3 py-2 rounded-2xl text-xs font-medium transition-colors text-left",
                     activeGroup === g.id ? "bg-cordum/10 text-cordum" : "text-muted-foreground hover:text-foreground hover:bg-surface-1",
                   )}
                 >
@@ -178,7 +178,7 @@ export default function SettingsConfigPage() {
                           type="text"
                           value={String(values[field.key] ?? "")}
                           onChange={(e) => updateValue(field.key, e.target.value)}
-                          className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+                          className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-2xl text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
                         />
                       )}
                       {field.type === "number" && (
@@ -186,14 +186,14 @@ export default function SettingsConfigPage() {
                           type="number"
                           value={Number(values[field.key] ?? 0)}
                           onChange={(e) => updateValue(field.key, Number(e.target.value))}
-                          className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+                          className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-2xl text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
                         />
                       )}
                       {field.type === "select" && (
                         <select
                           value={String(values[field.key] ?? "")}
                           onChange={(e) => updateValue(field.key, e.target.value)}
-                          className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+                          className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-2xl text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
                         >
                           {field.options?.map(o => <option key={o} value={o}>{o}</option>)}
                         </select>
@@ -207,7 +207,7 @@ export default function SettingsConfigPage() {
                           )}
                         >
                           <div className={cn(
-                            "absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform",
+                            "absolute top-0.5 w-4 h-4 rounded-full bg-card transition-transform",
                             values[field.key] ? "left-[18px]" : "left-0.5",
                           )} />
                         </button>

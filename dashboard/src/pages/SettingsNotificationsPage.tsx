@@ -70,10 +70,10 @@ export default function SettingsNotificationsPage() {
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
       <PageHeader title="Notifications" subtitle="Configure alert channels and event preferences" />
 
-      <div className="flex items-center gap-1 p-1 rounded-lg bg-surface-1 w-fit">
+      <div className="flex items-center gap-1 p-1 rounded-2xl bg-surface-1 w-fit">
         {tabs.map(tab => (
           <button key={tab} onClick={() => setActiveTab(tab)}
-            className={cn("px-4 py-1.5 text-xs font-medium rounded-md transition-colors capitalize",
+            className={cn("px-4 py-1.5 text-xs font-medium rounded-2xl transition-colors capitalize",
               activeTab === tab ? "bg-cordum/10 text-cordum" : "text-muted-foreground hover:text-foreground")}>
             {tab}
           </button>
@@ -99,7 +99,7 @@ export default function SettingsNotificationsPage() {
                       onClick={() => setPreferences(prev => ({ ...prev, [event.key]: !prev[event.key] }))}
                       className={cn("w-9 h-5 rounded-full relative transition-colors",
                         preferences[event.key] ? "bg-cordum" : "bg-surface-2")}>
-                      <div className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform",
+                      <div className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-card transition-transform",
                         preferences[event.key] ? "left-[18px]" : "left-0.5")} />
                     </button>
                   </div>
@@ -138,7 +138,7 @@ export default function SettingsNotificationsPage() {
                 </motion.div>
               );
             })}
-            <Button variant="outline" size="sm" onClick={() => toast.info("Feature coming soon")}>
+            <Button variant="outline" size="sm" onClick={() => toast.info("Not configured")}>
               <Plus className="w-3 h-3 mr-1" />Add Channel
             </Button>
           </div>

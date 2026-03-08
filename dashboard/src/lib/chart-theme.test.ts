@@ -13,11 +13,11 @@ import {
 
 describe("chartColors", () => {
   it("contains all 5 safety decision colors", () => {
-    expect(chartColors.allow).toBe("#10B981");
-    expect(chartColors.deny).toBe("#EF4444");
-    expect(chartColors.require_approval).toBe("#F59E0B");
-    expect(chartColors.allow_with_constraints).toBe("#3B82F6");
-    expect(chartColors.throttle).toBe("#F97316");
+    expect(chartColors.allow).toBe("#1f7a57");
+    expect(chartColors.deny).toBe("#b83a3a");
+    expect(chartColors.require_approval).toBe("#c58a1c");
+    expect(chartColors.allow_with_constraints).toBe("#0f7f7a");
+    expect(chartColors.throttle).toBe("#d4833a");
   });
 
   it("includes cordum and muted", () => {
@@ -28,8 +28,8 @@ describe("chartColors", () => {
 
 describe("resolveChartColor", () => {
   it("resolves a semantic key to hex color", () => {
-    expect(resolveChartColor("allow")).toBe("#10B981");
-    expect(resolveChartColor("deny")).toBe("#EF4444");
+    expect(resolveChartColor("allow")).toBe("#1f7a57");
+    expect(resolveChartColor("deny")).toBe("#b83a3a");
   });
 
   it("passes through a raw hex color unchanged", () => {
@@ -63,7 +63,7 @@ describe("axisTickStyle", () => {
   });
 
   it("has muted fill color", () => {
-    expect(axisTickStyle.fill).toBe("#6B7A90");
+    expect(axisTickStyle.fill).toBe("#5a6a70");
   });
 });
 

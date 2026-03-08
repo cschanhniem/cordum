@@ -120,12 +120,12 @@ func (s *server) handleInstallPack(w http.ResponseWriter, r *http.Request) {
 		InstalledBy: strings.TrimSpace(policyActorID(r)),
 	})
 	if err != nil {
-		status := http.StatusBadRequest
 		var installErr *packInstallError
 		if errors.As(err, &installErr) {
-			status = installErr.Status
+			writeErrorJSON(w, installErr.Status, installErr.Error())
+			return
 		}
-		writeErrorJSON(w, status, err.Error())
+		writeInternalError(w, r, "install pack", err)
 		return
 	}
 

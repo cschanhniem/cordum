@@ -52,7 +52,7 @@ export default function SchemaDetailPage() {
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button onClick={() => navigate("/schemas")} className="p-1.5 rounded-md hover:bg-surface-2 transition-colors">
+            <button onClick={() => navigate("/schemas")} className="p-1.5 rounded-full hover:bg-surface-2 transition-colors">
               <ArrowLeft className="w-4 h-4 text-muted-foreground" />
             </button>
             <FileJson className="w-5 h-5 text-cordum" />
@@ -63,7 +63,7 @@ export default function SchemaDetailPage() {
           </div>
         </div>
         <div className="instrument-card p-6">
-          <p className="text-sm text-muted-foreground">Schema creation form coming soon.</p>
+          <p className="text-sm text-muted-foreground">Select a schema from the list to view its details.</p>
           <Button variant="outline" size="sm" className="mt-4" onClick={() => navigate("/schemas")}>
             Back to Schemas
           </Button>
@@ -89,7 +89,7 @@ export default function SchemaDetailPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <button onClick={() => navigate("/schemas")} className="p-1.5 rounded-md hover:bg-surface-2 transition-colors">
+          <button onClick={() => navigate("/schemas")} className="p-1.5 rounded-full hover:bg-surface-2 transition-colors">
             <ArrowLeft className="w-4 h-4 text-muted-foreground" />
           </button>
           <FileJson className="w-5 h-5 text-cordum" />
@@ -107,13 +107,13 @@ export default function SchemaDetailPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex items-center gap-1 p-1 rounded-lg bg-surface-1 w-fit">
+      <div className="flex items-center gap-1 p-1 rounded-2xl bg-surface-1 w-fit">
         {tabs.map(tab => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
             className={cn(
-              "px-4 py-1.5 text-xs font-medium rounded-md transition-colors capitalize",
+              "px-4 py-1.5 text-xs font-medium rounded-2xl transition-colors capitalize",
               activeTab === tab ? "bg-cordum/10 text-cordum" : "text-muted-foreground hover:text-foreground",
             )}
           >

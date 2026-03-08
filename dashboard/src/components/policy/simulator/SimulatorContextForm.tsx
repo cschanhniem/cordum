@@ -111,7 +111,7 @@ export function SimulatorContextForm({
 
       <div className="space-y-3">
         <label className="block text-xs text-muted-foreground">
-          Topic <span className="text-red-400">*</span>
+          Topic <span className="text-destructive">*</span>
           <input
             className="mt-1 h-8 w-full rounded-md border border-border bg-surface-2 px-3 text-xs text-foreground"
             placeholder="job.customer.deploy"

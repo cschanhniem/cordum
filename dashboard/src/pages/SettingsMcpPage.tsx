@@ -58,7 +58,7 @@ export default function SettingsMcpPage() {
         </div>
       ) : !mcpConfig ? (
         <div className="instrument-card p-8 text-center">
-          <AlertTriangle className="w-8 h-8 text-red-400 mx-auto mb-3" />
+          <AlertTriangle className="w-8 h-8 text-destructive mx-auto mb-3" />
           <p className="text-sm text-foreground font-medium mb-1">Failed to load MCP configuration</p>
           <p className="text-xs text-muted-foreground">Configuration data is unavailable</p>
         </div>
@@ -68,7 +68,7 @@ export default function SettingsMcpPage() {
           {mcpConfig && !mcpConfig.enabled && (
             <div className="instrument-card p-4 status-warning">
               <div className="flex items-center gap-3">
-                <AlertTriangle className="w-4 h-4 text-amber-400" />
+                <AlertTriangle className="w-4 h-4 text-[var(--color-warning)]" />
                 <p className="text-sm text-foreground">MCP server is disabled. Enable it in configuration to allow MCP connections.</p>
               </div>
             </div>
@@ -202,7 +202,7 @@ export default function SettingsMcpPage() {
                           ) : (
                             <div className="space-y-1.5">
                               {tools.map((tool) => (
-                                <div key={tool.name} className="flex items-center gap-3 px-3 py-2 rounded-md bg-surface-1">
+                                <div key={tool.name} className="flex items-center gap-3 px-3 py-2 rounded-2xl bg-surface-1">
                                   <Wrench className="w-3 h-3 text-cordum shrink-0" />
                                   <div className="flex-1 min-w-0">
                                     <span className="text-xs font-mono font-medium text-foreground">{tool.name}</span>
@@ -223,8 +223,8 @@ export default function SettingsMcpPage() {
                             <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest mb-2">Resources ({resources.length})</p>
                             <div className="space-y-1.5">
                               {resources.map((res) => (
-                                <div key={res.uri} className="flex items-center gap-3 px-3 py-2 rounded-md bg-surface-1">
-                                  <Globe className="w-3 h-3 text-blue-400 shrink-0" />
+                                <div key={res.uri} className="flex items-center gap-3 px-3 py-2 rounded-2xl bg-surface-1">
+                                  <Globe className="w-3 h-3 text-[var(--color-info)] shrink-0" />
                                   <div className="flex-1 min-w-0">
                                     <span className="text-xs font-mono font-medium text-foreground">{res.name}</span>
                                     <p className="text-[10px] text-muted-foreground">{res.uri}</p>

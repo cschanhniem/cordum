@@ -139,9 +139,9 @@ export function SafetyDecisionFeed() {
               className={cn(
                 "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium",
                 wsStatus === "connected"
-                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+                  ? "border-[var(--color-success)]/30 bg-[var(--color-success)]/10 text-[var(--color-success)]"
                   : wsStatus === "connecting" || wsStatus === "reconnecting"
-                    ? "border-amber-500/30 bg-amber-500/10 text-amber-400"
+                    ? "border-[var(--color-warning)]/30 bg-[var(--color-warning)]/10 text-[var(--color-warning)]"
                     : "border-border bg-surface-2 text-muted-foreground",
               )}
             >
@@ -209,7 +209,7 @@ export function SafetyDecisionFeed() {
             </div>
           )}
           {isError && decisions.length > 0 && (
-            <div className="px-5 py-2 flex items-center gap-2 text-[11px] text-amber-400">
+            <div className="px-5 py-2 flex items-center gap-2 text-[11px] text-[var(--color-warning)]">
               <AlertTriangleIcon />
               Refresh failed — showing cached data
               <button onClick={() => refetch()} className="underline hover:no-underline ml-1">

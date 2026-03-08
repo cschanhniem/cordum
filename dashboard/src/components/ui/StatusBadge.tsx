@@ -2,22 +2,22 @@ import { cn } from "@/lib/utils";
 
 export type BadgeVariant = "healthy" | "warning" | "danger" | "info" | "muted" | "cordum";
 
-/* Exact match to showcase: uses emerald/amber/red/blue Tailwind colors */
+/* Uses CSS variable-based semantic colors */
 const variants: Record<BadgeVariant, string> = {
-  healthy: "bg-emerald-500/15 text-emerald-400 border-emerald-500/20",
-  warning: "bg-amber-500/15 text-amber-400 border-amber-500/20",
-  danger: "bg-red-500/15 text-red-400 border-red-500/20",
-  info: "bg-blue-500/15 text-blue-400 border-blue-500/20",
-  muted: "bg-gray-500/15 text-gray-400 border-gray-500/20",
+  healthy: "bg-[var(--color-success)]/15 text-[var(--color-success)] border-[var(--color-success)]/20",
+  warning: "bg-[var(--color-warning)]/15 text-[var(--color-warning)] border-[var(--color-warning)]/20",
+  danger: "bg-destructive/15 text-destructive border-destructive/20",
+  info: "bg-[var(--color-info)]/15 text-[var(--color-info)] border-[var(--color-info)]/20",
+  muted: "bg-muted-foreground/15 text-muted-foreground border-muted-foreground/20",
   cordum: "bg-cordum/12 text-cordum border-cordum/20",
 };
 
 const dotColors: Record<BadgeVariant, string> = {
-  healthy: "bg-emerald-400",
-  warning: "bg-amber-400",
-  danger: "bg-red-400",
-  info: "bg-blue-400",
-  muted: "bg-gray-400",
+  healthy: "bg-[var(--color-success)]",
+  warning: "bg-[var(--color-warning)]",
+  danger: "bg-destructive",
+  info: "bg-[var(--color-info)]",
+  muted: "bg-muted-foreground",
   cordum: "bg-cordum",
 };
 

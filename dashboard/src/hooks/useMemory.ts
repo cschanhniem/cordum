@@ -130,6 +130,45 @@ function attachMemoryEntries(payload: MemoryPayload): MemoryPayload {
   };
 }
 
+function mapJobArtifactsResponse(raw: unknown): JobArtifactRef[] {
+  if (!raw) return [];
+
+  let items: unknown[];
+
+  if (Array.isArray(raw)) {
+    items = raw;
+  } else {
+    const record = asRecord(raw);
+    if (!record) return [];
+    if (Array.isArray(record.items)) {
+      items = record.items;
+    } else if (Array.isArray(record.artifacts)) {
+      items = record.artifacts;
+    } else {
+      return [];
+    }
+  }
+
+  const refs: JobArtifactRef[] = [];
+  for (const item of items) {
+    if (typeof item === "string") {
+      const ptr = item.trim();
+      if (ptr) refs.push({ ptr });
+      continue;
+    }
+    const rec = asRecord(item);
+    if (!rec) continue;
+    const ptr = asString(rec.ptr || rec.pointer).trim();
+    if (!ptr) continue;
+    refs.push({
+      ptr,
+      contentType: asString(rec.content_type) || undefined,
+      sizeBytes: typeof rec.size_bytes === "number" ? rec.size_bytes : undefined,
+    });
+  }
+  return refs;
+}
+
 function dedupeArtifacts(items: JobArtifactRef[]): JobArtifactRef[] {
   const seen = new Set<string>();
   const out: JobArtifactRef[] = [];
@@ -208,6 +247,7 @@ export function useJobArtifacts(jobId?: string) {
 export const __memoryInternal = {
   mapMemoryEntries,
   attachMemoryEntries,
+  mapJobArtifactsResponse,
   fallbackArtifactsFromJobDetail,
   dedupeArtifacts,
 };

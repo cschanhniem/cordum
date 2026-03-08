@@ -118,6 +118,9 @@ interface ConfigState {
   /** @internal Prevents tenant impersonation via store mutation after login. */
   tenantLocked: boolean;
 
+  /** True once runtime config has been loaded (from public/config.json or defaults). */
+  loaded: boolean;
+
   // Actions
   update: (patch: ConfigPatch) => void;
   login: (token: string, user: User) => void;
@@ -139,6 +142,7 @@ export const useConfigStore = create<ConfigState>((set) => {
     isAuthenticated: !!loadToken(),
     loginTimestamp: loadLoginTimestamp(),
     tenantLocked: !!(savedUser?.tenant),
+    loaded: true,
 
     update: (patch) =>
       set((s) => {

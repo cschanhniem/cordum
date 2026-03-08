@@ -2,28 +2,32 @@ import { forwardRef, type ButtonHTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
 import { Loader2 } from "lucide-react";
 
-type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "outline";
+export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "outline" | "default" | "subtle";
 type ButtonSize = "sm" | "md" | "lg" | "icon";
 
 /* Exact match to showcase button styles */
 const variantStyles: Record<ButtonVariant, string> = {
   primary:
-    "bg-cordum text-surface-0 hover:bg-cordum-dim font-semibold",
+    "bg-primary text-primary-foreground hover:bg-primary/85 font-semibold shadow-glow",
+  default:
+    "bg-primary text-primary-foreground hover:bg-primary/85 font-semibold shadow-glow",
+  subtle:
+    "text-muted-foreground hover:text-foreground hover:bg-secondary",
   secondary:
-    "bg-secondary text-secondary-foreground hover:bg-surface-3",
+    "bg-secondary text-secondary-foreground hover:bg-secondary/70",
   ghost:
-    "text-muted-foreground hover:text-foreground hover:bg-surface-2",
+    "text-muted-foreground hover:text-foreground hover:bg-secondary",
   danger:
-    "bg-red-500/15 text-red-400 hover:bg-red-500/25 border border-red-500/20",
+    "bg-destructive/15 text-destructive hover:bg-destructive/25 border border-destructive/20 shadow-lift",
   outline:
-    "border border-border text-foreground hover:bg-surface-2",
+    "border border-border text-foreground hover:bg-secondary",
 };
 
 const sizeStyles: Record<ButtonSize, string> = {
-  sm: "h-8 px-3 text-xs rounded-md gap-1.5",
-  md: "h-9 px-4 text-sm rounded-md gap-2",
-  lg: "h-11 px-6 text-sm rounded-lg gap-2",
-  icon: "h-9 w-9 rounded-md",
+  sm: "h-8 px-3 text-xs rounded-full gap-1.5",
+  md: "h-9 px-4 text-sm rounded-full gap-2",
+  lg: "h-11 px-6 text-sm rounded-full gap-2",
+  icon: "h-9 w-9 rounded-full",
 };
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {

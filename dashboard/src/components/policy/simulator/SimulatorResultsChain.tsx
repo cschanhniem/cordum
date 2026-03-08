@@ -11,8 +11,8 @@ interface SimulatorResultsChainProps {
 /** @internal exported for testing */
 export function getConditionIcon(passed: boolean) {
   return passed
-    ? <Check className="w-3 h-3 text-green-400 shrink-0" />
-    : <X className="w-3 h-3 text-red-400 shrink-0" />;
+    ? <Check className="w-3 h-3 text-[var(--color-success)] shrink-0" />
+    : <X className="w-3 h-3 text-destructive shrink-0" />;
 }
 
 function ConditionRow({ condition }: { condition: ExplainCondition }) {
@@ -23,7 +23,7 @@ function ConditionRow({ condition }: { condition: ExplainCondition }) {
         {condition.field}
       </span>
       <span className="text-muted-foreground/60">{condition.operator}</span>
-      <span className={condition.passed ? "text-emerald-400/80" : "text-red-400/80"}>
+      <span className={condition.passed ? "text-[var(--color-success)]/80" : "text-destructive/80"}>
         {condition.expected}
       </span>
       <span className="text-muted-foreground/40 ml-auto">

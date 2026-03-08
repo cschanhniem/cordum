@@ -87,7 +87,7 @@ export default function WorkflowsPage() {
           placeholder="Search workflows..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="h-8 w-full pl-8 pr-3 text-xs bg-surface-1 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+          className="h-8 w-full pl-8 pr-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
         />
       </div>
 
@@ -136,7 +136,7 @@ export default function WorkflowsPage() {
                 >
                   <td className="px-5 py-3">
                     <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-lg bg-cordum/10 border border-cordum/20 flex items-center justify-center shrink-0">
+                      <div className="w-8 h-8 rounded-2xl bg-cordum/10 border border-cordum/20 flex items-center justify-center shrink-0">
                         <GitBranch className="w-4 h-4 text-cordum" />
                       </div>
                       <div>

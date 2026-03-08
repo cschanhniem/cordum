@@ -584,7 +584,7 @@ export function GlobalRuleEditorDrawer({
                 />
               </PolicyField>
               {labelLineErrors.length > 0 && (
-                <ul className="space-y-1 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-[11px] text-red-200">
+                <ul className="space-y-1 rounded-md border border-destructive/30 bg-destructive/10 p-2 text-[11px] text-destructive">
                   {labelLineErrors.map((lineError) => (
                     <li key={lineError}>{lineError}</li>
                   ))}
@@ -720,7 +720,7 @@ export function GlobalRuleEditorDrawer({
               )}
             >
               {validationErrors.remediations && (
-                <p className="rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-[11px] text-red-200" role="alert">
+                <p className="rounded border border-destructive/30 bg-destructive/10 px-2 py-1 text-[11px] text-destructive" role="alert">
                   {validationErrors.remediations}
                 </p>
               )}
@@ -739,7 +739,7 @@ export function GlobalRuleEditorDrawer({
                       <button
                         type="button"
                         aria-label={`Delete remediation ${index + 1}`}
-                        className="rounded-md p-1 text-red-300 hover:bg-red-500/10"
+                        className="rounded-md p-1 text-destructive hover:bg-destructive/10"
                         onClick={() => setDraft((p) => ({ ...p, remediations: p.remediations.filter((_, i) => i !== index) }))}
                       >
                         <Trash2 className="h-3 w-3" />
@@ -779,10 +779,10 @@ export function GlobalRuleEditorDrawer({
 
         <div className="fixed bottom-0 right-0 z-[121] flex w-full max-w-xl flex-col gap-2 border-t border-border bg-surface-1 px-5 py-3">
           {showRemediationMismatchConfirm && (
-            <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-[11px] text-amber-200">
+            <div className="rounded-md border border-[var(--color-warning)]/30 bg-[var(--color-warning)]/10 p-2 text-[11px] text-[var(--color-warning)]">
               <p>
                 This rule has remediations configured but decision is{" "}
-                <span className="font-mono text-amber-100">{draft.decision}</span>. Remediations apply to deny decisions.
+                <span className="font-mono text-[var(--color-warning)]">{draft.decision}</span>. Remediations apply to deny decisions.
               </p>
               <div className="mt-2 flex flex-wrap gap-2">
                 <Button size="sm" onClick={() => commitSave(false)}>
@@ -797,11 +797,11 @@ export function GlobalRuleEditorDrawer({
           <div className="flex items-center justify-between">
             <div className="space-y-1">
               {hasValidationErrors && (
-                <p id={validationSummaryId} className="text-[11px] text-amber-200" aria-live="polite">
+                <p id={validationSummaryId} className="text-[11px] text-[var(--color-warning)]" aria-live="polite">
                   Fix highlighted validation errors before saving.
                 </p>
               )}
-              <span className="text-xs text-red-300" role="alert" aria-live="assertive">{error}</span>
+              <span className="text-xs text-destructive" role="alert" aria-live="assertive">{error}</span>
             </div>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>

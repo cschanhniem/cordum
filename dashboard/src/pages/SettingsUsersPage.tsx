@@ -96,13 +96,13 @@ export default function SettingsUsersPage() {
 
       {/* Tabs */}
       <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-1 p-1 rounded-lg bg-surface-1">
+        <div className="flex items-center gap-1 p-1 rounded-2xl bg-surface-1">
           {tabs.map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
               className={cn(
-                "px-4 py-1.5 text-xs font-medium rounded-md transition-colors capitalize",
+                "px-4 py-1.5 text-xs font-medium rounded-2xl transition-colors capitalize",
                 activeTab === tab ? "bg-cordum/10 text-cordum" : "text-muted-foreground hover:text-foreground",
               )}
             >
@@ -118,7 +118,7 @@ export default function SettingsUsersPage() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search users..."
-              className="h-8 w-full pl-9 pr-3 text-xs bg-surface-1 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+              className="h-8 w-full pl-9 pr-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
             />
           </div>
         )}
@@ -162,8 +162,8 @@ export default function SettingsUsersPage() {
                     </td>
                     <td className="px-4 py-3 text-xs text-muted-foreground">{user.lastActive}</td>
                     <td className="px-4 py-3 text-right">
-                      <button onClick={() => setDeleteTarget(user)} className="p-1.5 rounded hover:bg-red-500/10 transition-colors">
-                        <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                      <button onClick={() => setDeleteTarget(user)} className="p-1.5 rounded hover:bg-destructive/10 transition-colors">
+                        <Trash2 className="w-3.5 h-3.5 text-destructive" />
                       </button>
                     </td>
                   </motion.tr>
@@ -226,7 +226,7 @@ export default function SettingsUsersPage() {
               value={inviteUsername}
               onChange={(e) => setInviteUsername(e.target.value)}
               placeholder="jsmith"
-              className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+              className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
             />
           </div>
           <div>
@@ -238,7 +238,7 @@ export default function SettingsUsersPage() {
                 value={inviteEmail}
                 onChange={(e) => setInviteEmail(e.target.value)}
                 placeholder="user@company.com"
-                className="h-9 w-full pl-9 pr-3 text-sm bg-surface-2 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+                className="h-9 w-full pl-9 pr-3 text-sm bg-surface-2 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
               />
             </div>
           </div>
@@ -251,7 +251,7 @@ export default function SettingsUsersPage() {
                 value={invitePassword}
                 onChange={(e) => setInvitePassword(e.target.value)}
                 placeholder="Minimum 8 characters"
-                className="h-9 w-full pl-9 pr-3 text-sm bg-surface-2 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+                className="h-9 w-full pl-9 pr-3 text-sm bg-surface-2 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
               />
             </div>
           </div>
@@ -260,7 +260,7 @@ export default function SettingsUsersPage() {
             <select
               value={inviteRole}
               onChange={(e) => setInviteRole(e.target.value)}
-              className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+              className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-2xl text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
             >
               {ROLES.map(r => <option key={r.value} value={r.value}>{r.label} — {r.desc}</option>)}
             </select>

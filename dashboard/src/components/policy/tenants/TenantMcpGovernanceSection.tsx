@@ -24,8 +24,8 @@ function McpTag({
     <span
       className={
         tone === "allow"
-          ? "rounded bg-blue-500/20 px-2 py-0.5 text-[10px] font-mono text-blue-200"
-          : "rounded bg-red-500/20 px-2 py-0.5 text-[10px] font-mono text-red-200"
+          ? "rounded bg-[var(--color-info)]/20 px-2 py-0.5 text-[10px] font-mono text-[var(--color-info)]"
+          : "rounded bg-destructive/20 px-2 py-0.5 text-[10px] font-mono text-destructive"
       }
     >
       {value}

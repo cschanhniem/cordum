@@ -147,7 +147,7 @@ export default function SimulatorPage() {
       {loadError && (
         <InfoBanner variant="error" title="Unable to load simulation context">
           <p>{loadError.message}</p>
-          {loadError.details && <p className="mt-1 text-red-300/90">{loadError.details}</p>}
+          {loadError.details && <p className="mt-1 text-destructive">{loadError.details}</p>}
           <Button
             variant="outline"
             size="sm"
@@ -181,7 +181,7 @@ export default function SimulatorPage() {
               Bundle
               <select
                 id="simulator-bundle-select"
-                className="ml-2 h-8 rounded-md border border-border bg-surface-2 px-2 text-xs text-foreground"
+                className="ml-2 h-8 rounded-2xl border border-border bg-surface-2 px-2 text-xs text-foreground"
                 value={selectedBundleId}
                 onChange={(e) => setSelectedBundleId(e.target.value)}
               >
@@ -218,7 +218,7 @@ export default function SimulatorPage() {
                 <InfoBanner variant="error" title="Simulation failed">
                   {simulateError.message}
                   {simulateError.details && (
-                    <p className="mt-1 text-red-300/90">{simulateError.details}</p>
+                    <p className="mt-1 text-destructive">{simulateError.details}</p>
                   )}
                 </InfoBanner>
               )}

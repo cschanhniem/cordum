@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/registry"
+	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -22,7 +22,7 @@ func TestHandleStatusAndWorkers(t *testing.T) {
 	s.workers["w1"] = &pb.Heartbeat{WorkerId: "w1"}
 	s.workerMu.Unlock()
 
-	workersReq := httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil)
+	workersReq := adminCtx(httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil))
 	workersReq.Header.Set("X-Tenant-ID", "default")
 	workersRec := httptest.NewRecorder()
 	s.handleGetWorkers(workersRec, workersReq)
@@ -193,19 +193,19 @@ func TestHandleWorkersFiltersStaleEntries(t *testing.T) {
 	s.workerSeen["stale"] = now.Add(-(workerHeartbeatTTL + time.Second))
 	s.workerMu.Unlock()
 
-	workersReq := httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil)
+	workersReq := adminCtx(httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil))
 	workersReq.Header.Set("X-Tenant-ID", "default")
 	workersRec := httptest.NewRecorder()
 	s.handleGetWorkers(workersRec, workersReq)
 	if workersRec.Code != http.StatusOK {
 		t.Fatalf("unexpected workers status: %d", workersRec.Code)
 	}
-	var workers []*pb.Heartbeat
-	if err := json.NewDecoder(workersRec.Body).Decode(&workers); err != nil {
+	var workersResp struct{ Items []*pb.Heartbeat }
+	if err := json.NewDecoder(workersRec.Body).Decode(&workersResp); err != nil {
 		t.Fatalf("decode workers: %v", err)
 	}
-	if len(workers) != 1 || workers[0].WorkerId != "fresh" {
-		t.Fatalf("expected only fresh worker, got %+v", workers)
+	if len(workersResp.Items) != 1 || workersResp.Items[0].WorkerId != "fresh" {
+		t.Fatalf("expected only fresh worker, got %+v", workersResp.Items)
 	}
 
 	statusReq := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
@@ -246,7 +246,7 @@ func TestHandleGetWorkersFromRedisSnapshot(t *testing.T) {
 	s.workers["local-w"] = &pb.Heartbeat{WorkerId: "local-w"}
 	s.workerMu.Unlock()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil)
+	req := adminCtx(httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil))
 	rec := httptest.NewRecorder()
 	s.handleGetWorkers(rec, req)
 	if rec.Code != http.StatusOK {
@@ -271,12 +271,12 @@ func TestHandleGetWorkersFromRedisSnapshot(t *testing.T) {
 func TestHandleGetWorkersFallbackOnRedisError(t *testing.T) {
 	// Use stubMemStore that returns error on GetResult.
 	s := &server{
-		memStore: &errorMemStore{},
-		workers:  map[string]*pb.Heartbeat{"local-w1": {WorkerId: "local-w1"}},
+		memStore:   &errorMemStore{},
+		workers:    map[string]*pb.Heartbeat{"local-w1": {WorkerId: "local-w1"}},
 		workerSeen: map[string]time.Time{"local-w1": time.Now()},
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil)
+	req := adminCtx(httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil))
 	rec := httptest.NewRecorder()
 	s.handleGetWorkers(rec, req)
 	if rec.Code != http.StatusOK {
@@ -309,7 +309,7 @@ func TestHandleGetWorkersColdStart(t *testing.T) {
 	}
 	// In-memory workers is empty (simulating cold start).
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil)
+	req := adminCtx(httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil))
 	rec := httptest.NewRecorder()
 	s.handleGetWorkers(rec, req)
 	if rec.Code != http.StatusOK {

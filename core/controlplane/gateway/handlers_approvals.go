@@ -56,7 +56,7 @@ func (s *server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.workflowEng.CancelRun(r.Context(), runID); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeInternalError(w, r, "cancel run", err)
 		return
 	}
 	cancelRunWfName := ""

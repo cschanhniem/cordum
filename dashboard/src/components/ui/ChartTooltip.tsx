@@ -14,7 +14,7 @@ export interface ChartTooltipProps {
 export function ChartTooltip({ active, payload, label }: ChartTooltipProps) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-surface-2 border border-border rounded-lg p-3 shadow-xl">
+    <div className="rounded-2xl border border-border bg-[color:var(--surface-glass)] p-3 shadow-soft backdrop-blur-md">
       <p className="font-mono text-xs text-muted-foreground mb-1">{label}</p>
       {payload.map((entry, index) => (
         <div key={entry.name ?? index} className="flex items-center gap-2 text-xs">
@@ -30,7 +30,7 @@ export function ChartTooltip({ active, payload, label }: ChartTooltipProps) {
 export function ChartTooltipCompact({ active, payload, label }: ChartTooltipProps) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-surface-2 border border-border rounded-lg p-2 shadow-xl">
+    <div className="rounded-2xl border border-border bg-[color:var(--surface-glass)] p-2 shadow-soft backdrop-blur-md">
       <p className="font-mono text-[10px] text-muted-foreground mb-1">{label}</p>
       {payload.map((entry, index) => (
         <div key={entry.name ?? index} className="flex items-center gap-2 text-[10px]">

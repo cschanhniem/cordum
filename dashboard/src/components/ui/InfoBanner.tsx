@@ -14,10 +14,10 @@ interface InfoBannerProps {
 }
 
 const variantStyles: Record<BannerVariant, string> = {
-  info: "border-blue-500/20 bg-blue-500/10 text-blue-200 after:bg-blue-500",
-  warning: "border-amber-500/20 bg-amber-500/10 text-amber-200 after:bg-amber-500",
-  error: "border-red-500/20 bg-red-500/10 text-red-200 after:bg-red-500",
-  success: "border-emerald-500/20 bg-emerald-500/10 text-emerald-200 after:bg-emerald-500",
+  info: "border-[var(--color-info)]/20 bg-[var(--color-info)]/10 text-[var(--color-info)] after:bg-[var(--color-info)]",
+  warning: "border-[var(--color-warning)]/20 bg-[var(--color-warning)]/10 text-[var(--color-warning)] after:bg-[var(--color-warning)]",
+  error: "border-destructive/20 bg-destructive/10 text-destructive after:bg-destructive",
+  success: "border-[var(--color-success)]/20 bg-[var(--color-success)]/10 text-[var(--color-success)] after:bg-[var(--color-success)]",
   cordum: "border-cordum/20 bg-cordum/10 text-cordum-foreground after:bg-cordum",
 };
 

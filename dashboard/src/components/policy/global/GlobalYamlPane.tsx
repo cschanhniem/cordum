@@ -84,8 +84,8 @@ export function GlobalYamlPane({
         <div
           className={`rounded-lg border px-3 py-2 text-xs ${
             hasErrors
-              ? "border-red-500/30 bg-red-500/10 text-red-200"
-              : "border-amber-500/30 bg-amber-500/10 text-amber-100"
+              ? "border-destructive/30 bg-destructive/10 text-destructive"
+              : "border-[var(--color-warning)]/30 bg-[var(--color-warning)]/10 text-[var(--color-warning)]"
           }`}
         >
           <p className="mb-1 font-medium">

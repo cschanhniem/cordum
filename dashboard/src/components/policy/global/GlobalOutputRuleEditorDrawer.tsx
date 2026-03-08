@@ -178,7 +178,7 @@ export function GlobalOutputRuleEditorDrawer({
         </div>
 
         <div className="fixed bottom-0 right-0 z-[126] flex w-full max-w-lg items-center justify-between border-t border-border bg-surface-1 px-5 py-3">
-          <span className="text-xs text-red-300">{error}</span>
+          <span className="text-xs text-destructive">{error}</span>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
             <Button

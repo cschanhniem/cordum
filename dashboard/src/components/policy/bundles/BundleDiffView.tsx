@@ -40,8 +40,8 @@ function computeDiff(published: string, draft: string): DiffLine[] {
 
 const LINE_STYLES: Record<DiffLine["type"], string> = {
   unchanged: "text-muted-foreground",
-  added: "bg-green-500/10 text-green-300",
-  removed: "bg-red-500/10 text-red-300 line-through",
+  added: "bg-[var(--color-success)]/10 text-[var(--color-success)]",
+  removed: "bg-destructive/10 text-destructive line-through",
 };
 
 const LINE_PREFIX: Record<DiffLine["type"], string> = {

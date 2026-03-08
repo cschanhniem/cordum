@@ -15,8 +15,8 @@ function HostTag({
     <span
       className={
         tone === "allow"
-          ? "rounded bg-emerald-500/20 px-2 py-0.5 text-[10px] font-mono text-emerald-200"
-          : "rounded bg-red-500/20 px-2 py-0.5 text-[10px] font-mono text-red-200"
+          ? "rounded bg-[var(--color-success)]/20 px-2 py-0.5 text-[10px] font-mono text-[var(--color-success)]"
+          : "rounded bg-destructive/20 px-2 py-0.5 text-[10px] font-mono text-destructive"
       }
     >
       {value}

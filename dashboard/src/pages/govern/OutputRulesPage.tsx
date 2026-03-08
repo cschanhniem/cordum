@@ -120,7 +120,7 @@ export default function OutputRulesPage() {
           Bundle
           <select
             id="govern-output-rules-bundle-select"
-            className="ml-2 h-8 rounded-md border border-border bg-surface-2 px-2 text-xs text-foreground"
+            className="ml-2 h-8 rounded-2xl border border-border bg-surface-2 px-2 text-xs text-foreground"
             value={selectedBundleId}
             onChange={(event) => setSelectedBundleId(event.target.value)}
           >
@@ -144,10 +144,10 @@ export default function OutputRulesPage() {
       </div>
 
       {saveError && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200" role="alert">
+        <div className="rounded-2xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive" role="alert">
           <div className="mb-1 font-semibold">Output policy action failed</div>
           <p>{saveError.message}</p>
-          {saveError.details && <p className="mt-1 text-red-300/90">{saveError.details}</p>}
+          {saveError.details && <p className="mt-1 text-destructive">{saveError.details}</p>}
         </div>
       )}
 
@@ -156,7 +156,7 @@ export default function OutputRulesPage() {
         outputRules={outputRules}
       />
       {!canWriteOutputRules && (
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+        <div className="rounded-2xl border border-[var(--color-warning)]/30 bg-[var(--color-warning)]/10 px-3 py-2 text-xs text-[var(--color-warning)]">
           Viewer mode: output policy controls are read-only. You can inspect rules and open read-only details.
         </div>
       )}

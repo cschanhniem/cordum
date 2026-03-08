@@ -52,13 +52,13 @@ export default function PacksPage() {
 
       {/* Tabs + Search */}
       <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-1 p-1 rounded-lg bg-surface-1">
+        <div className="flex items-center gap-1 p-1 rounded-2xl bg-surface-1">
           {tabs.map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
               className={cn(
-                "px-4 py-1.5 text-xs font-medium rounded-md transition-colors capitalize",
+                "px-4 py-1.5 text-xs font-medium rounded-2xl transition-colors capitalize",
                 activeTab === tab ? "bg-cordum/10 text-cordum" : "text-muted-foreground hover:text-foreground",
               )}
             >
@@ -73,7 +73,7 @@ export default function PacksPage() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search packs..."
-            className="h-8 w-full pl-9 pr-3 text-xs bg-surface-1 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+            className="h-8 w-full pl-9 pr-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
           />
         </div>
       </div>
@@ -85,7 +85,7 @@ export default function PacksPage() {
         </div>
       ) : error ? (
         <div className="instrument-card p-8 text-center">
-          <p className="text-sm text-red-400">Failed to load packs</p>
+          <p className="text-sm text-destructive">Failed to load packs</p>
           <Button variant="outline" size="sm" className="mt-3" onClick={() => activeTab === "installed" ? refetchPacks() : refetchMarket()}>
             <RefreshCw className="w-3 h-3 mr-1" />Retry
           </Button>
@@ -239,7 +239,7 @@ function MarketplacePackCard({ pack, index, isInstalling, onInstall }: {
       {(pack.riskTags ?? []).length > 0 && (
         <div className="flex flex-wrap gap-1 mb-3">
           {(pack.riskTags ?? []).map(t => (
-            <span key={t} className="inline-flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400">
+            <span key={t} className="inline-flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded bg-[var(--color-warning)]/10 text-[var(--color-warning)]">
               <AlertTriangle className="w-2.5 h-2.5" />{t}
             </span>
           ))}

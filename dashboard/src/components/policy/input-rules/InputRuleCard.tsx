@@ -19,15 +19,15 @@ interface InputRuleCardProps {
 function decisionClasses(decision: GlobalPolicyInputRule["decision"]): string {
   switch (decision) {
     case "allow":
-      return "bg-emerald-500/15 text-emerald-300 border-emerald-500/30";
+      return "bg-[var(--color-success)]/15 text-[var(--color-success)] border-[var(--color-success)]/30";
     case "deny":
-      return "bg-red-500/15 text-red-300 border-red-500/30";
+      return "bg-destructive/15 text-destructive border-destructive/30";
     case "require_approval":
-      return "bg-amber-500/15 text-amber-300 border-amber-500/30";
+      return "bg-[var(--color-warning)]/15 text-[var(--color-warning)] border-[var(--color-warning)]/30";
     case "allow_with_constraints":
-      return "bg-blue-500/15 text-blue-300 border-blue-500/30";
+      return "bg-[var(--color-info)]/15 text-[var(--color-info)] border-[var(--color-info)]/30";
     default:
-      return "bg-purple-500/15 text-purple-300 border-purple-500/30";
+      return "bg-primary/15 text-primary border-primary/30";
   }
 }
 
@@ -137,7 +137,7 @@ export function InputRuleCard({
           {canEdit && (
             <button
               aria-label={`Delete ${rule.id}`}
-              className="rounded p-1 text-red-300 hover:bg-red-500/10"
+              className="rounded p-1 text-destructive hover:bg-destructive/10"
               onClick={onDelete}
             >
               <Trash2 className="h-3.5 w-3.5" />

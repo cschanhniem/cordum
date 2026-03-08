@@ -118,7 +118,7 @@ func (s *server) handleAcquireLock(w http.ResponseWriter, r *http.Request) {
 	scopedResource := tenantLockResource(tenantID, req.Resource)
 	lock, ok, err := s.lockStore.Acquire(r.Context(), scopedResource, req.Owner, mode, time.Duration(req.TTLms)*time.Millisecond)
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeInternalError(w, r, "acquire lock", err)
 		return
 	}
 	if !ok {
@@ -156,7 +156,7 @@ func (s *server) handleReleaseLock(w http.ResponseWriter, r *http.Request) {
 	scopedResource := tenantLockResource(tenantID, req.Resource)
 	lock, ok, err := s.lockStore.Release(r.Context(), scopedResource, req.Owner)
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeInternalError(w, r, "release lock", err)
 		return
 	}
 	if !ok {
@@ -196,7 +196,7 @@ func (s *server) handleRenewLock(w http.ResponseWriter, r *http.Request) {
 	scopedResource := tenantLockResource(tenantID, req.Resource)
 	lock, ok, err := s.lockStore.Renew(r.Context(), scopedResource, req.Owner, time.Duration(req.TTLms)*time.Millisecond)
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeInternalError(w, r, "renew lock", err)
 		return
 	}
 	if !ok {

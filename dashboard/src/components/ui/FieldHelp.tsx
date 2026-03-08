@@ -45,7 +45,7 @@ export function FieldHelp({
       <span>{label}</span>
       {required && (
         <>
-          <span aria-hidden="true" className="text-red-300">
+          <span aria-hidden="true" className="text-destructive">
             *
           </span>
           <span className="sr-only">(required)</span>
@@ -57,7 +57,7 @@ export function FieldHelp({
       <span>{label}</span>
       {required && (
         <>
-          <span aria-hidden="true" className="text-red-300">
+          <span aria-hidden="true" className="text-destructive">
             *
           </span>
           <span className="sr-only">(required)</span>
@@ -107,7 +107,7 @@ export function FieldHelp({
       )}
       {control}
       {error && (
-        <p id={errorId} className="text-[11px] text-red-300" role="alert">
+        <p id={errorId} className="text-[11px] text-destructive" role="alert">
           {error}
         </p>
       )}

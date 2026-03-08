@@ -65,13 +65,13 @@ function severityVariant(severity: string): "danger" | "warning" | "info" | "mut
 function severityColor(severity: string): string {
   switch (severity) {
     case "critical":
-      return "text-red-400";
+      return "text-destructive";
     case "high":
-      return "text-red-400";
+      return "text-destructive";
     case "medium":
-      return "text-amber-400";
+      return "text-[var(--color-warning)]";
     case "low":
-      return "text-blue-400";
+      return "text-[var(--color-info)]";
     default:
       return "text-muted-foreground";
   }
@@ -80,13 +80,13 @@ function severityColor(severity: string): string {
 function severityBgColor(severity: string): string {
   switch (severity) {
     case "critical":
-      return "bg-red-500/10";
+      return "bg-destructive/10";
     case "high":
-      return "bg-red-500/10";
+      return "bg-destructive/10";
     case "medium":
-      return "bg-amber-500/10";
+      return "bg-[var(--color-warning)]/10";
     case "low":
-      return "bg-blue-500/10";
+      return "bg-[var(--color-info)]/10";
     default:
       return "bg-surface-2";
   }
@@ -112,10 +112,10 @@ function FindingRow({ finding }: { finding: OutputFinding }) {
         className={cn(
           "mt-0.5 w-2 h-2 rounded-full shrink-0",
           finding.severity === "critical" || finding.severity === "high"
-            ? "bg-red-400"
+            ? "bg-destructive"
             : finding.severity === "medium"
-              ? "bg-amber-400"
-              : "bg-blue-400",
+              ? "bg-[var(--color-warning)]"
+              : "bg-[var(--color-info)]",
         )}
       />
       <div className="flex-1 min-w-0">
@@ -179,9 +179,9 @@ function QuarantineItemCard({
       transition={{ duration: 0.25 }}
       className={cn(
         "instrument-card overflow-hidden transition-colors",
-        highestSeverity === "critical" && "border-red-500/30",
-        highestSeverity === "high" && "border-red-500/20",
-        highestSeverity === "medium" && "border-amber-500/20",
+        highestSeverity === "critical" && "border-destructive/30",
+        highestSeverity === "high" && "border-destructive/20",
+        highestSeverity === "medium" && "border-[var(--color-warning)]/20",
       )}
     >
       {/* Header row */}
@@ -197,7 +197,7 @@ function QuarantineItemCard({
               {highestSeverity}
             </StatusBadge>
             {criticalCount > 0 && (
-              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-red-500/10 text-red-400">
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-destructive/10 text-destructive">
                 {criticalCount} critical finding{criticalCount > 1 ? "s" : ""}
               </span>
             )}
@@ -415,21 +415,21 @@ export default function QuarantinePage() {
             <MetricValue
               label="Queue size"
               value={items.length}
-              icon={<ShieldAlert className={cn("w-4 h-4", items.length > 0 ? "text-amber-400" : "text-muted-foreground")} />}
+              icon={<ShieldAlert className={cn("w-4 h-4", items.length > 0 ? "text-[var(--color-warning)]" : "text-muted-foreground")} />}
             />
           </InstrumentCard>
           <InstrumentCard accent={highSeverityCount > 0 ? "danger" : "muted"}>
             <MetricValue
               label="High severity"
               value={highSeverityCount}
-              icon={<AlertTriangle className={cn("w-4 h-4", highSeverityCount > 0 ? "text-red-400" : "text-muted-foreground")} />}
+              icon={<AlertTriangle className={cn("w-4 h-4", highSeverityCount > 0 ? "text-destructive" : "text-muted-foreground")} />}
             />
           </InstrumentCard>
           <InstrumentCard accent="info">
             <MetricValue
               label="Checks (24h)"
               value={stats?.totalChecks24h ?? 0}
-              icon={<Gauge className="w-4 h-4 text-blue-400" />}
+              icon={<Gauge className="w-4 h-4 text-[var(--color-info)]" />}
             />
           </InstrumentCard>
           <InstrumentCard accent="cordum">
@@ -471,10 +471,10 @@ export default function QuarantinePage() {
                 placeholder="Search by ID, topic, finding..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="h-8 w-full pl-8 pr-3 text-xs bg-surface-1 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+                className="h-8 w-full pl-8 pr-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
               />
             </div>
-            <div className="flex items-center gap-1 bg-surface-1 border border-border rounded-md p-0.5">
+            <div className="flex items-center gap-1 bg-surface-1 border border-border rounded-2xl p-0.5">
               {(
                 [
                   { id: "all", label: "All" },

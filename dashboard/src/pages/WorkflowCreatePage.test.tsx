@@ -15,7 +15,7 @@ describe("WorkflowCreatePage node-type safety", () => {
       expect(meta.type).toBe("unknown");
       expect(meta.label).toBe("Unknown");
       expect(meta.icon).toBeDefined();
-      expect(meta.color).toContain("red");
+      expect(meta.color).toContain("destructive");
     });
 
     it("returns UNKNOWN fallback for empty string", () => {

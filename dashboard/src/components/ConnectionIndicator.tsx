@@ -1,42 +1,54 @@
-import { useState, useEffect } from "react";
 import { Wifi, WifiOff } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useEventStore } from "../state/events";
+import { useSyncExternalStore } from "react";
 
 type ConnectionStatus = "connected" | "reconnecting" | "disconnected";
 
-export function ConnectionIndicator() {
-  const [status, setStatus] = useState<ConnectionStatus>("connected");
+const subscribeBrowserOnline = (cb: () => void) => {
+  window.addEventListener("online", cb);
+  window.addEventListener("offline", cb);
+  return () => {
+    window.removeEventListener("online", cb);
+    window.removeEventListener("offline", cb);
+  };
+};
+const getBrowserOnline = () => navigator.onLine;
 
-  // Listen for online/offline events as a proxy for real WebSocket state
-  useEffect(() => {
-    const goOnline = () => setStatus("connected");
-    const goOffline = () => setStatus("disconnected");
-    window.addEventListener("online", goOnline);
-    window.addEventListener("offline", goOffline);
-    return () => {
-      window.removeEventListener("online", goOnline);
-      window.removeEventListener("offline", goOffline);
-    };
-  }, []);
+export function ConnectionIndicator() {
+  const wsStatus = useEventStore((s) => s.status);
+  const browserOnline = useSyncExternalStore(subscribeBrowserOnline, getBrowserOnline);
+
+  // Browser offline overrides everything; otherwise map WS status
+  let status: ConnectionStatus;
+  if (!browserOnline) {
+    status = "disconnected";
+  } else if (wsStatus === "connected") {
+    status = "connected";
+  } else if (wsStatus === "connecting" || wsStatus === "reconnecting") {
+    status = "reconnecting";
+  } else {
+    status = "disconnected";
+  }
 
   const config = {
     connected: {
       icon: Wifi,
       label: "All Systems Nominal",
-      dotClass: "bg-emerald-400 status-pulse",
-      badgeClass: "bg-emerald-500/15 text-emerald-400 border-emerald-500/20",
+      dotClass: "bg-[var(--color-success)] status-pulse",
+      badgeClass: "bg-[var(--color-success)]/15 text-[var(--color-success)] border-[var(--color-success)]/20",
     },
     reconnecting: {
       icon: Wifi,
       label: "Reconnecting...",
-      dotClass: "bg-amber-400 animate-pulse",
-      badgeClass: "bg-amber-500/15 text-amber-400 border-amber-500/20",
+      dotClass: "bg-[var(--color-warning)] animate-pulse",
+      badgeClass: "bg-[var(--color-warning)]/15 text-[var(--color-warning)] border-[var(--color-warning)]/20",
     },
     disconnected: {
       icon: WifiOff,
       label: "Disconnected",
-      dotClass: "bg-red-400",
-      badgeClass: "bg-red-500/15 text-red-400 border-red-500/20",
+      dotClass: "bg-destructive",
+      badgeClass: "bg-destructive/15 text-destructive border-destructive/20",
     },
   };
 

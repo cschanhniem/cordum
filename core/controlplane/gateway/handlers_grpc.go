@@ -313,7 +313,8 @@ func (s *server) requireRoleGRPC(ctx context.Context, roles ...string) error {
 			return nil
 		}
 	}
-	return status.Errorf(codes.PermissionDenied, "role %s not permitted", role)
+	logging.Warn("api-gateway", "gRPC permission denied", "role", role, "required", roles)
+	return status.Error(codes.PermissionDenied, "permission denied")
 }
 
 func resolveGRPCTenant(ctx context.Context, requested, fallback string) (string, error) {

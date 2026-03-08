@@ -31,7 +31,7 @@ export function InstrumentCard({
     <div
       onClick={onClick}
       className={cn(
-        "instrument-card p-5 flex flex-col",
+        "instrument-card flex flex-col",
         statusClass[accent],
         hoverable && "instrument-card-hover cursor-pointer",
         onClick && "cursor-pointer",

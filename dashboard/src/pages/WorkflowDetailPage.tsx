@@ -1,6 +1,6 @@
 /*
  * DESIGN: "Control Surface" — Workflow Detail
- * Matches cordumds-gj5mw4zm.manus.space showcase patterns
+ * Visual DAG with step detail panel on click
  */
 import { useParams, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
@@ -8,31 +8,47 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Skeleton } from "@/components/ui/Skeleton";
-import { ArrowLeft, Play, Edit, GitBranch, Workflow, Eye, Shield, Save } from "lucide-react";
+import { ArrowLeft, Play, Edit, GitBranch, Workflow, Eye, Shield, Save, Clock, CheckCircle2, XCircle, Layers } from "lucide-react";
+import { RunDAG } from "@/components/workflows/dag/RunDAG";
+import { NodeDetailPanel } from "@/components/workflows/dag/NodeDetailPanel";
 import { useMemo, useState } from "react";
 import { cn, formatRelativeTime, clickableRowProps } from "@/lib/utils";
 import { useWorkflow, useRuns, useStartRun, useUpdateWorkflow } from "@/hooks/useWorkflows";
 import { useRunStream } from "@/hooks/useRunStream";
 import { toast } from "sonner";
-import type { PolicyConstraints, WorkflowRun } from "@/api/types";
+import type { PolicyConstraints, WorkflowRun, WorkflowStep } from "@/api/types";
 import { WorkflowPolicyOverrides, extractConstraints } from "@/components/workflows/WorkflowPolicyOverrides";
 import { WorkflowPolicyOverrideRules, extractWorkflowRules } from "@/components/workflows/WorkflowPolicyOverrideRules";
-import { PageHeader } from "@/components/layout/PageHeader";
-import { InstrumentCard, InstrumentCardHeader } from "@/components/ui/InstrumentCard";
+import { InstrumentCardHeader } from "@/components/ui/InstrumentCard";
 
 export default function WorkflowDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState("steps");
+  const [activeTab, setActiveTab] = useState("diagram");
   const startRun = useStartRun();
   const updateWorkflow = useUpdateWorkflow();
   const [constraintDraft, setConstraintDraft] = useState<PolicyConstraints | null>(null);
+  const [selectedStep, setSelectedStep] = useState<WorkflowStep | null>(null);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
-  // Subscribe to WebSocket run events — patches React Query cache for instant status updates
   useRunStream(null);
 
   const { data: workflow, isLoading } = useWorkflow(id);
   const { data: runs } = useRuns(id);
+
+  // Find the selected run for DAG overlay
+  const selectedRun = useMemo(
+    () => (selectedRunId ? (runs ?? []).find((r: WorkflowRun) => r.id === selectedRunId) ?? null : null),
+    [runs, selectedRunId],
+  );
+
+  // Latest run for quick-select
+  const latestRun = useMemo(() => {
+    if (!runs?.length) return null;
+    return [...runs].sort((a: WorkflowRun, b: WorkflowRun) =>
+      new Date(b.startedAt ?? b.createdAt ?? 0).getTime() - new Date(a.startedAt ?? a.createdAt ?? 0).getTime()
+    )[0] as WorkflowRun;
+  }, [runs]);
 
   const savedConstraints = useMemo(
     () => extractConstraints(workflow?.config, workflow?.metadata),
@@ -60,6 +76,11 @@ export default function WorkflowDetailPage() {
     }
   };
 
+  const handleNodeClick = (stepId: string) => {
+    const step = (workflow?.steps ?? []).find((s) => s.id === stepId) ?? null;
+    setSelectedStep(step);
+  };
+
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -84,21 +105,26 @@ export default function WorkflowDetailPage() {
     );
   }
 
+  const steps = workflow.steps ?? [];
+  const runCount = runs?.length ?? 0;
+  const succeededRuns = (runs ?? []).filter((r: WorkflowRun) => r.status === "succeeded").length;
+  const failedRuns = (runs ?? []).filter((r: WorkflowRun) => r.status === "failed").length;
+
   const tabs = [
-    { id: "steps", label: "Steps", count: workflow.steps?.length },
-    { id: "runs", label: "Runs", count: runs?.length },
+    { id: "diagram", label: "Diagram", count: steps.length },
+    { id: "runs", label: "Runs", count: runCount },
     { id: "config", label: "Configuration" },
     { id: "policy", label: "Policy" },
   ];
 
   return (
-    <div className="space-y-6">
-      {/* Header — showcase style */}
+    <div className="space-y-5">
+      {/* Header */}
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-3">
           <button
             onClick={() => navigate("/workflows")}
-            className="p-2 rounded-md hover:bg-surface-2 transition-colors"
+            className="p-2 rounded-full hover:bg-surface-2 transition-colors"
           >
             <ArrowLeft className="w-4 h-4 text-muted-foreground" />
           </button>
@@ -109,12 +135,14 @@ export default function WorkflowDetailPage() {
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-lg font-bold font-display text-foreground">{workflow.name}</h1>
-                <StatusBadge variant="healthy">
-                  active
-                </StatusBadge>
-                <span className="text-xs font-mono text-muted-foreground px-1.5 py-0.5 rounded bg-surface-2">v{workflow.version ?? 1}</span>
+                <StatusBadge variant="healthy">active</StatusBadge>
+                <span className="text-xs font-mono text-muted-foreground px-1.5 py-0.5 rounded bg-surface-2">
+                  v{workflow.version ?? 1}
+                </span>
               </div>
-              {workflow.description && <p className="text-sm text-muted-foreground mt-0.5">{workflow.description}</p>}
+              {workflow.description && (
+                <p className="text-sm text-muted-foreground mt-0.5">{workflow.description}</p>
+              )}
             </div>
           </div>
         </div>
@@ -127,13 +155,19 @@ export default function WorkflowDetailPage() {
             variant="primary"
             size="sm"
             loading={startRun.isPending}
-            onClick={() => { if (!id) return; startRun.mutate({ workflowId: id }, {
-              onSuccess: (data) => {
-                toast.success("Workflow run started");
-                if (data?.run_id) navigate(`/workflows/${id}/runs/${data.run_id}`);
-              },
-              onError: () => toast.error("Failed to start workflow run"),
-            }); }}
+            onClick={() => {
+              if (!id) return;
+              startRun.mutate(
+                { workflowId: id },
+                {
+                  onSuccess: (data) => {
+                    toast.success("Workflow run started");
+                    if (data?.run_id) navigate(`/workflows/${id}/runs/${data.run_id}`);
+                  },
+                  onError: () => toast.error("Failed to start workflow run"),
+                },
+              );
+            }}
           >
             <Play className="w-3 h-3 mr-1" />
             Run
@@ -141,8 +175,38 @@ export default function WorkflowDetailPage() {
         </div>
       </div>
 
-      {/* Tabs — showcase style */}
-      <div className="flex items-center gap-1 bg-surface-1 border border-border rounded-md p-0.5 w-fit">
+      {/* Quick Stats */}
+      <div className="flex items-center gap-6 text-xs text-muted-foreground">
+        <span className="flex items-center gap-1.5">
+          <Layers className="w-3.5 h-3.5" />
+          {steps.length} step{steps.length !== 1 ? "s" : ""}
+        </span>
+        <span className="flex items-center gap-1.5">
+          <Play className="w-3.5 h-3.5" />
+          {runCount} run{runCount !== 1 ? "s" : ""}
+        </span>
+        {succeededRuns > 0 && (
+          <span className="flex items-center gap-1.5 text-[var(--color-success)]">
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            {succeededRuns} succeeded
+          </span>
+        )}
+        {failedRuns > 0 && (
+          <span className="flex items-center gap-1.5 text-destructive">
+            <XCircle className="w-3.5 h-3.5" />
+            {failedRuns} failed
+          </span>
+        )}
+        {latestRun?.startedAt && (
+          <span className="flex items-center gap-1.5">
+            <Clock className="w-3.5 h-3.5" />
+            Last run {formatRelativeTime(latestRun.startedAt)}
+          </span>
+        )}
+      </div>
+
+      {/* Tabs */}
+      <div className="flex items-center gap-1 bg-surface-1 border border-border rounded-2xl p-0.5 w-fit">
         {tabs.map((tab) => (
           <button
             key={tab.id}
@@ -156,65 +220,90 @@ export default function WorkflowDetailPage() {
           >
             {tab.label}
             {tab.count !== undefined && tab.count > 0 && (
-              <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-surface-2">{tab.count}</span>
+              <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-surface-2">
+                {tab.count}
+              </span>
             )}
           </button>
         ))}
       </div>
 
-      {/* Steps Tab */}
-      {activeTab === "steps" && (
-        (workflow.steps?.length ?? 0) === 0 ? (
+      {/* ============ DIAGRAM TAB ============ */}
+      {activeTab === "diagram" && (
+        steps.length === 0 ? (
           <EmptyState
             icon={<GitBranch className="w-5 h-5" />}
             title="No steps defined"
             description="Edit this workflow to add steps"
+            action={
+              <Button variant="outline" size="sm" onClick={() => navigate(`/workflows/${id}/edit`)}>
+                <Edit className="w-3 h-3 mr-1" />
+                Open Editor
+              </Button>
+            }
           />
         ) : (
-          <motion.div
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3 }}
-            className="instrument-card overflow-hidden"
-          >
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-border bg-surface-0">
-                  <th className="text-center px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider w-12">#</th>
-                  <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Step Name</th>
-                  <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider w-24">Type</th>
-                  <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Topic</th>
-                  <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Depends On</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(workflow.steps ?? []).map((s, i) => (
-                  <tr key={s.id} className="border-b border-border hover:bg-surface-1 transition-colors">
-                    <td className="px-5 py-3 text-center font-mono text-xs text-muted-foreground">{i + 1}</td>
-                    <td className="px-5 py-3 text-sm font-medium text-foreground">{s.name}</td>
-                    <td className="px-5 py-3">
-                      <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-surface-2 border border-border text-muted-foreground">{s.type}</span>
-                    </td>
-                    <td className="px-5 py-3 font-mono text-xs text-muted-foreground">{s.topic ?? "—"}</td>
-                    <td className="px-5 py-3">
-                      <div className="flex gap-1">
-                        {(s.depends_on ?? []).map((d) => (
-                          <span key={d} className="text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-cordum/10 text-cordum border border-cordum/20">{d}</span>
-                        ))}
-                        {(!s.depends_on || s.depends_on.length === 0) && <span className="text-xs text-muted-foreground">—</span>}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </motion.div>
+          <>
+            {/* Run overlay selector */}
+            {runCount > 0 && (
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">
+                  Overlay run:
+                </span>
+                <select
+                  value={selectedRunId ?? ""}
+                  onChange={(e) => setSelectedRunId(e.target.value || null)}
+                  className="h-7 px-2 text-xs bg-surface-1 border border-border rounded-xl text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+                >
+                  <option value="">Blueprint (no run)</option>
+                  {(runs ?? []).map((r: WorkflowRun) => (
+                    <option key={r.id} value={r.id}>
+                      {r.id.slice(0, 12)} — {r.status}
+                      {r.startedAt ? ` (${formatRelativeTime(r.startedAt)})` : ""}
+                    </option>
+                  ))}
+                </select>
+                {latestRun && !selectedRunId && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-[10px] h-7"
+                    onClick={() => setSelectedRunId(latestRun.id)}
+                  >
+                    Show latest
+                  </Button>
+                )}
+              </div>
+            )}
+
+            {/* DAG */}
+            <motion.div
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3 }}
+              className="instrument-card p-0 overflow-hidden"
+              style={{ height: 520 }}
+            >
+              <RunDAG
+                workflow={workflow}
+                run={selectedRun}
+                onNodeClick={handleNodeClick}
+              />
+            </motion.div>
+
+            {/* Step detail panel — slides in from right */}
+            <NodeDetailPanel
+              step={selectedStep}
+              run={selectedRun}
+              onClose={() => setSelectedStep(null)}
+            />
+          </>
         )
       )}
 
-      {/* Runs Tab */}
+      {/* ============ RUNS TAB ============ */}
       {activeTab === "runs" && (
-        (runs?.length ?? 0) === 0 ? (
+        runCount === 0 ? (
           <EmptyState
             icon={<Play className="w-5 h-5" />}
             title="No runs yet"
@@ -224,13 +313,19 @@ export default function WorkflowDetailPage() {
                 variant="primary"
                 size="sm"
                 loading={startRun.isPending}
-                onClick={() => { if (!id) return; startRun.mutate({ workflowId: id }, {
-                  onSuccess: (data) => {
-                    toast.success("Workflow run started");
-                    if (data?.run_id) navigate(`/workflows/${id}/runs/${data.run_id}`);
-                  },
-                  onError: () => toast.error("Failed to start workflow run"),
-                }); }}
+                onClick={() => {
+                  if (!id) return;
+                  startRun.mutate(
+                    { workflowId: id },
+                    {
+                      onSuccess: (data) => {
+                        toast.success("Workflow run started");
+                        if (data?.run_id) navigate(`/workflows/${id}/runs/${data.run_id}`);
+                      },
+                      onError: () => toast.error("Failed to start workflow run"),
+                    },
+                  );
+                }}
               >
                 <Play className="w-3 h-3 mr-1" />
                 Run Now
@@ -242,7 +337,7 @@ export default function WorkflowDetailPage() {
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.3 }}
-            className="instrument-card overflow-hidden"
+            className="instrument-card p-0 overflow-hidden"
           >
             <table className="w-full">
               <thead>
@@ -251,7 +346,7 @@ export default function WorkflowDetailPage() {
                   <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Run ID</th>
                   <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Started</th>
                   <th className="text-right px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Completed</th>
-                  <th className="px-5 py-3 w-10"></th>
+                  <th className="px-5 py-3 w-20 text-right text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -271,12 +366,26 @@ export default function WorkflowDetailPage() {
                       </StatusBadge>
                     </td>
                     <td className="px-5 py-3 font-mono text-sm text-cordum">{r.id.slice(0, 16)}</td>
-                    <td className="px-5 py-3 text-xs text-muted-foreground font-mono">{r.startedAt ? formatRelativeTime(r.startedAt) : "—"}</td>
-                    <td className="px-5 py-3 text-right text-xs text-muted-foreground font-mono">{r.completedAt ? formatRelativeTime(r.completedAt) : "—"}</td>
-                    <td className="px-5 py-3">
-                      <button className="p-1 rounded hover:bg-surface-2 transition-colors">
-                        <Eye className="w-3.5 h-3.5 text-muted-foreground" />
-                      </button>
+                    <td className="px-5 py-3 text-xs text-muted-foreground font-mono">
+                      {r.startedAt ? formatRelativeTime(r.startedAt) : "—"}
+                    </td>
+                    <td className="px-5 py-3 text-right text-xs text-muted-foreground font-mono">
+                      {r.completedAt ? formatRelativeTime(r.completedAt) : "—"}
+                    </td>
+                    <td className="px-5 py-3 text-right">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-[10px]"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedRunId(r.id);
+                          setActiveTab("diagram");
+                        }}
+                      >
+                        <Eye className="w-3 h-3 mr-1" />
+                        View DAG
+                      </Button>
                     </td>
                   </tr>
                 ))}
@@ -286,7 +395,7 @@ export default function WorkflowDetailPage() {
         )
       )}
 
-      {/* Config Tab */}
+      {/* ============ CONFIG TAB ============ */}
       {activeTab === "config" && (
         <motion.div
           initial={{ opacity: 0, y: 12 }}
@@ -301,17 +410,18 @@ export default function WorkflowDetailPage() {
         </motion.div>
       )}
 
-      {/* Policy Tab */}
+      {/* ============ POLICY TAB ============ */}
       {activeTab === "policy" && (
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }} className="space-y-4">
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+          className="space-y-4"
+        >
           {constraintsDirty && (
-            <div className="flex items-center justify-between rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
-              <span className="text-xs text-amber-200">Unsaved constraint changes</span>
-              <Button
-                size="sm"
-                loading={updateWorkflow.isPending}
-                onClick={() => void saveConstraints()}
-              >
+            <div className="flex items-center justify-between rounded-2xl border border-[var(--color-warning)]/30 bg-[var(--color-warning)]/10 px-3 py-2">
+              <span className="text-xs text-[var(--color-warning)]">Unsaved constraint changes</span>
+              <Button size="sm" loading={updateWorkflow.isPending} onClick={() => void saveConstraints()}>
                 <Save className="w-3 h-3 mr-1" />
                 Save Overrides
               </Button>
@@ -333,14 +443,16 @@ export default function WorkflowDetailPage() {
               subtitle="Each step inherits workflow-level constraints."
               icon={<Shield className="w-4 h-4" />}
             />
-            {(workflow.steps?.length ?? 0) === 0 ? (
+            {steps.length === 0 ? (
               <p className="text-xs text-muted-foreground">No steps defined in this workflow.</p>
             ) : (
               <div className="space-y-2 mt-1">
-                {(workflow.steps ?? []).map((step) => (
+                {steps.map((step) => (
                   <div key={step.id} className="surface-inset p-3 flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-surface-2 border border-border text-muted-foreground">{step.type}</span>
+                      <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-surface-2 border border-border text-muted-foreground">
+                        {step.type}
+                      </span>
                       <span className="text-sm font-medium text-foreground">{step.name}</span>
                     </div>
                     <span className="text-[10px] font-mono text-muted-foreground">inherits workflow policy</span>
@@ -359,7 +471,8 @@ export default function WorkflowDetailPage() {
             />
             <div className="mt-1">
               <Button variant="outline" size="sm" onClick={() => navigate("/govern/input-rules")}>
-                <Shield className="w-3 h-3 mr-1" />View Global Rules
+                <Shield className="w-3 h-3 mr-1" />
+                View Global Rules
               </Button>
             </div>
           </div>

@@ -3,46 +3,57 @@ import { motion, AnimatePresence } from "framer-motion";
 import { AlertTriangle, X } from "lucide-react";
 import { useDialogA11y } from "@/hooks/useDialogA11y";
 
-interface ConfirmDialogProps {
+export interface ConfirmDialogProps {
   open: boolean;
-  onClose: () => void;
+  onClose?: () => void;
+  onCancel?: () => void;
   onConfirm: () => void;
   title: string;
-  description: string | ReactNode;
+  description?: string | ReactNode;
+  message?: string | ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
   variant?: "default" | "destructive";
+  confirmVariant?: string;
   confirmText?: string; // If set, user must type this to confirm
   loading?: boolean;
+  isPending?: boolean;
   icon?: React.ElementType;
 }
 
 export function ConfirmDialog({
   open,
   onClose,
+  onCancel,
   onConfirm,
   title,
   description,
+  message,
   confirmLabel = "Confirm",
   cancelLabel = "Cancel",
   variant = "default",
+  confirmVariant: _confirmVariant,
   confirmText,
-  loading = false,
+  loading,
+  isPending,
   icon: Icon = AlertTriangle,
 }: ConfirmDialogProps) {
+  const resolvedDescription = description ?? message ?? "";
+  const resolvedLoading = loading ?? isPending ?? false;
+  const resolvedOnClose = onClose ?? onCancel ?? (() => {});
   const [typed, setTyped] = useState("");
   const canConfirm = confirmText ? typed === confirmText : true;
 
   const handleConfirm = () => {
-    if (!canConfirm || loading) return;
+    if (!canConfirm || resolvedLoading) return;
     onConfirm();
     setTyped("");
   };
 
   const handleClose = () => {
-    if (loading) return;
+    if (resolvedLoading) return;
     setTyped("");
-    onClose();
+    resolvedOnClose();
   };
 
   const dialogRef = useDialogA11y(handleClose);
@@ -56,7 +67,7 @@ export function ConfirmDialog({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
-            className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm"
+            className="fixed inset-0 z-[100] bg-[color:var(--surface-glass)] backdrop-blur-md"
             onClick={handleClose}
           />
           <motion.div
@@ -72,20 +83,20 @@ export function ConfirmDialog({
               aria-modal="true"
               aria-labelledby="confirm-dialog-title"
               aria-describedby="confirm-dialog-desc"
-              className="bg-surface-1 border border-border rounded-xl shadow-2xl overflow-hidden"
+              className="overflow-hidden rounded-3xl border border-border bg-[color:var(--surface-glass)] shadow-glow backdrop-blur-xl"
             >
               {/* Header */}
               <div className="flex items-start gap-3 px-5 pt-5 pb-3">
                 <div className={`shrink-0 w-10 h-10 rounded-lg flex items-center justify-center ${
-                  variant === "destructive" ? "bg-red-500/15" : "bg-amber-500/15"
+                  variant === "destructive" ? "bg-destructive/15" : "bg-[var(--color-warning)]/15"
                 }`}>
                   <Icon className={`w-5 h-5 ${
-                    variant === "destructive" ? "text-red-400" : "text-amber-400"
+                    variant === "destructive" ? "text-destructive" : "text-[var(--color-warning)]"
                   }`} />
                 </div>
                 <div className="flex-1 min-w-0">
                   <h3 id="confirm-dialog-title" className="text-sm font-display font-semibold text-foreground">{title}</h3>
-                  <div id="confirm-dialog-desc" className="text-xs text-muted-foreground mt-1 leading-relaxed">{description}</div>
+                  <div id="confirm-dialog-desc" className="text-xs text-muted-foreground mt-1 leading-relaxed">{resolvedDescription}</div>
                 </div>
                 <button
                   onClick={handleClose}
@@ -106,7 +117,7 @@ export function ConfirmDialog({
                     value={typed}
                     onChange={(e) => setTyped(e.target.value)}
                     placeholder={confirmText}
-                    className="w-full h-9 px-3 text-xs bg-surface-0 border border-border rounded-md text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-cordum font-mono"
+                    className="w-full h-9 px-3 text-xs bg-surface-0 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-cordum font-mono"
                   />
                 </div>
               )}
@@ -115,21 +126,21 @@ export function ConfirmDialog({
               <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-border bg-surface-0/50">
                 <button
                   onClick={handleClose}
-                  disabled={loading}
-                  className="h-8 px-4 text-xs font-medium rounded-md border border-border text-foreground hover:bg-surface-2 transition-colors disabled:opacity-50"
+                  disabled={resolvedLoading}
+                  className="h-8 px-4 text-xs font-medium rounded-full border border-border text-foreground hover:bg-surface-2 transition-colors disabled:opacity-50"
                 >
                   {cancelLabel}
                 </button>
                 <button
                   onClick={handleConfirm}
-                  disabled={!canConfirm || loading}
-                  className={`h-8 px-4 text-xs font-medium rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                  disabled={!canConfirm || resolvedLoading}
+                  className={`h-8 px-4 text-xs font-medium rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                     variant === "destructive"
-                      ? "bg-red-500 text-white hover:bg-red-600"
+                      ? "bg-destructive text-foreground hover:bg-destructive/80"
                       : "bg-cordum text-surface-0 hover:bg-cordum-dim"
                   }`}
                 >
-                  {loading ? (
+                  {resolvedLoading ? (
                     <span className="flex items-center gap-1.5">
                       <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
                         <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" className="opacity-25" />

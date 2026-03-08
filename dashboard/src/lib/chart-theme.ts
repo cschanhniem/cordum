@@ -8,13 +8,13 @@
 // ---------------------------------------------------------------------------
 
 export const chartColors = {
-  allow: "#10B981",
-  deny: "#EF4444",
-  require_approval: "#F59E0B",
-  allow_with_constraints: "#3B82F6",
-  throttle: "#F97316",
-  cordum: "#6D5ACD",
-  muted: "#6B7A90",
+  allow: "#1f7a57",
+  deny: "#b83a3a",
+  require_approval: "#c58a1c",
+  allow_with_constraints: "#0f7f7a",
+  throttle: "#d4833a",
+  cordum: "#0f7f7a",
+  muted: "#5a6a70",
 } as const;
 
 export type ChartColorKey = keyof typeof chartColors;
@@ -43,7 +43,7 @@ export function gradientFill(key: string): string {
 export const axisTickStyle = {
   fontSize: 10,
   fontFamily: "'JetBrains Mono', monospace",
-  fill: "#6B7A90",
+  fill: "#5a6a70",
 } as const;
 
 export const gridProps = {
@@ -56,8 +56,8 @@ export const gridProps = {
 // ---------------------------------------------------------------------------
 
 export const tooltipStyle = {
-  background: "var(--surface-2, #1a1d23)",
-  border: "1px solid var(--border-color, #2a2d35)",
+  background: "var(--surface-2, #1f2a2e)",
+  border: "1px solid var(--border-color, #1f2a2e)",
   borderRadius: 8,
   padding: 12,
   boxShadow: "0 8px 32px rgba(0,0,0,0.3)",

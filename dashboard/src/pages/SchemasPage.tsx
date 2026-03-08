@@ -40,7 +40,7 @@ export default function SchemasPage() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search schemas..."
-          className="h-8 w-full pl-9 pr-3 text-xs bg-surface-1 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+          className="h-8 w-full pl-9 pr-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
         />
       </div>
 
@@ -49,7 +49,7 @@ export default function SchemasPage() {
         <SkeletonTable rows={6} />
       ) : error ? (
         <div className="instrument-card p-8 text-center">
-          <p className="text-sm text-red-400">Failed to load schemas</p>
+          <p className="text-sm text-destructive">Failed to load schemas</p>
         </div>
       ) : filtered.length === 0 ? (
         <EmptyState icon={<FileJson className="w-8 h-8" />} title="No schemas found" description="Register a schema to define data contracts" />

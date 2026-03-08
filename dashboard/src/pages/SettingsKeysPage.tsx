@@ -142,8 +142,8 @@ export default function SettingsKeysPage() {
                   </td>
                   <td className="px-4 py-3 text-xs text-muted-foreground">{key.lastUsed ? formatRelativeTime(key.lastUsed) : "Never"}</td>
                   <td className="px-4 py-3 text-right">
-                    <button onClick={() => setDeleteTarget(key)} className="p-1.5 rounded hover:bg-red-500/10 transition-colors">
-                      <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                    <button onClick={() => setDeleteTarget(key)} className="p-1.5 rounded hover:bg-destructive/10 transition-colors">
+                      <Trash2 className="w-3.5 h-3.5 text-destructive" />
                     </button>
                   </td>
                 </motion.tr>
@@ -162,8 +162,8 @@ export default function SettingsKeysPage() {
         </div>
         {createdKey ? (
           <div className="space-y-4">
-            <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
-              <p className="text-xs text-amber-200 mb-2">Copy this key now — it won't be shown again.</p>
+            <div className="p-3 bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/20 rounded-2xl">
+              <p className="text-xs text-[var(--color-warning)] mb-2">Copy this key now — it won't be shown again.</p>
               <div className="flex items-center gap-2">
                 <code className="flex-1 text-xs font-mono text-foreground bg-surface-2 px-3 py-2 rounded">{createdKey}</code>
                 <button onClick={() => { navigator.clipboard.writeText(createdKey); toast.success("Copied"); }} className="p-2 rounded hover:bg-surface-2">
@@ -178,14 +178,14 @@ export default function SettingsKeysPage() {
             <div>
               <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Name</label>
               <input type="text" value={newKeyName} onChange={(e) => setNewKeyName(e.target.value)} placeholder="e.g., CI Pipeline"
-                className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
+                className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
             </div>
             <div>
               <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Scopes</label>
               <div className="flex gap-2">
                 {SCOPES.map(s => (
                   <button key={s} onClick={() => setNewKeyScopes(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s])}
-                    className={cn("px-3 py-1.5 text-xs rounded-md border transition-colors capitalize",
+                    className={cn("px-3 py-1.5 text-xs rounded-2xl border transition-colors capitalize",
                       newKeyScopes.includes(s) ? "bg-cordum/10 border-cordum/30 text-cordum" : "border-border text-muted-foreground hover:text-foreground")}>
                     {s}
                   </button>

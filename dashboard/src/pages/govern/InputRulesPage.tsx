@@ -58,8 +58,8 @@ interface ContextInputs {
 const SCOPE_PILL_STYLES: Record<ScopeFilter, string> = {
   all: "bg-surface-2 text-foreground",
   global: "bg-cordum/15 text-cordum",
-  tenant: "bg-purple-500/15 text-purple-400",
-  workflow: "bg-blue-500/15 text-blue-400",
+  tenant: "bg-primary/15 text-primary",
+  workflow: "bg-[var(--color-info)]/15 text-[var(--color-info)]",
 };
 
 const DECISION_OPTIONS = [
@@ -349,7 +349,7 @@ export default function InputRulesPage() {
 
           {/* Decision filter */}
           <select
-            className="h-7 rounded-md border border-border bg-surface-2 px-2 text-xs text-foreground"
+            className="h-7 rounded-2xl border border-border bg-surface-2 px-2 text-xs text-foreground"
             value={decisionFilter}
             onChange={(e) => setFilter("decision", e.target.value)}
           >
@@ -363,7 +363,7 @@ export default function InputRulesPage() {
           {/* Bundle filter */}
           {availableBundles.length > 1 && (
             <select
-              className="h-7 rounded-md border border-border bg-surface-2 px-2 text-xs text-foreground"
+              className="h-7 rounded-2xl border border-border bg-surface-2 px-2 text-xs text-foreground"
               value={bundleFilter}
               onChange={(e) => setFilter("bundle", e.target.value)}
             >
@@ -385,7 +385,7 @@ export default function InputRulesPage() {
               placeholder="Search rules..."
               defaultValue={searchText}
               onChange={(e) => onSearchChange(e.target.value)}
-              className="h-7 w-48 rounded-md border border-border bg-surface-2 pl-7 pr-2 text-xs text-foreground placeholder:text-muted-foreground"
+              className="h-7 w-48 rounded-2xl border border-border bg-surface-2 pl-7 pr-2 text-xs text-foreground placeholder:text-muted-foreground"
             />
           </div>
         </div>
@@ -404,7 +404,7 @@ export default function InputRulesPage() {
                   className={cn(
                     "rounded-full px-2 py-0.5 text-[10px] font-mono transition-colors",
                     searchText === t
-                      ? "bg-purple-500/15 text-purple-400"
+                      ? "bg-primary/15 text-primary"
                       : "bg-surface-2 text-muted-foreground hover:bg-surface-3",
                   )}
                 >
@@ -416,7 +416,7 @@ export default function InputRulesPage() {
       </div>
 
       {/* ── Context evaluator (collapsible) ── */}
-      <div className="rounded-lg border border-border bg-surface-1">
+      <div className="rounded-2xl border border-border bg-surface-1">
         <button
           onClick={() => setContextOpen(!contextOpen)}
           className="flex w-full items-center gap-2 px-4 py-2.5 text-xs font-semibold text-foreground"
@@ -449,7 +449,7 @@ export default function InputRulesPage() {
                   onChange={(e) =>
                     setContextInputs((p) => ({ ...p, tenant: e.target.value }))
                   }
-                  className="h-8 w-full rounded-md border border-border bg-surface-2 px-2 text-xs text-foreground placeholder:text-muted-foreground"
+                  className="h-8 w-full rounded-2xl border border-border bg-surface-2 px-2 text-xs text-foreground placeholder:text-muted-foreground"
                 />
               </label>
               <label className="space-y-1">
@@ -463,7 +463,7 @@ export default function InputRulesPage() {
                   onChange={(e) =>
                     setContextInputs((p) => ({ ...p, topic: e.target.value }))
                   }
-                  className="h-8 w-full rounded-md border border-border bg-surface-2 px-2 text-xs text-foreground placeholder:text-muted-foreground"
+                  className="h-8 w-full rounded-2xl border border-border bg-surface-2 px-2 text-xs text-foreground placeholder:text-muted-foreground"
                 />
               </label>
               <label className="space-y-1">
@@ -480,7 +480,7 @@ export default function InputRulesPage() {
                       capability: e.target.value,
                     }))
                   }
-                  className="h-8 w-full rounded-md border border-border bg-surface-2 px-2 text-xs text-foreground placeholder:text-muted-foreground"
+                  className="h-8 w-full rounded-2xl border border-border bg-surface-2 px-2 text-xs text-foreground placeholder:text-muted-foreground"
                 />
               </label>
             </div>
@@ -558,11 +558,11 @@ const SCOPE_BADGE: Record<
 > = {
   global: { bg: "bg-cordum/15", text: "text-cordum", label: "Global" },
   tenant: {
-    bg: "bg-purple-500/15",
-    text: "text-purple-400",
+    bg: "bg-primary/15",
+    text: "text-primary",
     label: "Tenant",
   },
-  workflow: { bg: "bg-blue-500/15", text: "text-blue-400", label: "Workflow" },
+  workflow: { bg: "bg-[var(--color-info)]/15", text: "text-[var(--color-info)]", label: "Workflow" },
 };
 
 function RuleCard({
@@ -700,7 +700,7 @@ function RuleCard({
               {canEdit && (
                 <button
                   onClick={onEdit}
-                  className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-surface-2 transition-colors"
+                  className="p-1.5 rounded-full text-muted-foreground hover:text-foreground hover:bg-surface-2 transition-colors"
                   title="Edit in bundle"
                 >
                   <Pencil className="w-3.5 h-3.5" />
@@ -708,7 +708,7 @@ function RuleCard({
               )}
               <button
                 onClick={onSimulate}
-                className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-surface-2 transition-colors"
+                className="p-1.5 rounded-full text-muted-foreground hover:text-foreground hover:bg-surface-2 transition-colors"
                 title="Simulate"
               >
                 <FlaskConical className="w-3.5 h-3.5" />

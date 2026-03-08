@@ -13,6 +13,21 @@ import { cn } from "@/lib/utils";
 
 type AuthMode = "api_key" | "password" | "oidc" | "saml";
 
+/** Build a minimal fallback user when the server returns { token } without user data. */
+export function buildPasswordFallbackUser(username: string): {
+  id: string; username: string; email: string; display_name: string; roles: string[]; tenant: string;
+} {
+  const trimmed = username.trim();
+  return {
+    id: trimmed,
+    username: trimmed,
+    email: "",
+    display_name: trimmed,
+    roles: ["viewer"],
+    tenant: "default",
+  };
+}
+
 const LOGIN_TIMEOUT = 10_000;
 
 /** Validate returnUrl is a safe relative path — blocks open redirect attacks. */
@@ -30,6 +45,26 @@ export function isSafeReturnUrl(url: string | null): string {
     return "/";
   }
   return trimmed;
+}
+
+/** Validate API URL is same-origin or relative path — blocks open redirect in OIDC/SAML flows. */
+export function isSafeApiUrl(url: string): string {
+  const fallback = "/api/v1";
+  const trimmed = url.trim();
+  if (!trimmed) return fallback;
+
+  // Relative paths starting with / are safe (block protocol-relative //)
+  if (trimmed.startsWith("/") && !trimmed.startsWith("//")) return trimmed;
+
+  // Absolute URLs must be same-origin
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.origin === window.location.origin) return trimmed;
+  } catch {
+    // Not a valid absolute URL — reject
+  }
+
+  return fallback;
 }
 
 const authModes: { id: AuthMode; label: string; icon: React.ReactNode; description: string }[] = [
@@ -56,15 +91,23 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
 
   const [loading, setLoading] = useState(false);
+  const successToastClass = "border border-[color:var(--color-success)]/30 bg-card text-[var(--color-success)]";
+  const errorToastClass = "border border-destructive/30 bg-card text-destructive";
+  const showSuccessToast = (message: string) => toast.success(message, { className: successToastClass });
+  const showErrorToast = (message: string) => toast.error(message, { className: errorToastClass });
 
   const handleApiKeyLogin = async () => {
     if (!apiKey.trim()) {
-      toast.error("API key is required");
+      showErrorToast("API key is required");
       return;
     }
     setLoading(true);
     try {
-      const baseUrl = apiUrl.trim() || "/api/v1";
+      const raw = apiUrl.trim();
+      const baseUrl = isSafeApiUrl(raw);
+      if (raw && baseUrl !== raw) {
+        toast.warning("Unsafe API URL blocked — using default endpoint");
+      }
       const res = await fetch(`${baseUrl}/auth/me`, {
         headers: { Authorization: `Bearer ${apiKey.trim()}` },
         signal: AbortSignal.timeout(LOGIN_TIMEOUT),
@@ -72,7 +115,7 @@ export default function LoginPage() {
       if (res.ok) {
         const user = await res.json();
         login(apiKey.trim(), user);
-        toast.success("Connected to Cordum");
+        showSuccessToast("Connected to Cordum");
         navigate(returnUrl);
       } else {
         const msg = res.status === 401 || res.status === 403
@@ -80,13 +123,13 @@ export default function LoginPage() {
           : res.status >= 500
             ? "Server error — try again later"
             : `Connection failed (HTTP ${res.status})`;
-        toast.error(msg);
+        showErrorToast(msg);
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === "TimeoutError") {
-        toast.error("Request timed out — check your connection");
+        showErrorToast("Request timed out — check your connection");
       } else {
-        toast.error("Cannot reach API server — check the endpoint URL");
+        showErrorToast("Cannot reach API server — check the endpoint URL");
       }
     } finally {
       setLoading(false);
@@ -95,12 +138,16 @@ export default function LoginPage() {
 
   const handlePasswordLogin = async () => {
     if (!username.trim() || !password.trim()) {
-      toast.error("Username and password are required");
+      showErrorToast("Username and password are required");
       return;
     }
     setLoading(true);
     try {
-      const baseUrl = apiUrl.trim() || "/api/v1";
+      const raw = apiUrl.trim();
+      const baseUrl = isSafeApiUrl(raw);
+      if (raw && baseUrl !== raw) {
+        toast.warning("Unsafe API URL blocked — using default endpoint");
+      }
       const res = await fetch(`${baseUrl}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -109,26 +156,18 @@ export default function LoginPage() {
       });
       if (res.ok) {
         const data = await res.json();
-        // Fallback user object for servers that return { token } without a user field.
-        // Roles default to ["admin"] — the backend enforces real RBAC via the token.
-        login(data.token || "session", data.user || {
-          id: username.trim(),
-          username: username.trim(),
-          email: "",
-          display_name: username.trim(),
-          roles: ["admin"],
-          tenant: "default",
-        });
-        toast.success("Logged in");
+        // Fallback user when server returns { token } without user data.
+        login(data.token || "session", data.user || buildPasswordFallbackUser(username));
+        showSuccessToast("Logged in");
         navigate(returnUrl);
       } else {
-        toast.error("Invalid credentials");
+        showErrorToast("Invalid credentials");
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === "TimeoutError") {
-        toast.error("Request timed out — check your connection");
+        showErrorToast("Request timed out — check your connection");
       } else {
-        toast.error("Cannot reach API server — check the endpoint URL");
+        showErrorToast("Cannot reach API server — check the endpoint URL");
       }
     } finally {
       setLoading(false);
@@ -136,13 +175,21 @@ export default function LoginPage() {
   };
 
   const handleOidcLogin = () => {
-    const baseUrl = apiUrl.trim() || "/api/v1";
+    const raw = apiUrl.trim();
+    const baseUrl = isSafeApiUrl(raw);
+    if (raw && baseUrl !== raw) {
+      toast.warning("Unsafe API URL blocked — using default endpoint");
+    }
     toast.info("Redirecting to OIDC provider...");
     window.location.href = `${baseUrl}/auth/oidc/login`;
   };
 
   const handleSamlLogin = () => {
-    const baseUrl = apiUrl.trim() || "/api/v1";
+    const raw = apiUrl.trim();
+    const baseUrl = isSafeApiUrl(raw);
+    if (raw && baseUrl !== raw) {
+      toast.warning("Unsafe API URL blocked — using default endpoint");
+    }
     toast.info("Redirecting to SAML IdP...");
     window.location.href = `${baseUrl}/auth/saml/login`;
   };
@@ -159,9 +206,11 @@ export default function LoginPage() {
   const currentMode = authModes.find((m) => m.id === authMode)!;
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background dot-grid relative overflow-hidden">
-      {/* Ambient glow */}
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full bg-cordum/5 blur-[120px] pointer-events-none" />
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[radial-gradient(900px_circle_at_10%_-10%,var(--bg-radial-1),transparent_55%),radial-gradient(700px_circle_at_90%_0%,var(--bg-radial-2),transparent_45%),linear-gradient(120deg,var(--bg-linear-1)_0%,var(--bg-linear-2)_55%,var(--bg-linear-3)_100%)] px-4 font-sans">
+      {/* Ambient warm glows */}
+      <div className="pointer-events-none absolute -left-20 top-0 h-72 w-72 rounded-full bg-[color:var(--bg-radial-1)] blur-3xl" />
+      <div className="pointer-events-none absolute -right-20 bottom-0 h-72 w-72 rounded-full bg-[color:var(--bg-radial-2)] blur-3xl" />
+      <div className="pointer-events-none absolute top-1/2 left-1/2 h-[600px] w-[600px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/10 blur-[120px]" />
 
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -178,13 +227,13 @@ export default function LoginPage() {
           <p className="text-xs font-mono text-muted-foreground mt-1 uppercase tracking-[0.15em]">Agent Control Plane</p>
         </div>
 
-        {/* Form — instrument card style */}
-        <div className="instrument-card p-6 space-y-5">
+        {/* Form — Mac glass card style */}
+        <div className="surface-card space-y-5 rounded-3xl border border-border bg-[color:var(--surface-glass)] p-6 shadow-glow backdrop-blur-xl">
           {/* Auth Mode Selector */}
           <div className="relative">
             <button
               onClick={() => setShowModeSelector(!showModeSelector)}
-              className="w-full flex items-center justify-between h-9 px-3 text-sm bg-surface-0 border border-border rounded-md text-foreground hover:bg-surface-1 transition-colors"
+              className="w-full flex items-center justify-between h-9 px-3 text-sm bg-surface-0 border border-border rounded-2xl text-foreground hover:bg-surface-1 transition-colors"
             >
               <div className="flex items-center gap-2">
                 <span className="text-muted-foreground">{currentMode.icon}</span>
@@ -199,7 +248,7 @@ export default function LoginPage() {
                   initial={{ opacity: 0, y: -4 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -4 }}
-                  className="absolute top-full left-0 right-0 mt-1 bg-surface-1 border border-border rounded-md shadow-xl z-20 overflow-hidden"
+                  className="absolute top-full left-0 right-0 mt-1 bg-surface-1 border border-border rounded-2xl shadow-xl z-20 overflow-hidden"
                 >
                   {authModes.map((mode) => (
                     <button
@@ -232,7 +281,7 @@ export default function LoginPage() {
               placeholder="/api/v1"
               value={apiUrl}
               onChange={(e) => setApiUrl(e.target.value)}
-              className="h-9 w-full px-3 text-sm bg-surface-0 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum font-mono"
+              className="h-9 w-full rounded-2xl border border-border bg-card/80 px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono"
             />
           </div>
 
@@ -256,7 +305,7 @@ export default function LoginPage() {
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
-                  className="h-9 w-full pl-9 pr-3 text-sm bg-surface-0 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum font-mono"
+                  className="h-9 w-full rounded-2xl border border-border bg-card/80 pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono"
                 />
               </div>
             </motion.div>
@@ -280,7 +329,7 @@ export default function LoginPage() {
                   placeholder="admin"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  className="h-9 w-full px-3 text-sm bg-surface-0 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum font-mono"
+                  className="h-9 w-full rounded-2xl border border-border bg-card/80 px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono"
                 />
               </div>
               <div className="space-y-2">
@@ -295,7 +344,7 @@ export default function LoginPage() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
-                    className="h-9 w-full pl-9 pr-3 text-sm bg-surface-0 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum font-mono"
+                    className="h-9 w-full rounded-2xl border border-border bg-card/80 pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono"
                   />
                 </div>
               </div>
@@ -334,7 +383,12 @@ export default function LoginPage() {
             </motion.div>
           )}
 
-          <Button variant="primary" className="w-full" loading={loading} onClick={handleSubmit}>
+          <Button
+            variant="primary"
+            className="w-full rounded-full bg-primary text-primary-foreground shadow-glow hover:bg-primary/90"
+            loading={loading}
+            onClick={handleSubmit}
+          >
             {authMode === "api_key" && "Connect"}
             {authMode === "password" && "Sign In"}
             {authMode === "oidc" && "Continue with OIDC"}

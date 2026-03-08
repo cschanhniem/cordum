@@ -3,14 +3,14 @@ import { cn } from "@/lib/utils";
 type SafetyDecisionType = "allow" | "deny" | "require_approval" | "allow_with_constraints" | "throttle" | "redact" | "monitor" | "quarantine";
 
 const decisionConfig: Record<string, { color: string; bg: string; label: string }> = {
-  allow: { color: "text-emerald-400", bg: "bg-emerald-400/10", label: "ALLOW" },
-  deny: { color: "text-red-400", bg: "bg-red-400/10", label: "DENY" },
-  require_approval: { color: "text-amber-400", bg: "bg-amber-400/10", label: "APPROVAL" },
-  allow_with_constraints: { color: "text-blue-400", bg: "bg-blue-400/10", label: "CONSTRAINED" },
-  throttle: { color: "text-orange-400", bg: "bg-orange-400/10", label: "THROTTLE" },
-  redact: { color: "text-fuchsia-400", bg: "bg-fuchsia-400/10", label: "REDACT" },
-  monitor: { color: "text-blue-400", bg: "bg-blue-400/10", label: "MONITOR" },
-  quarantine: { color: "text-red-400", bg: "bg-red-400/10", label: "QUARANTINE" },
+  allow: { color: "text-[var(--color-success)]", bg: "bg-[var(--color-success)]/10", label: "ALLOW" },
+  deny: { color: "text-destructive", bg: "bg-destructive/10", label: "DENY" },
+  require_approval: { color: "text-[var(--color-warning)]", bg: "bg-[var(--color-warning)]/10", label: "APPROVAL" },
+  allow_with_constraints: { color: "text-[var(--color-info)]", bg: "bg-[var(--color-info)]/10", label: "CONSTRAINED" },
+  throttle: { color: "text-[var(--color-warning)]", bg: "bg-[var(--color-warning)]/10", label: "THROTTLE" },
+  redact: { color: "text-primary", bg: "bg-primary/10", label: "REDACT" },
+  monitor: { color: "text-[var(--color-info)]", bg: "bg-[var(--color-info)]/10", label: "MONITOR" },
+  quarantine: { color: "text-destructive", bg: "bg-destructive/10", label: "QUARANTINE" },
 };
 
 interface SafetyDecisionBadgeProps {

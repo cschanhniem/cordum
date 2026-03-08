@@ -75,9 +75,13 @@ export function usePolicyAccess(): PolicyAccess {
   const principalRole = useConfigStore((s) => s.principalRole);
 
   return useMemo(() => {
-    const requiresAuth =
+    const requiresAuth = Boolean(
       !!authConfig &&
-      (authConfig.password_enabled || !!authConfig.user_auth_enabled || authConfig.saml_enabled);
+      (authConfig.password_enabled ||
+        !!authConfig.user_auth_enabled ||
+        authConfig.saml_enabled ||
+        authConfig.oidc_enabled),
+    );
     return derivePolicyAccess({
       requiresAuth,
       roles: user?.roles ?? [],

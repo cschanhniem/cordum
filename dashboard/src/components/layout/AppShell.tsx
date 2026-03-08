@@ -212,7 +212,7 @@ export function AppShell({ children }: AppShellProps) {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.2 }}
-              className="md:hidden fixed inset-0 z-50 bg-black/50 backdrop-blur-sm"
+              className="md:hidden fixed inset-0 z-50 bg-[color:var(--surface-glass)] backdrop-blur-md"
               onClick={() => setMobileOpen(false)}
             />
             <motion.aside
@@ -524,7 +524,7 @@ export function AppShell({ children }: AppShellProps) {
                 </div>
                 <button
                   onClick={logout}
-                  className="p-1 rounded-md text-muted-foreground hover:text-red-400 transition-colors"
+                  className="p-1 rounded-md text-muted-foreground hover:text-destructive transition-colors"
                   title="Logout"
                 >
                   <LogOut className="w-3.5 h-3.5" />

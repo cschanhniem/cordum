@@ -64,16 +64,16 @@ interface NodeTypeMeta { type: NodeType; label: string; icon: LucideIcon; color:
  */
 const NODE_TYPES: NodeTypeMeta[] = [
   { type: "worker", label: "Worker", icon: Briefcase, color: "text-cordum border-cordum/30", desc: "Execute a job" },
-  { type: "approval", label: "Approval", icon: Shield, color: "text-amber-400 border-amber-400/30", desc: "Human gate" },
-  { type: "condition", label: "Condition", icon: GitBranch, color: "text-blue-400 border-blue-400/30", desc: "Branch logic" },
+  { type: "approval", label: "Approval", icon: Shield, color: "text-[var(--color-warning)] border-[var(--color-warning)]/30", desc: "Human gate" },
+  { type: "condition", label: "Condition", icon: GitBranch, color: "text-[var(--color-info)] border-[var(--color-info)]/30", desc: "Branch logic" },
   { type: "delay", label: "Delay", icon: Clock, color: "text-muted-foreground border-muted-foreground/30", desc: "Wait duration" },
-  { type: "loop", label: "Loop", icon: Repeat, color: "text-blue-400 border-blue-400/30", desc: "Iterate items" },
+  { type: "loop", label: "Loop", icon: Repeat, color: "text-[var(--color-info)] border-[var(--color-info)]/30", desc: "Iterate items" },
   { type: "parallel", label: "Parallel", icon: Layers, color: "text-cordum border-cordum/30", desc: "Concurrent" },
   { type: "subworkflow", label: "Subworkflow", icon: Workflow, color: "text-muted-foreground border-muted-foreground/30", desc: "Nested flow" },
 ];
 
 const UNKNOWN_NODE_META: NodeTypeMeta = {
-  type: "unknown", label: "Unknown", icon: AlertTriangle, color: "text-red-400 border-red-400/30", desc: "Unsupported step type",
+  type: "unknown", label: "Unknown", icon: AlertTriangle, color: "text-destructive border-destructive/30", desc: "Unsupported step type",
 };
 
 /** Safe lookup — never returns undefined. Preserves original backend type in node.config._originalType. */
@@ -247,7 +247,7 @@ export default function WorkflowBuilderPage() {
       {/* Top Bar */}
       <div className="flex items-center justify-between px-5 py-3 border-b border-border bg-surface-0 shrink-0">
         <div className="flex items-center gap-3">
-          <button onClick={() => navigate("/workflows")} className="p-1.5 rounded-md hover:bg-surface-2 transition-colors">
+          <button onClick={() => navigate("/workflows")} className="p-1.5 rounded-full hover:bg-surface-2 transition-colors">
             <ArrowLeft className="w-4 h-4 text-muted-foreground" />
           </button>
           <input
@@ -295,9 +295,9 @@ export default function WorkflowBuilderPage() {
                   <button
                     key={nt.type}
                     onClick={() => addNode(nt.type)}
-                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-surface-1 transition-colors text-left group"
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl hover:bg-surface-1 transition-colors text-left group"
                   >
-                    <div className={cn("w-8 h-8 rounded-lg border flex items-center justify-center", nt.color)}>
+                    <div className={cn("w-8 h-8 rounded-2xl border flex items-center justify-center", nt.color)}>
                       <Icon className="w-4 h-4" />
                     </div>
                     <div className="flex-1 min-w-0">
@@ -320,7 +320,7 @@ export default function WorkflowBuilderPage() {
                     addNode("worker");
                     toast.info(`Added worker node with topic: job.${pack}`);
                   }}
-                  className="w-full text-left px-3 py-2 rounded-md hover:bg-surface-1 transition-colors"
+                  className="w-full text-left px-3 py-2 rounded-2xl hover:bg-surface-1 transition-colors"
                 >
                   <span className="text-xs font-mono text-cordum">job.{pack}</span>
                 </button>
@@ -380,11 +380,11 @@ export default function WorkflowBuilderPage() {
                 onMouseDown={(e) => startDrag(node.id, e)}
                 onClick={(e) => handleNodeClick(node.id, e)}
                 className={cn(
-                  "w-40 rounded-lg border bg-surface-1 shadow-lg cursor-pointer transition-all",
+                  "w-40 rounded-2xl border bg-surface-1 shadow-lg cursor-pointer transition-all",
                   isSelected ? "ring-2 ring-cordum border-cordum/40" : "border-border hover:border-cordum/20",
                 )}
               >
-                <div className={cn("h-1 rounded-t-lg", nt.color.includes("cordum") ? "bg-cordum" : nt.color.includes("amber") ? "bg-amber-400" : nt.color.includes("blue") ? "bg-blue-400" : "bg-gray-400")} />
+                <div className={cn("h-1 rounded-t-2xl", nt.color.includes("cordum") ? "bg-cordum" : nt.color.includes("warning") ? "bg-[var(--color-warning)]" : nt.color.includes("info") ? "bg-[var(--color-info)]" : "bg-muted-foreground")} />
                 <div className="p-3">
                   <div className="flex items-center gap-2 mb-1">
                     <Icon className={cn("w-3.5 h-3.5", nt.color.split(" ")[0])} />
@@ -400,8 +400,8 @@ export default function WorkflowBuilderPage() {
                   )}
                   {node.type === "approval" && (
                     <div className="mt-1.5 flex items-center gap-1">
-                      <Shield className="w-2.5 h-2.5 text-amber-400" />
-                      <span className="text-[9px] font-mono text-amber-400">human-gate</span>
+                      <Shield className="w-2.5 h-2.5 text-[var(--color-warning)]" />
+                      <span className="text-[9px] font-mono text-[var(--color-warning)]">human-gate</span>
                     </div>
                   )}
                   <button
@@ -440,7 +440,7 @@ export default function WorkflowBuilderPage() {
                   type="text"
                   value={selectedNodeData.label}
                   onChange={(e) => updateNodeLabel(selectedNodeData.id, e.target.value)}
-                  className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+                  className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
                 />
               </div>
 
@@ -448,16 +448,16 @@ export default function WorkflowBuilderPage() {
                 <>
                   <div>
                     <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Topic</label>
-                    <input type="text" placeholder="e.g., service.restart" value={cfgStr(selectedNodeData.config, "topic")} onChange={(e) => updateNodeConfig(selectedNodeData.id, "topic", e.target.value)} className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
+                    <input type="text" placeholder="e.g., service.restart" value={cfgStr(selectedNodeData.config, "topic")} onChange={(e) => updateNodeConfig(selectedNodeData.id, "topic", e.target.value)} className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Timeout</label>
-                      <input type="number" value={cfgNum(selectedNodeData.config, "timeout", 30)} onChange={(e) => updateNodeConfig(selectedNodeData.id, "timeout", Number(e.target.value))} className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
+                      <input type="number" value={cfgNum(selectedNodeData.config, "timeout", 30)} onChange={(e) => updateNodeConfig(selectedNodeData.id, "timeout", Number(e.target.value))} className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
                     </div>
                     <div>
                       <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Retries</label>
-                      <input type="number" value={cfgNum(selectedNodeData.config, "retries")} min={0} max={5} onChange={(e) => updateNodeConfig(selectedNodeData.id, "retries", Number(e.target.value))} className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
+                      <input type="number" value={cfgNum(selectedNodeData.config, "retries")} min={0} max={5} onChange={(e) => updateNodeConfig(selectedNodeData.id, "retries", Number(e.target.value))} className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
                     </div>
                   </div>
                   {/* Policy Binding */}
@@ -465,7 +465,7 @@ export default function WorkflowBuilderPage() {
                     <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5 flex items-center gap-1">
                       <Shield className="w-3 h-3 text-cordum" /> Policy Bundle
                     </label>
-                    <select value={cfgStr(selectedNodeData.config, "policyBundle", "none")} onChange={(e) => updateNodeConfig(selectedNodeData.id, "policyBundle", e.target.value)} className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum">
+                    <select value={cfgStr(selectedNodeData.config, "policyBundle", "none")} onChange={(e) => updateNodeConfig(selectedNodeData.id, "policyBundle", e.target.value)} className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground focus:outline-none focus:ring-1 focus:ring-cordum">
                       <option value="none">No policy</option>
                       {bundles.map((b) => (
                         <option key={b.id} value={b.id}>{b.name || b.id}</option>
@@ -480,11 +480,11 @@ export default function WorkflowBuilderPage() {
                 <>
                   <div>
                     <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Approvers</label>
-                    <input type="text" placeholder="admin, ops-team" value={cfgStr(selectedNodeData.config, "approvers")} onChange={(e) => updateNodeConfig(selectedNodeData.id, "approvers", e.target.value)} className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
+                    <input type="text" placeholder="admin, ops-team" value={cfgStr(selectedNodeData.config, "approvers")} onChange={(e) => updateNodeConfig(selectedNodeData.id, "approvers", e.target.value)} className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
                   </div>
                   <div>
                     <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Message</label>
-                    <textarea rows={3} placeholder="Message shown to approver..." value={cfgStr(selectedNodeData.config, "message")} onChange={(e) => updateNodeConfig(selectedNodeData.id, "message", e.target.value)} className="w-full px-3 py-2 text-xs bg-surface-1 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum resize-none" />
+                    <textarea rows={3} placeholder="Message shown to approver..." value={cfgStr(selectedNodeData.config, "message")} onChange={(e) => updateNodeConfig(selectedNodeData.id, "message", e.target.value)} className="w-full px-3 py-2 text-xs bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum resize-none" />
                   </div>
                 </>
               )}
@@ -492,7 +492,7 @@ export default function WorkflowBuilderPage() {
               {selectedNodeData.type === "condition" && (
                 <div>
                   <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Expression</label>
-                  <textarea rows={3} placeholder="ctx.risk_score > 0.8" value={cfgStr(selectedNodeData.config, "expression")} onChange={(e) => updateNodeConfig(selectedNodeData.id, "expression", e.target.value)} className="w-full px-3 py-2 text-xs font-mono bg-surface-1 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum resize-none" />
+                  <textarea rows={3} placeholder="ctx.risk_score > 0.8" value={cfgStr(selectedNodeData.config, "expression")} onChange={(e) => updateNodeConfig(selectedNodeData.id, "expression", e.target.value)} className="w-full px-3 py-2 text-xs font-mono bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum resize-none" />
                 </div>
               )}
 
@@ -500,11 +500,11 @@ export default function WorkflowBuilderPage() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Duration</label>
-                    <input type="number" value={cfgNum(selectedNodeData.config, "duration", 60)} onChange={(e) => updateNodeConfig(selectedNodeData.id, "duration", Number(e.target.value))} className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
+                    <input type="number" value={cfgNum(selectedNodeData.config, "duration", 60)} onChange={(e) => updateNodeConfig(selectedNodeData.id, "duration", Number(e.target.value))} className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
                   </div>
                   <div>
                     <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Unit</label>
-                    <select value={cfgStr(selectedNodeData.config, "durationUnit", "seconds")} onChange={(e) => updateNodeConfig(selectedNodeData.id, "durationUnit", e.target.value)} className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum">
+                    <select value={cfgStr(selectedNodeData.config, "durationUnit", "seconds")} onChange={(e) => updateNodeConfig(selectedNodeData.id, "durationUnit", e.target.value)} className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground focus:outline-none focus:ring-1 focus:ring-cordum">
                       <option>seconds</option><option>minutes</option><option>hours</option>
                     </select>
                   </div>
@@ -515,11 +515,11 @@ export default function WorkflowBuilderPage() {
                 <>
                   <div>
                     <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Items Expression</label>
-                    <textarea rows={2} placeholder="ctx.items" value={cfgStr(selectedNodeData.config, "itemsExpr")} onChange={(e) => updateNodeConfig(selectedNodeData.id, "itemsExpr", e.target.value)} className="w-full px-3 py-2 text-xs font-mono bg-surface-1 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum resize-none" />
+                    <textarea rows={2} placeholder="ctx.items" value={cfgStr(selectedNodeData.config, "itemsExpr")} onChange={(e) => updateNodeConfig(selectedNodeData.id, "itemsExpr", e.target.value)} className="w-full px-3 py-2 text-xs font-mono bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum resize-none" />
                   </div>
                   <div>
                     <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Max Iterations</label>
-                    <input type="number" value={cfgNum(selectedNodeData.config, "maxIterations", 100)} onChange={(e) => updateNodeConfig(selectedNodeData.id, "maxIterations", Number(e.target.value))} className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
+                    <input type="number" value={cfgNum(selectedNodeData.config, "maxIterations", 100)} onChange={(e) => updateNodeConfig(selectedNodeData.id, "maxIterations", Number(e.target.value))} className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
                   </div>
                 </>
               )}
@@ -528,7 +528,7 @@ export default function WorkflowBuilderPage() {
                 <>
                   <div>
                     <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Branches</label>
-                    <input type="number" value={cfgNum(selectedNodeData.config, "branches", 2)} min={2} max={10} onChange={(e) => updateNodeConfig(selectedNodeData.id, "branches", Number(e.target.value))} className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
+                    <input type="number" value={cfgNum(selectedNodeData.config, "branches", 2)} min={2} max={10} onChange={(e) => updateNodeConfig(selectedNodeData.id, "branches", Number(e.target.value))} className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
                   </div>
                   <div className="flex items-center justify-between">
                     <label className="text-xs text-foreground">Wait for all</label>
@@ -542,7 +542,7 @@ export default function WorkflowBuilderPage() {
               {selectedNodeData.type === "subworkflow" && (
                 <div>
                   <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Workflow</label>
-                  <select value={cfgStr(selectedNodeData.config, "subWorkflowId")} onChange={(e) => updateNodeConfig(selectedNodeData.id, "subWorkflowId", e.target.value)} className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum">
+                  <select value={cfgStr(selectedNodeData.config, "subWorkflowId")} onChange={(e) => updateNodeConfig(selectedNodeData.id, "subWorkflowId", e.target.value)} className="h-8 w-full px-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground focus:outline-none focus:ring-1 focus:ring-cordum">
                     <option value="">Select workflow...</option>
                     {workflows.map((w) => (
                       <option key={w.id} value={w.id}>{w.name || w.id}</option>

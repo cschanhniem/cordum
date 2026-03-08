@@ -87,7 +87,7 @@ function respondToMessage(text) {
   if (/(transfer|send|wire|payment|payout)/.test(lower)) {
     return "Certainly. What amount should I transfer?";
   }
-  return "I can help with transfers. Share an amount like $40 so I can start the request.";
+  return "I can help with transfers. Just let me know the amount.";
 }
 
 function formatMoney(amount) {
@@ -172,7 +172,7 @@ async function submitTransfer({ amount, customer, reason, note }) {
       query: { org_id: state.config.orgId },
     });
     request.runId = runResp.run_id;
-    appendChat("agent", "Request submitted. Monitoring the workflow.");
+    appendChat("agent", "Please wait, waiting for representative for approval.");
 
     await pollRun(request);
   } catch (err) {
@@ -200,30 +200,30 @@ async function pollRun(request) {
       setRequestStatus(request, "approval", () => {
         appendChat(
           "agent",
-          "This transfer needs manager approval. Open the Cordum dashboard to approve or reject.",
+          "This transfer requires manager approval per safety policy. Open the Cordum dashboard to approve or reject.",
         );
       });
+    } else if (status === "denied") {
+      setRequestStatus(request, "blocked", () => {
+        appendChat(
+          "agent",
+          "This transfer was blocked by the Safety Kernel. Transfers of $300 or more are not permitted.",
+        );
+      });
+      done = true;
     } else if (status === "succeeded") {
-      const blockStep = run.steps && run.steps.block;
-      if (blockStep && blockStep.status === "succeeded" && isBlockStepReal(blockStep)) {
-        setRequestStatus(request, "blocked", () => {
-          appendChat(
-            "agent",
-            "The transfer was blocked by policy. Transfers over $1,000 are not permitted.",
-          );
-        });
-      } else {
-        setRequestStatus(request, "completed", () => {
-          applyTransaction(request);
-          appendChat("agent", "Transfer completed. Your balance has been updated.");
-        });
-      }
+      setRequestStatus(request, "completed", () => {
+        applyTransaction(request);
+        appendChat("agent", "Transfer completed. Your balance has been updated.");
+      });
       done = true;
     } else if (status === "failed") {
-      const approvalStep = run.steps && run.steps.approval_gate;
-      if (approvalStep && approvalStep.status === "failed") {
+      const hasDeniedStep = run.steps && Object.values(run.steps).some(
+        (s) => s.status === "denied" || (s.safety_decision && s.safety_decision.type === "deny"),
+      );
+      if (hasDeniedStep) {
         setRequestStatus(request, "blocked", () => {
-          appendChat("agent", "The transfer was denied by the approver.");
+          appendChat("agent", "This transfer was blocked by the Safety Kernel.");
         });
       } else {
         setRequestStatus(request, "blocked", () => {
@@ -242,11 +242,6 @@ async function pollRun(request) {
       await sleep(1200);
     }
   }
-}
-
-function isBlockStepReal(blockStep) {
-  const output = blockStep.output;
-  return output && output.blocked === true;
 }
 
 function applyTransaction(request) {
@@ -352,8 +347,7 @@ function loadStoredConfig() {
     if (!parsed || typeof parsed !== "object") {
       return {};
     }
-    const { apiKey: _apiKey, ...rest } = parsed;
-    return rest;
+    return parsed;
   } catch (err) {
     return {};
   }
@@ -408,10 +402,9 @@ function sanitizeConfig(input) {
 
 function persistConfig(config) {
   try {
-    const { apiKey: _apiKey, ...rest } = config;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(rest));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
   } catch (err) {
-    // Ignore storage failures for demo environments.
+    // Ignore storage failures.
   }
 }
 
@@ -440,6 +433,7 @@ function ensureApiKey() {
   const entered = window.prompt("Enter your Cordum API key to continue:");
   if (entered && entered.trim()) {
     state.config.apiKey = entered.trim();
+    persistConfig(state.config);
     return true;
   }
   return false;
@@ -452,7 +446,7 @@ function buildErrorMessage(err) {
     return "I could not reach the bank API. Please ensure the Cordum API is running and the page is served over http://localhost.";
   }
   if (lower.includes("401") || lower.includes("unauthorized")) {
-    return "The request was rejected. Update the demo API key and retry (refresh to re-enter).";
+    return "The request was rejected. Check your API key and retry (refresh to re-enter).";
   }
   if (lower.includes("403") || lower.includes("tenant")) {
     return "The request was rejected. Set a tenant (try ?tenantId=default) and reload.";

@@ -24,10 +24,10 @@ export function getDecisionDisplayVariant(
 function DecisionIcon({ decision }: { decision: string }) {
   const normalized = decision.toLowerCase();
   if (normalized === "allow" || normalized === "allow_with_constraints")
-    return <ShieldCheck className="w-5 h-5 text-green-400" />;
+    return <ShieldCheck className="w-5 h-5 text-[var(--color-success)]" />;
   if (normalized === "deny")
-    return <ShieldAlert className="w-5 h-5 text-red-400" />;
-  return <ShieldQuestion className="w-5 h-5 text-amber-400" />;
+    return <ShieldAlert className="w-5 h-5 text-destructive" />;
+  return <ShieldQuestion className="w-5 h-5 text-[var(--color-warning)]" />;
 }
 
 export function SimulatorDecisionSummary({

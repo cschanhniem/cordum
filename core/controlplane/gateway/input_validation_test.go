@@ -131,7 +131,7 @@ func TestGetRunTimeline_LimitClamped(t *testing.T) {
 func TestAcquireLock_MissingResource(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	body := `{"resource":"","owner":"test-owner","ttl_ms":5000}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/locks/acquire", strings.NewReader(body))
+	req := adminCtx(httptest.NewRequest(http.MethodPost, "/api/v1/locks/acquire", strings.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	s.handleAcquireLock(rr, req)
@@ -143,7 +143,7 @@ func TestAcquireLock_MissingResource(t *testing.T) {
 func TestAcquireLock_MissingOwner(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	body := `{"resource":"my-resource","owner":"","ttl_ms":5000}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/locks/acquire", strings.NewReader(body))
+	req := adminCtx(httptest.NewRequest(http.MethodPost, "/api/v1/locks/acquire", strings.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	s.handleAcquireLock(rr, req)
@@ -156,7 +156,7 @@ func TestAcquireLock_ResourceTooLong(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	longResource := strings.Repeat("x", 600)
 	body := fmt.Sprintf(`{"resource":"%s","owner":"test","ttl_ms":5000}`, longResource)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/locks/acquire", strings.NewReader(body))
+	req := adminCtx(httptest.NewRequest(http.MethodPost, "/api/v1/locks/acquire", strings.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	s.handleAcquireLock(rr, req)
@@ -169,7 +169,7 @@ func TestAcquireLock_OwnerTooLong(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	longOwner := strings.Repeat("y", 300)
 	body := fmt.Sprintf(`{"resource":"r","owner":"%s","ttl_ms":5000}`, longOwner)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/locks/acquire", strings.NewReader(body))
+	req := adminCtx(httptest.NewRequest(http.MethodPost, "/api/v1/locks/acquire", strings.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	s.handleAcquireLock(rr, req)
@@ -181,7 +181,7 @@ func TestAcquireLock_OwnerTooLong(t *testing.T) {
 func TestAcquireLock_NegativeTTL(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	body := `{"resource":"r","owner":"o","ttl_ms":-1}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/locks/acquire", strings.NewReader(body))
+	req := adminCtx(httptest.NewRequest(http.MethodPost, "/api/v1/locks/acquire", strings.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	s.handleAcquireLock(rr, req)
@@ -193,7 +193,7 @@ func TestAcquireLock_NegativeTTL(t *testing.T) {
 func TestAcquireLock_ExcessiveTTL(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	body := `{"resource":"r","owner":"o","ttl_ms":9999999}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/locks/acquire", strings.NewReader(body))
+	req := adminCtx(httptest.NewRequest(http.MethodPost, "/api/v1/locks/acquire", strings.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	s.handleAcquireLock(rr, req)
@@ -206,7 +206,7 @@ func TestAcquireLock_OversizedBody(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	bigResource := strings.Repeat("a", int(defaultMaxJSONBodyBytes)+1)
 	body := fmt.Sprintf(`{"resource":"%s","owner":"o","ttl_ms":1000}`, bigResource)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/locks/acquire", strings.NewReader(body))
+	req := adminCtx(httptest.NewRequest(http.MethodPost, "/api/v1/locks/acquire", strings.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	s.handleAcquireLock(rr, req)
@@ -216,7 +216,7 @@ func TestAcquireLock_OversizedBody(t *testing.T) {
 
 func TestReleaseLock_MalformedJSON(t *testing.T) {
 	s, _, _ := newTestGateway(t)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/locks/release", strings.NewReader("{bad"))
+	req := adminCtx(httptest.NewRequest(http.MethodPost, "/api/v1/locks/release", strings.NewReader("{bad")))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	s.handleReleaseLock(rr, req)
@@ -226,7 +226,7 @@ func TestReleaseLock_MalformedJSON(t *testing.T) {
 
 func TestRenewLock_MalformedJSON(t *testing.T) {
 	s, _, _ := newTestGateway(t)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/locks/renew", strings.NewReader("{bad"))
+	req := adminCtx(httptest.NewRequest(http.MethodPost, "/api/v1/locks/renew", strings.NewReader("{bad")))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	s.handleRenewLock(rr, req)
@@ -655,7 +655,7 @@ func TestPanicResilience_LockHandlers(t *testing.T) {
 			t.Run(h.name+"/"+tt.name, func(t *testing.T) {
 				s, _, _ := newTestGateway(t)
 				rr := httptest.NewRecorder()
-				req := httptest.NewRequest(http.MethodPost, h.path, strings.NewReader(tt.body))
+				req := adminCtx(httptest.NewRequest(http.MethodPost, h.path, strings.NewReader(tt.body)))
 				req.Header.Set("Content-Type", "application/json")
 				panicSafeCall(t, h.name+"/"+tt.name, func() {
 					switch h.handler {
@@ -858,7 +858,7 @@ func TestPanicResilience_NilBodyReaders(t *testing.T) {
 			s.handleCreateWorkflow(rr, req)
 		}},
 		{"AcquireLock", func(s *server, rr *httptest.ResponseRecorder) {
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/locks/acquire", nil)
+			req := adminCtx(httptest.NewRequest(http.MethodPost, "/api/v1/locks/acquire", nil))
 			req.Header.Set("Content-Type", "application/json")
 			s.handleAcquireLock(rr, req)
 		}},

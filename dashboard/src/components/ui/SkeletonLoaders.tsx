@@ -46,13 +46,13 @@ export function TableSkeleton({ rows = 8 }: { rows?: number }) {
           <div className="skeleton h-3 w-16" />
           <div className="skeleton h-7 w-40" />
         </div>
-        <div className="skeleton h-9 w-28 rounded-md" />
+        <div className="skeleton h-9 w-28 rounded-full" />
       </div>
       {/* Filters */}
       <div className="flex gap-3">
-        <div className="skeleton h-9 w-56 rounded-md" />
-        <div className="skeleton h-9 w-28 rounded-md" />
-        <div className="skeleton h-9 w-28 rounded-md" />
+        <div className="skeleton h-9 w-56 rounded-full" />
+        <div className="skeleton h-9 w-28 rounded-full" />
+        <div className="skeleton h-9 w-28 rounded-full" />
       </div>
       {/* Table */}
       <div className="instrument-card overflow-hidden">
@@ -85,7 +85,7 @@ export function DetailSkeleton() {
       {/* Tabs */}
       <div className="flex gap-2">
         {[...Array(4)].map((_, i) => (
-          <div key={i} className="skeleton h-8 w-20 rounded-md" />
+          <div key={i} className="skeleton h-8 w-20 rounded-full" />
         ))}
       </div>
       {/* Content */}
@@ -114,7 +114,7 @@ export function CardGridSkeleton({ count = 6 }: { count?: number }) {
           <div className="skeleton h-3 w-16" />
           <div className="skeleton h-7 w-40" />
         </div>
-        <div className="skeleton h-9 w-28 rounded-md" />
+        <div className="skeleton h-9 w-28 rounded-full" />
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {[...Array(count)].map((_, i) => (
@@ -145,12 +145,12 @@ export function FormSkeleton() {
       {[...Array(5)].map((_, i) => (
         <div key={i} className="space-y-2">
           <div className="skeleton h-3 w-24" />
-          <div className="skeleton h-10 w-full rounded-md" />
+          <div className="skeleton h-10 w-full rounded-full" />
         </div>
       ))}
       <div className="flex gap-3 pt-4">
-        <div className="skeleton h-9 w-20 rounded-md" />
-        <div className="skeleton h-9 w-24 rounded-md" />
+        <div className="skeleton h-9 w-20 rounded-full" />
+        <div className="skeleton h-9 w-24 rounded-full" />
       </div>
     </div>
   );

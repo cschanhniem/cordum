@@ -147,7 +147,7 @@ export default function BundleDetailPage() {
             Bundles
           </Button>
           {isDirty && (
-            <span className="text-[10px] font-mono text-amber-400">unsaved changes</span>
+            <span className="text-[10px] font-mono text-[var(--color-warning)]">unsaved changes</span>
           )}
         </div>
 

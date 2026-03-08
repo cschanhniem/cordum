@@ -136,7 +136,7 @@ export default function TenantsPage() {
           Bundle
           <select
             id="govern-tenant-bundle-select"
-            className="ml-2 h-8 rounded-md border border-border bg-surface-2 px-2 text-xs text-foreground"
+            className="ml-2 h-8 rounded-2xl border border-border bg-surface-2 px-2 text-xs text-foreground"
             value={selectedBundleId}
             onChange={(event) => setSelectedBundleId(event.target.value)}
           >
@@ -155,7 +155,7 @@ export default function TenantsPage() {
           title="Unable to load tenant policy data"
         >
           <p>{loadError.message}</p>
-          {loadError.details && <p className="mt-1 text-red-300/90">{loadError.details}</p>}
+          {loadError.details && <p className="mt-1 text-destructive">{loadError.details}</p>}
           <Button
             variant="outline"
             size="sm"

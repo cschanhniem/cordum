@@ -4,8 +4,8 @@
 @custom-variant dark (&:is(.dark *));
 
 /* ============================================================
-   CORDUM DESIGN SYSTEM — "Control Surface" Tokens
-   Matched exactly to cordumds-gj5mw4zm.manus.space
+   CORDUM DESIGN SYSTEM — "Mac" Warm Theme
+   Restored from pre-PR#101 warm beige/teal aesthetic
    ============================================================ */
 
 @theme inline {
@@ -46,77 +46,168 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 
-  /* Cordum custom colors — exact match to showcase */
-  --color-cordum: oklch(0.82 0.18 165);
-  --color-cordum-dim: oklch(0.65 0.14 165);
-  --color-cordum-bright: oklch(0.90 0.20 165);
-  --color-surface-0: oklch(0.15 0.01 260);
-  --color-surface-1: oklch(0.18 0.01 260);
-  --color-surface-2: oklch(0.21 0.01 260);
-  --color-surface-3: oklch(0.25 0.01 260);
-  --color-warning: oklch(0.80 0.16 75);
-  --color-danger: oklch(0.65 0.22 25);
-  --color-info: oklch(0.70 0.15 250);
-  --color-success: oklch(0.75 0.17 155);
+  /* Cordum warm palette — uses CSS vars so dark mode works */
+  --color-cordum: var(--cordum);
+  --color-cordum-dim: var(--cordum-dim);
+  --color-cordum-bright: var(--cordum-bright);
+  --color-surface-0: var(--surface-0);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-warning: var(--c-warning);
+  --color-danger: var(--c-danger);
+  --color-info: var(--c-info);
+  --color-success: var(--c-success);
+  --color-ink: var(--foreground);
 
-  /* Font families */
-  --font-display: "Plus Jakarta Sans", system-ui, sans-serif;
-  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* Mac fonts — IBM Plex + Space Grotesk */
+  --font-display: "Space Grotesk", system-ui, sans-serif;
+  --font-sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+/* Light mode — warm beige/cream */
 :root {
-  --radius: 0.5rem;
-  --primary: oklch(0.82 0.18 165);
-  --primary-foreground: oklch(0.15 0.02 165);
-  --background: oklch(0.13 0.01 260);
-  --foreground: oklch(0.96 0.005 260);
-  --card: oklch(0.18 0.01 260);
-  --card-foreground: oklch(0.96 0.005 260);
-  --popover: oklch(0.20 0.01 260);
-  --popover-foreground: oklch(0.96 0.005 260);
-  --secondary: oklch(0.22 0.01 260);
-  --secondary-foreground: oklch(0.88 0.005 260);
-  --muted: oklch(0.25 0.01 260);
-  --muted-foreground: oklch(0.75 0.01 260);
-  --accent: oklch(0.22 0.01 260);
-  --accent-foreground: oklch(0.96 0.005 260);
-  --destructive: oklch(0.65 0.22 25);
-  --destructive-foreground: oklch(0.98 0 0);
-  --border: oklch(0.30 0.01 260);
-  --input: oklch(0.25 0.01 260);
-  --ring: oklch(0.82 0.18 165);
-  --chart-1: oklch(0.82 0.18 165);
-  --chart-2: oklch(0.70 0.15 250);
-  --chart-3: oklch(0.80 0.16 75);
-  --chart-4: oklch(0.65 0.22 25);
-  --chart-5: oklch(0.75 0.17 155);
-  --sidebar: oklch(0.15 0.01 260);
-  --sidebar-foreground: oklch(0.92 0.005 260);
-  --sidebar-primary: oklch(0.82 0.18 165);
-  --sidebar-primary-foreground: oklch(0.15 0.02 165);
-  --sidebar-accent: oklch(0.22 0.01 260);
-  --sidebar-accent-foreground: oklch(0.96 0.005 260);
-  --sidebar-border: oklch(0.30 0.01 260);
-  --sidebar-ring: oklch(0.82 0.18 165);
+  --radius: 0.75rem;
+  --primary: #0f7f7a;
+  --primary-foreground: #ffffff;
+  --background: #f5efe6;
+  --foreground: #1f2a2e;
+  --card: #fffaf2;
+  --card-foreground: #1f2a2e;
+  --popover: #fffaf2;
+  --popover-foreground: #1f2a2e;
+  --secondary: #eef4f1;
+  --secondary-foreground: #1f2a2e;
+  --muted: #eef4f1;
+  --muted-foreground: #5a6a70;
+  --accent: #eef4f1;
+  --accent-foreground: #1f2a2e;
+  --destructive: #b83a3a;
+  --destructive-foreground: #ffffff;
+  --border: rgba(25, 36, 40, 0.12);
+  --input: rgba(25, 36, 40, 0.12);
+  --ring: rgba(15, 127, 122, 0.35);
+  --chart-1: #0f7f7a;
+  --chart-2: #d4833a;
+  --chart-3: #c58a1c;
+  --chart-4: #b83a3a;
+  --chart-5: #1f7a57;
+  --sidebar: rgba(255, 252, 245, 0.7);
+  --sidebar-foreground: #1f2a2e;
+  --sidebar-primary: #0f7f7a;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: rgba(15, 127, 122, 0.16);
+  --sidebar-accent-foreground: #0f7f7a;
+  --sidebar-border: rgba(25, 36, 40, 0.12);
+  --sidebar-ring: rgba(15, 127, 122, 0.35);
+
+  /* Cordum palette — light */
+  --cordum: #0f7f7a;
+  --cordum-dim: #0a5f5b;
+  --cordum-bright: #27b3a8;
+  --surface-0: #f5efe6;
+  --surface-1: #fffaf2;
+  --surface-2: #eef4f1;
+  --surface-3: #e5ede9;
+  --c-warning: #c58a1c;
+  --c-danger: #b83a3a;
+  --c-info: #3b82f6;
+  --c-success: #1f7a57;
+
+  /* Mac glass/gradient vars */
+  --surface-glass: rgba(255, 252, 245, 0.7);
+  --bg-radial-1: rgba(15, 127, 122, 0.18);
+  --bg-radial-2: rgba(212, 131, 58, 0.16);
+  --bg-linear-1: #f6f1e8;
+  --bg-linear-2: #eef3f1;
+  --bg-linear-3: #f5efe5;
+}
+
+/* Dark mode — warm dark */
+.dark {
+  --primary: #27b3a8;
+  --primary-foreground: #0f1416;
+  --background: #0f1416;
+  --foreground: #e5efec;
+  --card: #141b1e;
+  --card-foreground: #e5efec;
+  --popover: #1b2529;
+  --popover-foreground: #e5efec;
+  --secondary: #1b2529;
+  --secondary-foreground: #e5efec;
+  --muted: #1b2529;
+  --muted-foreground: #a7b6b3;
+  --accent: #1b2529;
+  --accent-foreground: #e5efec;
+  --destructive: #e26a6a;
+  --destructive-foreground: #0f1416;
+  --border: rgba(229, 239, 236, 0.12);
+  --input: rgba(229, 239, 236, 0.12);
+  --ring: rgba(39, 179, 168, 0.4);
+  --chart-1: #27b3a8;
+  --chart-2: #e49a52;
+  --chart-3: #d6a23e;
+  --chart-4: #e26a6a;
+  --chart-5: #36b67c;
+  --sidebar: rgba(20, 27, 30, 0.75);
+  --sidebar-foreground: #e5efec;
+  --sidebar-primary: #27b3a8;
+  --sidebar-primary-foreground: #0f1416;
+  --sidebar-accent: rgba(39, 179, 168, 0.16);
+  --sidebar-accent-foreground: #27b3a8;
+  --sidebar-border: rgba(229, 239, 236, 0.12);
+  --sidebar-ring: rgba(39, 179, 168, 0.4);
+
+  /* Cordum palette — dark */
+  --cordum: #27b3a8;
+  --cordum-dim: #1a8f86;
+  --cordum-bright: #4dd4c8;
+  --surface-0: #0f1416;
+  --surface-1: #141b1e;
+  --surface-2: #1b2529;
+  --surface-3: #243035;
+  --c-warning: #d6a23e;
+  --c-danger: #e26a6a;
+  --c-info: #60a5fa;
+  --c-success: #36b67c;
+
+  --surface-glass: rgba(20, 27, 30, 0.75);
+  --bg-radial-1: rgba(39, 179, 168, 0.2);
+  --bg-radial-2: rgba(228, 154, 82, 0.12);
+  --bg-linear-1: #0b1012;
+  --bg-linear-2: #0f171a;
+  --bg-linear-3: #111a1d;
 }
 
 /* ============================================================
-   BASE STYLES
+   BASE STYLES — Mac warm aesthetic
    ============================================================ */
 @layer base {
+  html {
+    font-size: 17px;
+  }
   * {
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground antialiased;
+    @apply text-foreground antialiased;
     font-family: var(--font-sans);
+    background:
+      radial-gradient(900px circle at 10% -10%, var(--bg-radial-1), transparent 55%),
+      radial-gradient(700px circle at 90% 0%, var(--bg-radial-2), transparent 45%),
+      linear-gradient(120deg, var(--bg-linear-1) 0%, var(--bg-linear-2) 55%, var(--bg-linear-3) 100%);
+    min-height: 100vh;
   }
   h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-display);
   }
   code, pre, kbd, .font-mono {
     font-family: var(--font-mono);
+  }
+  pre {
+    white-space: pre-wrap;
+    word-break: break-word;
   }
   button:not(:disabled),
   [role="button"]:not([aria-disabled="true"]),
@@ -129,10 +220,13 @@
   input[type="radio"]:not(:disabled) {
     @apply cursor-pointer;
   }
+  ::selection {
+    background: rgba(15, 127, 122, 0.2);
+  }
 }
 
 /* ============================================================
-   COMPONENT UTILITIES — matched to showcase
+   COMPONENT UTILITIES
    ============================================================ */
 @layer components {
   .container {
@@ -163,13 +257,10 @@
     }
   }
 
-  /* Cordum instrument panel card — refined for depth and sharpness */
+  /* Cordum instrument panel card — warm Mac style */
   .instrument-card {
-    @apply bg-card rounded-lg border border-border/60 relative overflow-hidden transition-all duration-200;
-    box-shadow: 
-      0 4px 6px -1px rgb(0 0 0 / 0.1), 
-      0 2px 4px -2px rgb(0 0 0 / 0.1),
-      inset 0 1px 0 0 rgb(255 255 255 / 0.05);
+    @apply bg-card rounded-3xl border border-border relative overflow-hidden transition-all duration-200 p-5;
+    box-shadow: 0 12px 30px rgba(18, 25, 28, 0.08);
   }
   .instrument-card::before {
     content: '';
@@ -178,65 +269,152 @@
     left: 0;
     right: 0;
     height: 2px;
-    background: var(--color-cordum);
-    box-shadow: 0 0 10px var(--color-cordum);
-    opacity: 0.8;
+    background: var(--primary);
+    opacity: 0.6;
     z-index: 10;
   }
   .instrument-card.status-warning::before {
     background: var(--color-warning);
-    box-shadow: 0 0 10px var(--color-warning);
   }
   .instrument-card.status-danger::before {
     background: var(--color-danger);
-    box-shadow: 0 0 10px var(--color-danger);
   }
   .instrument-card.status-info::before {
     background: var(--color-info);
-    box-shadow: 0 0 10px var(--color-info);
   }
   .instrument-card.status-muted::before {
-    background: var(--color-muted);
-    box-shadow: none;
+    background: var(--color-muted-foreground);
     opacity: 0.3;
   }
 
-  /* Hover state for interactive cards */
+  /* Mac hover — lift effect */
   .instrument-card-hover:hover {
-    @apply border-border/80 bg-surface-2/40;
-    transform: translateY(-1px);
-    box-shadow: 
-      0 10px 15px -3px rgb(0 0 0 / 0.2), 
-      0 4px 6px -4px rgb(0 0 0 / 0.2),
-      inset 0 1px 0 0 rgb(255 255 255 / 0.07);
+    transform: translateY(-2px);
+    box-shadow: 0 16px 40px rgba(18, 25, 28, 0.12);
   }
 
-  /* Inset surface for containers inside cards */
+  /* Surface card — Mac glass with soft shadow */
+  .surface-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    box-shadow: 0 12px 30px rgba(18, 25, 28, 0.08);
+    transition:
+      box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+      border-color 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .surface-card:hover {
+    box-shadow: 0 16px 40px rgba(18, 25, 28, 0.1);
+  }
+
+  /* Attention card — premium Mac elevated card */
+  .attention-card {
+    border-radius: 24px;
+    border: 1px solid var(--border);
+    background: var(--surface-glass);
+    padding: 18px 20px;
+    box-shadow: 0 18px 35px rgba(18, 25, 28, 0.12);
+    transition:
+      transform 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+      box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .attention-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 22px 45px rgba(18, 25, 28, 0.14);
+  }
+
+  /* List row — Mac rounded row with hover lift */
+  .list-row {
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: var(--surface-glass);
+    padding: 14px 16px;
+    transition:
+      border-color 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+      transform 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+      box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+      background-color 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .list-row:hover {
+    border-color: var(--primary);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(18, 25, 28, 0.1);
+  }
+
+  /* Inset surface */
   .surface-inset {
-    @apply bg-surface-0/50 border border-border/40 rounded-md;
-    box-shadow: inset 0 2px 4px 0 rgb(0 0 0 / 0.1);
+    @apply bg-secondary/50 border border-border/40 rounded-2xl;
+    box-shadow: inset 0 2px 4px 0 rgb(0 0 0 / 0.04);
   }
 
-  /* Glass panel effect */
+  /* Glass panel — frosted Mac glass */
   .glass-panel {
-    @apply bg-surface-1/70 backdrop-blur-md border border-white/5;
+    background: var(--surface-glass);
+    backdrop-filter: blur(14px);
+    border: 1px solid rgba(255, 255, 255, 0.7);
+    box-shadow: 0 10px 30px rgba(18, 25, 28, 0.08);
   }
 
-  /* Dot grid background — more subtle */
+  /* Dot grid background */
   .dot-grid {
-    background-image: radial-gradient(circle, oklch(0.30 0.01 260) 0.5px, transparent 0.5px);
+    background-image: radial-gradient(circle, rgba(25, 36, 40, 0.08) 0.5px, transparent 0.5px);
     background-size: 20px 24px;
+  }
+
+  /* Mac shadow utilities */
+  .shadow-glow {
+    box-shadow:
+      0 1px 2px rgba(15, 127, 122, 0.1),
+      0 4px 12px rgba(15, 127, 122, 0.15),
+      0 0 0 1px rgba(15, 127, 122, 0.05);
+  }
+  .shadow-glow:hover {
+    box-shadow:
+      0 2px 4px rgba(15, 127, 122, 0.12),
+      0 8px 20px rgba(15, 127, 122, 0.2),
+      0 0 0 1px rgba(15, 127, 122, 0.08);
+  }
+  .shadow-lift {
+    box-shadow:
+      0 1px 2px rgba(184, 58, 58, 0.1),
+      0 4px 12px rgba(184, 58, 58, 0.15);
+  }
+  .shadow-lift:hover {
+    box-shadow:
+      0 2px 4px rgba(184, 58, 58, 0.12),
+      0 8px 20px rgba(184, 58, 58, 0.2);
+  }
+  .shadow-soft {
+    box-shadow:
+      0 1px 3px rgba(18, 25, 28, 0.06),
+      0 6px 16px rgba(18, 25, 28, 0.08);
   }
 
   /* Refined glows */
   .glow-cordum {
-    box-shadow: 0 0 20px oklch(0.82 0.18 165 / 0.12), 0 0 40px oklch(0.82 0.18 165 / 0.04);
+    box-shadow: 0 0 20px rgba(15, 127, 122, 0.12), 0 0 40px rgba(15, 127, 122, 0.04);
   }
   .glow-warning {
-    box-shadow: 0 0 20px oklch(0.80 0.16 75 / 0.1), 0 0 40px oklch(0.80 0.16 75 / 0.03);
+    box-shadow: 0 0 20px rgba(197, 138, 28, 0.1), 0 0 40px rgba(197, 138, 28, 0.03);
   }
   .glow-danger {
-    box-shadow: 0 0 20px oklch(0.65 0.22 25 / 0.1), 0 0 40px oklch(0.65 0.22 25 / 0.03);
+    box-shadow: 0 0 20px rgba(184, 58, 58, 0.1), 0 0 40px rgba(184, 58, 58, 0.03);
+  }
+
+  /* Gradient border — Mac accent gradient */
+  .gradient-border {
+    position: relative;
+  }
+  .gradient-border::after {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(135deg, rgba(15, 127, 122, 0.6), rgba(212, 131, 58, 0.5));
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask-composite: exclude;
+    pointer-events: none;
   }
 
   /* Status pulse */
@@ -249,7 +427,7 @@
   }
 
   .field-help-group .field-help-tooltip {
-    @apply pointer-events-none absolute left-0 top-full z-50 mt-1 w-64 rounded-md border border-border bg-surface-1 p-2 text-[11px] leading-relaxed text-foreground opacity-0 shadow-xl transition-opacity;
+    @apply pointer-events-none absolute left-0 top-full z-50 mt-1 w-64 rounded-2xl border border-border bg-card p-2 text-[11px] leading-relaxed text-foreground opacity-0 shadow-xl transition-opacity;
   }
   .field-help-group:hover .field-help-tooltip,
   .field-help-group:focus-within .field-help-tooltip {
@@ -262,14 +440,91 @@
     100% { background-position: 200% 0; }
   }
   .skeleton {
-    background: linear-gradient(90deg, oklch(0.21 0.01 260) 25%, oklch(0.25 0.01 260) 50%, oklch(0.21 0.01 260) 75%);
+    background: linear-gradient(90deg, #eef4f1 25%, #e5ede9 50%, #eef4f1 75%);
     background-size: 200% 100%;
     animation: shimmer 1.5s ease-in-out infinite;
-    border-radius: 0.375rem;
+    border-radius: 12px;
   }
 }
 
-/* Custom scrollbar */
+/* ============================================================
+   ANIMATIONS — Mac spring easing
+   ============================================================ */
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(100%); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes slide-out-right {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(100%); }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes pulse-scan {
+  0% { box-shadow: 0 0 0 0 rgba(15, 127, 122, 0.4); }
+  70% { box-shadow: 0 0 0 12px rgba(15, 127, 122, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(15, 127, 122, 0); }
+}
+@keyframes slideIn {
+  from { transform: translateY(-20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+@keyframes fadeHighlight {
+  0% { background-color: rgba(15, 127, 122, 0.08); }
+  100% { background-color: transparent; }
+}
+
+.animate-rise {
+  animation: rise-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.animate-scan {
+  animation: pulse-scan 2.8s ease-out infinite;
+}
+.animate-slide-in {
+  animation: slide-in-right 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.animate-slide-out {
+  animation: slide-out-right 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.animate-fade-in {
+  animation: fade-in 0.25s ease-out both;
+}
+.animate-scale-in {
+  animation: scale-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Smooth transitions — Mac spring curve */
+.transition-smooth {
+  transition-property: all;
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  transition-duration: 200ms;
+}
+.transition-colors-smooth {
+  transition-property: color, background-color, border-color, fill, stroke;
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  transition-duration: 150ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-rise,
+  .animate-scan {
+    animation: none;
+  }
+}
+
+/* ============================================================
+   CUSTOM SCROLLBAR
+   ============================================================ */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -278,9 +533,60 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: oklch(0.30 0.01 260);
+  background: rgba(25, 36, 40, 0.15);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: oklch(0.40 0.01 260);
+  background: rgba(25, 36, 40, 0.25);
+}
+
+/* ============================================================
+   DARK MODE OVERRIDES
+   ============================================================ */
+.dark .shadow-glow {
+  box-shadow:
+    0 1px 2px rgba(39, 179, 168, 0.15),
+    0 4px 12px rgba(39, 179, 168, 0.2),
+    0 0 0 1px rgba(39, 179, 168, 0.1);
+}
+.dark .shadow-glow:hover {
+  box-shadow:
+    0 2px 4px rgba(39, 179, 168, 0.2),
+    0 8px 20px rgba(39, 179, 168, 0.28),
+    0 0 0 1px rgba(39, 179, 168, 0.15);
+}
+.dark .shadow-lift {
+  box-shadow:
+    0 1px 2px rgba(226, 106, 106, 0.15),
+    0 4px 12px rgba(226, 106, 106, 0.2);
+}
+.dark .shadow-soft {
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.2),
+    0 6px 16px rgba(0, 0, 0, 0.35);
+}
+.dark .surface-card:hover {
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+}
+.dark .attention-card:hover {
+  box-shadow: 0 22px 45px rgba(0, 0, 0, 0.5);
+}
+.dark .list-row:hover {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.dark .dot-grid {
+  background-image: radial-gradient(circle, rgba(229, 239, 236, 0.06) 0.5px, transparent 0.5px);
+}
+.dark .skeleton {
+  background: linear-gradient(90deg, #1b2529 25%, #243035 50%, #1b2529 75%);
+  background-size: 200% 100%;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(229, 239, 236, 0.12);
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(229, 239, 236, 0.2);
+}
+.dark .glass-panel {
+  border-color: rgba(229, 239, 236, 0.08);
 }

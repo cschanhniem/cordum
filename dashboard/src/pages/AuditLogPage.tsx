@@ -26,9 +26,9 @@ interface AuditEvent {
 }
 
 function actionColor(action: string) {
-  if (action.includes("created") || action.includes("registered")) return "text-emerald-400 bg-emerald-500/10 border-emerald-500/20";
-  if (action.includes("failed") || action.includes("deleted")) return "text-red-400 bg-red-500/10 border-red-500/20";
-  if (action.includes("updated") || action.includes("decided")) return "text-amber-400 bg-amber-500/10 border-amber-500/20";
+  if (action.includes("created") || action.includes("registered")) return "text-[var(--color-success)] bg-[var(--color-success)]/10 border-[var(--color-success)]/20";
+  if (action.includes("failed") || action.includes("deleted")) return "text-destructive bg-destructive/10 border-destructive/20";
+  if (action.includes("updated") || action.includes("decided")) return "text-[var(--color-warning)] bg-[var(--color-warning)]/10 border-[var(--color-warning)]/20";
   return "text-cordum bg-cordum/10 border-cordum/20";
 }
 
@@ -100,13 +100,13 @@ export default function AuditLogPage() {
             placeholder="Search events..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="h-8 w-full pl-8 pr-3 text-xs bg-surface-1 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+            className="h-8 w-full pl-8 pr-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
           />
         </div>
         <select
           value={actionFilter}
           onChange={(e) => setActionFilter(e.target.value)}
-          className="h-8 px-3 text-xs bg-surface-1 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+          className="h-8 px-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
         >
           <option value="">All Actions</option>
           <option value="job.created">Job Created</option>

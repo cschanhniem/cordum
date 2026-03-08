@@ -132,7 +132,7 @@ export default function ApprovalsPage() {
               <MetricValue
                 label="Pending"
                 value={pending.length}
-                icon={<Clock className={cn("w-4 h-4", pending.length > 0 ? "text-amber-400" : "text-muted-foreground")} />}
+                icon={<Clock className={cn("w-4 h-4", pending.length > 0 ? "text-[var(--color-warning)]" : "text-muted-foreground")} />}
               />
             </InstrumentCard>
 
@@ -140,7 +140,7 @@ export default function ApprovalsPage() {
               <MetricValue
                 label="Approved"
                 value={approved.length}
-                icon={<CheckCircle2 className="w-4 h-4 text-emerald-400" />}
+                icon={<CheckCircle2 className="w-4 h-4 text-[var(--color-success)]" />}
               />
             </InstrumentCard>
 
@@ -148,7 +148,7 @@ export default function ApprovalsPage() {
               <MetricValue
                 label="Denied"
                 value={denied.length}
-                icon={<XCircle className={cn("w-4 h-4", denied.length > 0 ? "text-red-400" : "text-muted-foreground")} />}
+                icon={<XCircle className={cn("w-4 h-4", denied.length > 0 ? "text-destructive" : "text-muted-foreground")} />}
               />
             </InstrumentCard>
           </>
@@ -164,10 +164,10 @@ export default function ApprovalsPage() {
             placeholder="Search approvals..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="h-8 w-full pl-8 pr-3 text-xs bg-surface-1 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+            className="h-8 w-full pl-8 pr-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
           />
         </div>
-        <div className="flex items-center gap-1 bg-surface-1 border border-border rounded-md p-0.5">
+        <div className="flex items-center gap-1 bg-surface-1 border border-border rounded-2xl p-0.5">
           {[
             { id: "pending", label: "Pending", count: pending.length },
             { id: "approved", label: "Approved", count: approved.length },
@@ -215,7 +215,7 @@ export default function ApprovalsPage() {
               transition={{ duration: 0.3 }}
               className={cn(
                 "instrument-card cursor-pointer",
-                approval.status === "pending" && "border-amber-500/30",
+                approval.status === "pending" && "border-[var(--color-warning)]/30",
                 approval.status === "denied" && "status-danger",
               )}
               onClick={() => setSelectedApproval(approval)}
@@ -298,7 +298,7 @@ export default function ApprovalsPage() {
                 onChange={(e) => setDenyReason(e.target.value)}
                 placeholder="Why is this request being denied?"
                 rows={3}
-                className="w-full px-3 py-2 text-sm bg-surface-2 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum resize-none"
+                className="w-full px-3 py-2 text-sm bg-surface-2 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum resize-none"
               />
             </div>
           </div>
@@ -327,7 +327,7 @@ export default function ApprovalsPage() {
               </div>
               <button
                 onClick={() => setSelectedApproval(null)}
-                className="p-1.5 rounded-md hover:bg-surface-2 text-muted-foreground hover:text-foreground transition-colors"
+                className="p-1.5 rounded-full hover:bg-surface-2 text-muted-foreground hover:text-foreground transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -365,7 +365,7 @@ export default function ApprovalsPage() {
               {selectedApproval.jobInput && Object.keys(selectedApproval.jobInput).length > 0 && (
                 <div>
                   <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1">Job Input</p>
-                  <div className="rounded-md bg-surface-2/50 border border-border p-3 font-mono text-xs text-foreground overflow-auto max-h-[200px]">
+                  <div className="rounded-2xl bg-surface-2/50 border border-border p-3 font-mono text-xs text-foreground overflow-auto max-h-[200px]">
                     <pre>{JSON.stringify(selectedApproval.jobInput, null, 2)}</pre>
                   </div>
                 </div>
@@ -373,7 +373,7 @@ export default function ApprovalsPage() {
               {selectedApproval.jobContext && (
                 <div>
                   <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1">Context</p>
-                  <div className="rounded-md bg-surface-2/50 border border-border p-3 font-mono text-xs text-foreground overflow-auto max-h-[200px]">
+                  <div className="rounded-2xl bg-surface-2/50 border border-border p-3 font-mono text-xs text-foreground overflow-auto max-h-[200px]">
                     <pre>{JSON.stringify(selectedApproval.jobContext, null, 2)}</pre>
                   </div>
                 </div>

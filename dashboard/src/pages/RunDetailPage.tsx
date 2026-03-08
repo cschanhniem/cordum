@@ -241,9 +241,9 @@ export default function WorkflowRunDetailPage() {
 
   const stepStatusIcon = (status: string) => {
     switch (status) {
-      case "succeeded": return <CheckCircle2 className="w-4 h-4 text-emerald-400" />;
+      case "succeeded": return <CheckCircle2 className="w-4 h-4 text-[var(--color-success)]" />;
       case "running": return <Loader2 className="w-4 h-4 text-cordum animate-spin" />;
-      case "failed": return <XCircle className="w-4 h-4 text-red-400" />;
+      case "failed": return <XCircle className="w-4 h-4 text-destructive" />;
       case "skipped": return <ChevronDown className="w-4 h-4 text-muted-foreground" />;
       default: return <div className="w-4 h-4 rounded-full border-2 border-border" />;
     }
@@ -274,7 +274,7 @@ export default function WorkflowRunDetailPage() {
   if (runError) {
     return (
       <div className="h-[calc(100vh-64px)] flex flex-col -m-6 items-center justify-center">
-        <AlertTriangle className="w-10 h-10 text-red-400 mb-4" />
+        <AlertTriangle className="w-10 h-10 text-destructive mb-4" />
         <p className="text-sm font-medium text-foreground mb-1">Failed to load run</p>
         <p className="text-xs text-muted-foreground mb-4">
           {runError instanceof Error ? runError.message : "An unexpected error occurred"}
@@ -294,7 +294,7 @@ export default function WorkflowRunDetailPage() {
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-3 border-b border-border bg-surface-0 shrink-0">
         <div className="flex items-center gap-3">
-          <button onClick={() => navigate(`/workflows/${workflowId}`)} className="p-1.5 rounded-md hover:bg-surface-2 transition-colors">
+          <button onClick={() => navigate(`/workflows/${workflowId}`)} className="p-1.5 rounded-full hover:bg-surface-2 transition-colors">
             <ArrowLeft className="w-4 h-4 text-muted-foreground" />
           </button>
           <div>
@@ -376,7 +376,7 @@ export default function WorkflowRunDetailPage() {
                         transition={{ delay: i * 0.08 }}
                         onClick={() => setSelectedStep(step)}
                         className={cn(
-                          "relative flex items-center gap-3 px-3 py-3 rounded-md transition-colors cursor-pointer",
+                          "relative flex items-center gap-3 px-3 py-3 rounded-2xl transition-colors cursor-pointer",
                           isActive ? "bg-cordum/5 border border-cordum/20" : "hover:bg-surface-1",
                           selectedStep?.id === step.id && !isActive && "bg-surface-1 border border-border",
                           step.status === "pending" && "opacity-50",
@@ -431,7 +431,7 @@ export default function WorkflowRunDetailPage() {
                     )}
                   </div>
                   {selectedStep.output ? (
-                    <div className="rounded-md bg-surface-1 border border-border p-3 font-mono text-xs text-foreground max-h-48 overflow-auto">
+                    <div className="rounded-2xl bg-surface-1 border border-border p-3 font-mono text-xs text-foreground max-h-48 overflow-auto">
                       <pre>{(() => {
                         try { return JSON.stringify(JSON.parse(selectedStep.output), null, 2); }
                         catch { return selectedStep.output; }
@@ -459,7 +459,7 @@ export default function WorkflowRunDetailPage() {
             <span className="text-[10px] font-mono text-muted-foreground ml-auto">{messages.length} messages</span>
           </div>
           {isChatFallback && (
-            <div className="flex items-center gap-2 px-5 py-1.5 border-b border-amber-500/20 bg-amber-500/5 text-[11px] text-amber-200">
+            <div className="flex items-center gap-2 px-5 py-1.5 border-b border-[var(--color-warning)]/20 bg-[var(--color-warning)]/5 text-[11px] text-[var(--color-warning)]">
               <AlertTriangle className="w-3 h-3 shrink-0" />
               Showing timeline events {chatError ? "(chat unavailable)" : "(no chat messages)"}
             </div>
@@ -477,9 +477,9 @@ export default function WorkflowRunDetailPage() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.03 }}
                 className={cn(
-                  "max-w-[80%] rounded-lg p-3",
+                  "max-w-[80%] rounded-2xl p-3",
                   msg.role === "user" ? "ml-auto bg-cordum/10 border border-cordum/20" :
-                  msg.role === "agent" ? "bg-blue-500/10 border border-blue-500/20" :
+                  msg.role === "agent" ? "bg-[var(--color-info)]/10 border border-[var(--color-info)]/20" :
                   "bg-surface-1 border border-border",
                 )}
               >
@@ -487,7 +487,7 @@ export default function WorkflowRunDetailPage() {
                   <span className={cn(
                     "text-[10px] font-mono uppercase",
                     msg.role === "user" ? "text-cordum" :
-                    msg.role === "agent" ? "text-blue-400" :
+                    msg.role === "agent" ? "text-[var(--color-info)]" :
                     "text-muted-foreground",
                   )}>
                     {msg.role}
@@ -509,7 +509,7 @@ export default function WorkflowRunDetailPage() {
                 onChange={(e) => setChatInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && sendMessage()}
                 placeholder="Send a message to the workflow..."
-                className="flex-1 h-9 px-3 text-sm bg-surface-1 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+                className="flex-1 h-9 px-3 text-sm bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
               />
               <Button variant="primary" size="sm" onClick={sendMessage} disabled={!chatInput.trim() || chatMutation.isPending}>
                 <Send className="w-3.5 h-3.5" />

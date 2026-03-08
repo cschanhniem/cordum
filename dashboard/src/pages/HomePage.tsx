@@ -162,11 +162,11 @@ export default function HomePage() {
 
   // Decision Distribution donut — 5 safety decisions
   const decisionData = [
-    { name: "Allow", value: safetyAllowed, color: "#10B981" },
-    { name: "Deny", value: safetyDenied, color: "#EF4444" },
-    { name: "Require Approval", value: safetyApproval, color: "#F59E0B" },
-    { name: "Constrained", value: safetyConstrained, color: "#3B82F6" },
-    { name: "Throttle", value: safetyThrottled, color: "#F97316" },
+    { name: "Allow", value: safetyAllowed, color: "#1f7a57" },
+    { name: "Deny", value: safetyDenied, color: "#b83a3a" },
+    { name: "Require Approval", value: safetyApproval, color: "#c58a1c" },
+    { name: "Constrained", value: safetyConstrained, color: "#0f7f7a" },
+    { name: "Throttle", value: safetyThrottled, color: "#d4833a" },
   ];
 
   const isLoading = jobsLoading || workersLoading || approvalsLoading;
@@ -200,8 +200,8 @@ export default function HomePage() {
               <MetricValue label="Recent Jobs" value={totalJobs.toLocaleString()} icon={<Activity className="w-4 h-4" />}>
                 <div className="flex gap-3 mt-3 text-[10px] font-mono text-muted-foreground">
                   <span>{runningJobs} running</span>
-                  <span className="text-emerald-400">{completedJobs} done</span>
-                  <span className="text-red-400">{failedJobs} failed</span>
+                  <span className="text-[var(--color-success)]">{completedJobs} done</span>
+                  <span className="text-destructive">{failedJobs} failed</span>
                 </div>
               </MetricValue>
             </InstrumentCard>
@@ -220,9 +220,9 @@ export default function HomePage() {
                       key={w.id}
                       className={cn(
                         "w-2 h-2 rounded-sm",
-                        w.status === "idle" ? "bg-emerald-400" :
+                        w.status === "idle" ? "bg-[var(--color-success)]" :
                         w.status === "busy" ? "bg-cordum" :
-                        "bg-gray-600",
+                        "bg-muted-foreground",
                       )}
                     />
                   ))}
@@ -239,9 +239,9 @@ export default function HomePage() {
                 icon={<ShieldCheck className="w-4 h-4" />}
               >
                 <div className="flex gap-3 mt-3 text-[10px] font-mono">
-                  <span className="text-emerald-400">{safetyAllowed} allow</span>
-                  <span className="text-red-400">{safetyDenied} deny</span>
-                  <span className="text-amber-400">{safetyApproval} review</span>
+                  <span className="text-[var(--color-success)]">{safetyAllowed} allow</span>
+                  <span className="text-destructive">{safetyDenied} deny</span>
+                  <span className="text-[var(--color-warning)]">{safetyApproval} review</span>
                 </div>
               </MetricValue>
             </InstrumentCard>
@@ -252,10 +252,10 @@ export default function HomePage() {
                 label="Pending Approvals" 
                 value={pendingApprovals.length} 
                 unit="awaiting"
-                icon={<UserCheck className={cn("w-4 h-4", pendingApprovals.length > 0 ? "text-amber-400" : "text-cordum")} />}
+                icon={<UserCheck className={cn("w-4 h-4", pendingApprovals.length > 0 ? "text-[var(--color-warning)]" : "text-cordum")} />}
               >
                 {pendingApprovals.length > 0 && (
-                  <Button variant="ghost" size="sm" className="mt-2.5 text-amber-400 hover:text-amber-300 p-0 h-auto font-mono text-[10px] uppercase tracking-widest" onClick={() => navigate("/approvals")}>
+                  <Button variant="ghost" size="sm" className="mt-2.5 text-[var(--color-warning)] hover:text-[var(--color-warning)] p-0 h-auto font-mono text-[10px] uppercase tracking-widest" onClick={() => navigate("/approvals")}>
                     Review now <ArrowRight className="w-3 h-3 ml-1" />
                   </Button>
                 )}
@@ -280,34 +280,34 @@ export default function HomePage() {
               <p className="text-[11px] text-muted-foreground mt-1 leading-none">Safety overlay — allowed vs denied vs approval</p>
             </div>
             <div className="flex items-center gap-4 text-[10px] font-mono shrink-0">
-              <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-400" />Allowed</span>
-              <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-400" />Denied</span>
-              <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-amber-400" />Approval</span>
+              <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[var(--color-success)]" />Allowed</span>
+              <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-destructive" />Denied</span>
+              <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[var(--color-warning)]" />Approval</span>
             </div>
           </div>
           <ResponsiveContainer width="100%" height={260}>
             <AreaChart data={activityData}>
               <defs>
                 <linearGradient id="gradAllowed" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#10B981" stopOpacity={0.25} />
-                  <stop offset="95%" stopColor="#10B981" stopOpacity={0} />
+                  <stop offset="5%" stopColor="#1f7a57" stopOpacity={0.25} />
+                  <stop offset="95%" stopColor="#1f7a57" stopOpacity={0} />
                 </linearGradient>
                 <linearGradient id="gradDenied" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#EF4444" stopOpacity={0.25} />
-                  <stop offset="95%" stopColor="#EF4444" stopOpacity={0} />
+                  <stop offset="5%" stopColor="#b83a3a" stopOpacity={0.25} />
+                  <stop offset="95%" stopColor="#b83a3a" stopOpacity={0} />
                 </linearGradient>
                 <linearGradient id="gradApproval" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#F59E0B" stopOpacity={0.25} />
-                  <stop offset="95%" stopColor="#F59E0B" stopOpacity={0} />
+                  <stop offset="5%" stopColor="#c58a1c" stopOpacity={0.25} />
+                  <stop offset="95%" stopColor="#c58a1c" stopOpacity={0} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
-              <XAxis dataKey="time" tick={{ fontSize: 10, fill: "#6B7A90" }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 10, fill: "#6B7A90" }} axisLine={false} tickLine={false} />
+              <XAxis dataKey="time" tick={{ fontSize: 10, fill: "#5a6a70" }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize: 10, fill: "#5a6a70" }} axisLine={false} tickLine={false} />
               <Tooltip content={<ChartTooltip />} />
-              <Area type="monotone" dataKey="allowed" stackId="1" stroke="#10B981" fill="url(#gradAllowed)" strokeWidth={2} name="Allowed" />
-              <Area type="monotone" dataKey="denied" stackId="1" stroke="#EF4444" fill="url(#gradDenied)" strokeWidth={2} name="Denied" />
-              <Area type="monotone" dataKey="approval" stackId="1" stroke="#F59E0B" fill="url(#gradApproval)" strokeWidth={2} name="Approval" />
+              <Area type="monotone" dataKey="allowed" stackId="1" stroke="#1f7a57" fill="url(#gradAllowed)" strokeWidth={2} name="Allowed" />
+              <Area type="monotone" dataKey="denied" stackId="1" stroke="#b83a3a" fill="url(#gradDenied)" strokeWidth={2} name="Denied" />
+              <Area type="monotone" dataKey="approval" stackId="1" stroke="#c58a1c" fill="url(#gradApproval)" strokeWidth={2} name="Approval" />
             </AreaChart>
           </ResponsiveContainer>
         </motion.div>
@@ -454,7 +454,7 @@ export default function HomePage() {
                 className="p-3" // dense padding for high density grid
               >
                 <div className="flex items-center gap-2 mb-2">
-                  <div className={cn("w-2 h-2 rounded-full", isOnline ? "bg-emerald-400 animate-pulse" : "bg-gray-500")} />
+                  <div className={cn("w-2 h-2 rounded-full", isOnline ? "bg-[var(--color-success)] animate-pulse" : "bg-muted-foreground")} />
                   <span className="font-mono text-[11px] text-foreground truncate">{w.name || w.id.slice(0, 10)}</span>
                 </div>
                 <div className="space-y-1.5">
@@ -470,7 +470,7 @@ export default function HomePage() {
                     <span className="text-foreground">{w.memoryLoad ?? 0}%</span>
                   </div>
                   <div className="w-full h-1 rounded-full bg-surface-2 overflow-hidden">
-                    <div className="h-full rounded-full bg-blue-400 transition-all" style={{ width: `${w.memoryLoad ?? 0}%` }} />
+                    <div className="h-full rounded-full bg-[var(--color-info)] transition-all" style={{ width: `${w.memoryLoad ?? 0}%` }} />
                   </div>
                 </div>
                 {/* Last policy eval line */}
@@ -499,7 +499,7 @@ export default function HomePage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
           {statusLoading ? (
             Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} className="flex items-center gap-3 rounded-lg border border-border bg-surface-0 p-3 animate-pulse">
+              <div key={i} className="flex items-center gap-3 rounded-2xl border border-border bg-surface-0 p-3 animate-pulse">
                 <div className="w-2 h-2 rounded-full shrink-0 bg-surface-2" />
                 <div className="flex-1 min-w-0 space-y-1">
                   <div className="h-3 bg-surface-2 rounded w-20" />
@@ -517,7 +517,7 @@ export default function HomePage() {
                 <div className="flex items-center gap-3">
                   <div className={cn(
                     "w-2 h-2 rounded-full shrink-0",
-                    svc.status === "healthy" ? "bg-emerald-400" : svc.status === "degraded" ? "bg-amber-400" : "bg-red-400"
+                    svc.status === "healthy" ? "bg-[var(--color-success)]" : svc.status === "degraded" ? "bg-[var(--color-warning)]" : "bg-destructive"
                   )} />
                   <div className="flex-1 min-w-0">
                     <p className="text-xs text-foreground font-semibold truncate">{svc.name}</p>

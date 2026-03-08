@@ -102,7 +102,7 @@ function SubmitJobDialog({ open, onClose }: { open: boolean; onClose: () => void
                   onChange={(e) => setPrompt(e.target.value)}
                   rows={4}
                   placeholder="Describe the task for the agent..."
-                  className="w-full px-3 py-2 text-xs bg-surface-0 border border-border rounded-md text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-cordum/30 resize-none"
+                  className="w-full px-3 py-2 text-xs bg-surface-0 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-cordum/30 resize-none"
                 />
               </div>
               <div>
@@ -304,10 +304,10 @@ export default function JobsPage() {
             placeholder="Search by ID, topic, or trace..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="h-8 w-full pl-8 pr-3 text-xs bg-surface-1 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+            className="h-8 w-full pl-8 pr-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
           />
         </div>
-        <div className="flex items-center gap-1 bg-surface-1 border border-border rounded-md p-0.5">
+        <div className="flex items-center gap-1 bg-surface-1 border border-border rounded-2xl p-0.5">
           {tabs.map((tab) => (
             <button
               key={tab.id}

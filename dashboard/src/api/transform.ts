@@ -604,6 +604,7 @@ export function mapJobDetail(detail: BackendJobDetail): Job {
 
 const WORKFLOW_NODE_TYPES = new Set([
   "job",
+  "worker",
   "agent-task",
   "pack-action",
   "tool-call",
@@ -633,11 +634,11 @@ function normalizeWorkflowNodeType(
   if (trimmed === "subworkflow") {
     return { uiType: "sub-workflow" };
   }
-  if (WORKFLOW_NODE_TYPES.has(trimmed) && trimmed !== "job") {
+  if (WORKFLOW_NODE_TYPES.has(trimmed) && trimmed !== "job" && trimmed !== "worker") {
     return { uiType: trimmed };
   }
-  // Backend "job" → differentiate into agent-task / pack-action / tool-call
-  if (trimmed === "job" && meta) {
+  // Backend "job" or "worker" → differentiate into agent-task / pack-action / tool-call
+  if ((trimmed === "job" || trimmed === "worker") && meta) {
     if (typeof meta.pack_id === "string" && meta.pack_id) {
       return { uiType: "pack-action" };
     }
@@ -645,7 +646,7 @@ function normalizeWorkflowNodeType(
       return { uiType: "tool-call" };
     }
   }
-  if (trimmed === "job") {
+  if (trimmed === "job" || trimmed === "worker") {
     return { uiType: "agent-task" };
   }
   return { uiType: "agent-task", backendType: trimmed };

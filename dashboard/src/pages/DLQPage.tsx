@@ -133,9 +133,9 @@ export default function DLQPage() {
             <div className={cn("instrument-card", items.length > 0 ? "status-danger" : "")}>
               <div className="flex items-center justify-between mb-3">
                 <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Dead Letters</span>
-                <AlertTriangle className={cn("w-4 h-4", items.length > 0 ? "text-red-400" : "text-emerald-400")} />
+                <AlertTriangle className={cn("w-4 h-4", items.length > 0 ? "text-destructive" : "text-[var(--color-success)]")} />
               </div>
-              <span className={cn("font-mono text-2xl font-bold", items.length > 0 ? "text-red-400" : "text-emerald-400")}>{data?.items?.length ?? 0}</span>
+              <span className={cn("font-mono text-2xl font-bold", items.length > 0 ? "text-destructive" : "text-[var(--color-success)]")}>{data?.items?.length ?? 0}</span>
               <p className="text-xs text-muted-foreground mt-1">{items.length > 0 ? "Requires attention" : "Queue clear"}</p>
             </div>
             <div className="instrument-card">
@@ -148,9 +148,9 @@ export default function DLQPage() {
             <div className="instrument-card">
               <div className="flex items-center justify-between mb-3">
                 <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Status</span>
-                <span className={cn("w-1.5 h-1.5 rounded-full status-pulse", items.length > 0 ? "bg-red-400" : "bg-emerald-400")} />
+                <span className={cn("w-1.5 h-1.5 rounded-full status-pulse", items.length > 0 ? "bg-destructive" : "bg-[var(--color-success)]")} />
               </div>
-              <span className={cn("font-mono text-sm font-bold", items.length > 0 ? "text-amber-400" : "text-emerald-400")}>
+              <span className={cn("font-mono text-sm font-bold", items.length > 0 ? "text-[var(--color-warning)]" : "text-[var(--color-success)]")}>
                 {items.length > 0 ? "Attention Required" : "All Clear"}
               </span>
             </div>
@@ -166,7 +166,7 @@ export default function DLQPage() {
           placeholder="Search by job ID, topic, or error..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="h-8 w-full pl-8 pr-3 text-xs bg-surface-1 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+          className="h-8 w-full pl-8 pr-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
         />
       </div>
 
@@ -230,7 +230,7 @@ export default function DLQPage() {
                     <td className="px-4 py-3 font-mono text-sm text-foreground">{(d.jobId ?? d.id ?? "").slice(0, 16)}</td>
                     <td className="px-4 py-3 text-sm text-foreground">{d.originalTopic ?? "—"}</td>
                     <td className="px-4 py-3">
-                      <span className="text-xs text-red-400 truncate max-w-[250px] block font-mono">{d.error ?? "—"}</span>
+                      <span className="text-xs text-destructive truncate max-w-[250px] block font-mono">{d.error ?? "—"}</span>
                     </td>
                     <td className="px-4 py-3 text-center font-mono text-xs text-muted-foreground">{d.attempts ?? d.retryCount ?? 0}</td>
                     <td className="px-4 py-3 text-right text-xs text-muted-foreground font-mono">{formatRelativeTime(d.failedAt ?? d.createdAt ?? "")}</td>
@@ -247,7 +247,7 @@ export default function DLQPage() {
                         <button
                           onClick={() => purgeMutation.mutate(d.id)}
                           disabled={purgeMutation.isPending || retryMutation.isPending}
-                          className="p-1.5 rounded hover:bg-surface-2 transition-colors text-red-400 disabled:opacity-50 disabled:pointer-events-none"
+                          className="p-1.5 rounded hover:bg-surface-2 transition-colors text-destructive disabled:opacity-50 disabled:pointer-events-none"
                           title="Purge"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -270,13 +270,13 @@ export default function DLQPage() {
                             <div className="px-12 py-4 bg-surface-0/50 border-b border-border space-y-3">
                               <div>
                                 <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-2">Entry Details</p>
-                                <pre className="text-xs font-mono text-foreground bg-surface-0 border border-border rounded-md p-3 max-h-40 overflow-auto">
+                                <pre className="text-xs font-mono text-foreground bg-surface-0 border border-border rounded-2xl p-3 max-h-40 overflow-auto">
                                   {JSON.stringify(buildDLQEntryDetails(d), null, 2)}
                                 </pre>
                               </div>
                               <div>
                                 <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-1">Full Error</p>
-                                <p className="text-xs font-mono text-red-400">{resolveDLQError(d)}</p>
+                                <p className="text-xs font-mono text-destructive">{resolveDLQError(d)}</p>
                               </div>
                             </div>
                           </motion.div>
@@ -310,7 +310,7 @@ export default function DLQPage() {
               <button
                 onClick={() => setConfirmBulk("retry")}
                 disabled={bulkRetryMutation.isPending || bulkPurgeMutation.isPending}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-cordum/10 text-cordum hover:bg-cordum/20 transition-colors disabled:opacity-50 disabled:pointer-events-none"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full bg-cordum/10 text-cordum hover:bg-cordum/20 transition-colors disabled:opacity-50 disabled:pointer-events-none"
               >
                 <Play className="w-3 h-3" />
                 Retry All
@@ -318,14 +318,14 @@ export default function DLQPage() {
               <button
                 onClick={() => setConfirmBulk("purge")}
                 disabled={bulkRetryMutation.isPending || bulkPurgeMutation.isPending}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors disabled:opacity-50 disabled:pointer-events-none"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors disabled:opacity-50 disabled:pointer-events-none"
               >
                 <Trash2 className="w-3 h-3" />
                 Purge All
               </button>
               <button
                 onClick={() => setSelected(new Set())}
-                className="p-1.5 rounded-md hover:bg-surface-2 text-muted-foreground transition-colors"
+                className="p-1.5 rounded-full hover:bg-surface-2 text-muted-foreground transition-colors"
               >
                 <X className="w-3.5 h-3.5" />
               </button>

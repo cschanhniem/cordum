@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ApiError, get, post, put } from "../api/client";
+import { ApiError, get, post, put, del } from "../api/client";
 import { logger } from "../lib/logger";
 import { queryKeys } from "../lib/queryKeys";
 import { useToastStore } from "../state/toast";
@@ -498,10 +498,88 @@ export function useExplainPolicy() {
 // Policy config / lockdown
 // ---------------------------------------------------------------------------
 
-// TODO(epic-c73f428a): Gateway does not currently expose /policy/config or
-// /policy/lockdown endpoints. The old dashboard hooks were feature-flagged
-// no-ops (Promise.resolve) and have been removed to prevent silent failures.
-// Reintroduce these hooks only when backend contracts are implemented.
+export const POLICY_CONFIG_SUPPORTED =
+  import.meta.env.VITE_POLICY_CONFIG_SUPPORTED === "true";
+
+export interface PolicyConfig {
+  lockdownActive: boolean;
+  lockdownReason?: string;
+  defaultDecision: string;
+  maxEvalTimeMs: number;
+  lockdown?: boolean;
+  lockdownBy?: string;
+  lockdownAt?: string;
+  defaultStance?: string;
+}
+
+const DEFAULT_POLICY_CONFIG: PolicyConfig = {
+  lockdownActive: false,
+  defaultDecision: "deny",
+  maxEvalTimeMs: 500,
+};
+
+export function usePolicyConfig() {
+  return useQuery<PolicyConfig>({
+    queryKey: queryKeys.policies.config(),
+    queryFn: async () => {
+      if (!POLICY_CONFIG_SUPPORTED) return DEFAULT_POLICY_CONFIG;
+      const res = await get<PolicyConfig>("/policy/config");
+      return res;
+    },
+    staleTime: 30_000,
+  });
+}
+
+export function useUpdatePolicyConfig() {
+  const queryClient = useQueryClient();
+  return useMutation<void, Error, Partial<PolicyConfig>>({
+    mutationFn: (config) => {
+      if (!POLICY_CONFIG_SUPPORTED) return Promise.resolve();
+      return put<void>("/policy/config", config);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.policies.config() });
+    },
+  });
+}
+
+export function useActivateLockdown() {
+  const queryClient = useQueryClient();
+  return useMutation<void, Error, { reason: string }>({
+    mutationFn: ({ reason }) => {
+      logger.info("policies", "Activating lockdown", { reason });
+      return post<void>("/policy/lockdown", { reason });
+    },
+    onSuccess: () => {
+      logger.info("policies", "Lockdown activated");
+      useToastStore.getState().addToast({ type: "warning", title: "Lockdown activated" });
+      queryClient.invalidateQueries({ queryKey: queryKeys.policies.config() });
+    },
+    onError: (err) => {
+      logger.error("policies", "Lockdown activation failed", { error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Lockdown failed", description: err.message });
+    },
+  });
+}
+
+export function useDeactivateLockdown() {
+  const queryClient = useQueryClient();
+  return useMutation<void, Error, void>({
+    mutationFn: () => {
+      logger.info("policies", "Deactivating lockdown");
+      return del<void>("/policy/lockdown");
+    },
+    onSuccess: () => {
+      logger.info("policies", "Lockdown deactivated");
+      useToastStore.getState().addToast({ type: "success", title: "Lockdown deactivated" });
+      queryClient.invalidateQueries({ queryKey: queryKeys.policies.config() });
+    },
+    onError: (err) => {
+      logger.error("policies", "Lockdown deactivation failed", { error: err.message });
+      useToastStore.getState().addToast({ type: "error", title: "Deactivation failed", description: err.message });
+    },
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Policy approvals — frontend-derived pending queue
@@ -550,4 +628,5 @@ export const __policiesInternal = {
   policyBundleRulePath,
   policyBundleSimulatePath,
   describeBundleUpdateError,
+  DEFAULT_POLICY_CONFIG,
 };

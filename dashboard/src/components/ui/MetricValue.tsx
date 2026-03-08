@@ -51,8 +51,8 @@ export function MetricValue({
           <span
             className={cn(
               "text-xs font-mono flex items-center",
-              trendDirection === "up" && "text-emerald-400",
-              trendDirection === "down" && "text-red-400",
+              trendDirection === "up" && "text-[var(--color-success)]",
+              trendDirection === "down" && "text-destructive",
               trendDirection === "flat" && "text-muted-foreground",
             )}
           >

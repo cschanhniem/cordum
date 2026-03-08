@@ -39,7 +39,7 @@ export default function SettingsHubPage() {
             className="instrument-card text-left hover:bg-surface-2/50 transition-all duration-200 group"
           >
             <div className="flex items-start gap-4">
-              <div className="w-10 h-10 rounded-lg bg-cordum/10 flex items-center justify-center shrink-0 group-hover:bg-cordum/20 transition-colors">
+              <div className="w-10 h-10 rounded-2xl bg-cordum/10 flex items-center justify-center shrink-0 group-hover:bg-cordum/20 transition-colors">
                 <card.icon className="w-5 h-5 text-cordum" />
               </div>
               <div className="min-w-0">

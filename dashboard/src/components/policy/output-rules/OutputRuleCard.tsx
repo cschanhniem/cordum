@@ -20,13 +20,13 @@ interface OutputRuleCardProps {
 function severityClass(severity: GlobalPolicyOutputRule["severity"]): string {
   switch (severity) {
     case "critical":
-      return "text-red-400 bg-red-400/10 border-red-400/20";
+      return "text-destructive bg-destructive/10 border-destructive/20";
     case "high":
-      return "text-orange-400 bg-orange-400/10 border-orange-400/20";
+      return "text-[var(--color-warning)] bg-[var(--color-warning)]/10 border-[var(--color-warning)]/20";
     case "medium":
-      return "text-amber-400 bg-amber-400/10 border-amber-400/20";
+      return "text-[var(--color-warning)] bg-[var(--color-warning)]/10 border-[var(--color-warning)]/20";
     default:
-      return "text-blue-400 bg-blue-400/10 border-blue-400/20";
+      return "text-[var(--color-info)] bg-[var(--color-info)]/10 border-[var(--color-info)]/20";
   }
 }
 
@@ -115,7 +115,7 @@ export function OutputRuleCard({
               </button>
               <button 
                 aria-label={`Delete ${rule.id}`} 
-                className="rounded p-1.5 text-red-400 hover:bg-red-500/10 transition-colors" 
+                className="rounded p-1.5 text-destructive hover:bg-destructive/10 transition-colors"
                 onClick={onDelete}
                 title="Delete Rule"
               >
@@ -141,17 +141,17 @@ export function OutputRuleCard({
 
       <div className="surface-inset p-3 flex flex-wrap gap-2">
         {rule.match.detectors.map((value) => (
-          <span key={`detector-${value}`} className="rounded bg-orange-500/15 border border-orange-500/20 px-2 py-0.5 text-[10px] font-mono text-orange-300">
+          <span key={`detector-${value}`} className="rounded bg-[var(--color-warning)]/15 border border-[var(--color-warning)]/20 px-2 py-0.5 text-[10px] font-mono text-[var(--color-warning)]">
             detector:{value}
           </span>
         ))}
         {rule.match.contentPatterns.map((value) => (
-          <span key={`pattern-${value}`} className="rounded bg-fuchsia-500/15 border border-fuchsia-500/20 px-2 py-0.5 text-[10px] font-mono text-fuchsia-300">
+          <span key={`pattern-${value}`} className="rounded bg-primary/15 border border-primary/20 px-2 py-0.5 text-[10px] font-mono text-primary">
             pattern:{value}
           </span>
         ))}
         {rule.match.topics.map((value) => (
-          <span key={`topic-${value}`} className="rounded bg-blue-500/15 border border-blue-500/20 px-2 py-0.5 text-[10px] font-mono text-blue-300">
+          <span key={`topic-${value}`} className="rounded bg-[var(--color-info)]/15 border border-[var(--color-info)]/20 px-2 py-0.5 text-[10px] font-mono text-[var(--color-info)]">
             topic:{value}
           </span>
         ))}

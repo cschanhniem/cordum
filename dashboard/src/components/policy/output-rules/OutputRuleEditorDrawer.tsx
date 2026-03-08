@@ -17,7 +17,7 @@ interface OutputRuleEditorDrawerProps {
 function ReadOnlyOutputRuleSummary({ rule }: { rule: GlobalPolicyOutputRule }) {
   return (
     <div className="space-y-4">
-      <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+      <div className="rounded-2xl border border-[var(--color-warning)]/30 bg-[var(--color-warning)]/10 px-3 py-2 text-xs text-[var(--color-warning)]">
         Viewer mode: output rule editor is read-only.
       </div>
       <p className="text-xs text-muted-foreground">
