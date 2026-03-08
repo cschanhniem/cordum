@@ -521,9 +521,10 @@ func loadBasicAPIKeys() (map[string]apiKeyMeta, bool, string, time.Time, bool, e
 // hashAPIKey returns a hex-encoded SHA-256 digest of the given API key.
 // Used to build a timing-safe lookup index: the map key is the hash,
 // so Go's map lookup timing correlates with hash values (opaque) rather
-// than the original secret.
-func hashAPIKey(key string) string {
-	h := sha256.Sum256([]byte(key)) // #nosec G703 -- SHA-256 hash for lookup index, no path traversal
+// than the original secret. This is NOT password hashing — API keys are
+// high-entropy random tokens; SHA-256 is appropriate for indexing them.
+func hashAPIKey(rawToken string) string {
+	h := sha256.Sum256([]byte(rawToken)) // #nosec G703 -- SHA-256 for lookup index, not password storage
 	return hex.EncodeToString(h[:])
 }
 
