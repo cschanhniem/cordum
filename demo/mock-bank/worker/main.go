@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"math/big"
 	"os"
 	"os/signal"
@@ -178,7 +179,7 @@ func main() {
 				active := randInt(max(worker.Capacity/4, 1))
 				cpuLoad := 5.0 + randFloat32()*35.0  // 5–40%
 				memLoad := 20.0 + randFloat32()*40.0 // 20–60%
-				return buildHeartbeat(worker, int32(active), float32(cpuLoad), float32(memLoad))
+				return buildHeartbeat(worker, safeInt32(active), float32(cpuLoad), float32(memLoad))
 			}
 			if payload, err := heartbeatFn(); err == nil {
 				_ = runtime.EmitHeartbeat(nc, payload)
@@ -217,7 +218,7 @@ func buildHeartbeat(w workerDef, activeJobs int32, cpuLoad, memoryLoad float32) 
 				CpuLoad:         cpuLoad,
 				MemoryLoad:      memoryLoad,
 				ActiveJobs:      activeJobs,
-				MaxParallelJobs: int32(w.Capacity),
+				MaxParallelJobs: safeInt32(w.Capacity),
 				Capabilities:    w.Capabilities,
 				Labels:          w.Labels,
 			},
@@ -334,6 +335,16 @@ func randInt(max int) int {
 		return 0
 	}
 	return int(n.Int64())
+}
+
+func safeInt32(v int) int32 {
+	if v > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	if v < math.MinInt32 {
+		return math.MinInt32
+	}
+	return int32(v)
 }
 
 func randFloat32() float32 {

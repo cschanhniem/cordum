@@ -15,11 +15,8 @@ import {
   ChevronUp,
   CheckCircle2,
   XCircle,
-  Eye,
-  Filter,
   X,
   FileWarning,
-  Clock,
   Gauge,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -74,21 +71,6 @@ function severityColor(severity: string): string {
       return "text-[var(--color-info)]";
     default:
       return "text-muted-foreground";
-  }
-}
-
-function severityBgColor(severity: string): string {
-  switch (severity) {
-    case "critical":
-      return "bg-destructive/10";
-    case "high":
-      return "bg-destructive/10";
-    case "medium":
-      return "bg-[var(--color-warning)]/10";
-    case "low":
-      return "bg-[var(--color-info)]/10";
-    default:
-      return "bg-surface-2";
   }
 }
 

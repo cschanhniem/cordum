@@ -9,8 +9,8 @@ import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
   ArrowLeft, Save, Rocket, X, Plus, Briefcase, Shield, GitBranch,
-  Clock, Repeat, Layers, Workflow, GripVertical, ChevronRight,
-  AlertTriangle, Settings, Trash2,
+  Clock, Repeat, Layers, Workflow,
+  AlertTriangle, Trash2,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";

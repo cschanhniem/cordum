@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonTable } from "@/components/ui/Skeleton";
 import { Search, Plus, Workflow, RefreshCw, Eye, GitBranch } from "lucide-react";
-import { cn, formatRelativeTime, clickableRowProps } from "@/lib/utils";
+import { formatRelativeTime, clickableRowProps } from "@/lib/utils";
 
 interface WorkflowSummary {
   id: string;

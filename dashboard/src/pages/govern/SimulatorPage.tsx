@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
-import { AlertTriangle, FlaskConical, Play } from "lucide-react";
+import { FlaskConical } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
