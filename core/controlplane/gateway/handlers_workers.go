@@ -161,6 +161,9 @@ func (s *server) recentJobsByPool(ctx context.Context, pool string, limit int64)
 		logging.Warn("api-gateway", "recent jobs fallback failed", "pool", pool, "error", err)
 		return nil
 	}
+	if limit > 100 {
+		limit = 100
+	}
 	filtered := make([]model.JobRecord, 0, limit)
 	for _, j := range all {
 		if poolTopics[j.Topic] {
