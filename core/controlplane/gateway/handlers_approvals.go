@@ -472,7 +472,15 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 	if err := s.bus.Publish(capsdk.SubjectDLQ, packet); err != nil {
 		logging.Error("api-gateway", "publish dlq on approval reject failed", "job_id", jobID, "error", err)
 	}
+	// For workflow approval gates, also publish to SubjectResult so the
+	// workflow engine's HandleJobResult picks up the denial and transitions
+	// the workflow step (including on_error handler activation).
 	rejectTopic, _ := s.jobStore.GetTopic(r.Context(), jobID)
+	if rejectTopic == capsdk.SubjectWorkflowApprovalGate {
+		if err := s.bus.Publish(capsdk.SubjectResult, packet); err != nil {
+			logging.Error("api-gateway", "publish result on workflow gate reject failed", "job_id", jobID, "error", err)
+		}
+	}
 	s.appendAuditEntryNamed(r.Context(), "reject", "job", jobID, rejectTopic, policyActorID(r), policyRole(r), "reject job "+jobID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]string{"job_id": jobID})
@@ -487,3 +495,4 @@ func snapshotBase(snap string) string {
 	}
 	return snap
 }
+

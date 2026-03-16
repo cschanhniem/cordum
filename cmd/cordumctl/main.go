@@ -205,9 +205,54 @@ func newFlagSet(name string) *flagSet {
 }
 
 func (fs *flagSet) ParseArgs(args []string) {
-	if err := fs.Parse(args); err != nil {
+	reordered := reorderArgs(fs.FlagSet, args)
+	if err := fs.Parse(reordered); err != nil {
 		fail(err.Error())
 	}
+}
+
+// reorderArgs rearranges args so that flag arguments (and their values) appear
+// before positional arguments. Go's flag.FlagSet.Parse stops at the first
+// non-flag argument, so without reordering, flags placed after a positional
+// argument (e.g. "cordumctl run start <wf-id> --input '{...}'") are silently
+// ignored. This function inspects the FlagSet to distinguish boolean flags
+// (which don't consume a following value) from value flags (which do).
+func reorderArgs(fs *flag.FlagSet, args []string) []string {
+	var flags, positional []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			// Everything after bare "--" is positional.
+			positional = append(positional, args[i:]...)
+			break
+		}
+		if !strings.HasPrefix(arg, "-") {
+			positional = append(positional, arg)
+			continue
+		}
+		// Extract flag name: strip leading dashes, split on '='.
+		name := strings.TrimLeft(arg, "-")
+		hasEq := strings.Contains(name, "=")
+		if hasEq {
+			name = name[:strings.Index(name, "=")]
+		}
+		flags = append(flags, arg)
+		// If this is a value flag without inline "=", consume the next arg.
+		if !hasEq {
+			f := fs.Lookup(name)
+			if f != nil {
+				isBool := false
+				if bf, ok := f.Value.(interface{ IsBoolFlag() bool }); ok {
+					isBool = bf.IsBoolFlag()
+				}
+				if !isBool && i+1 < len(args) {
+					i++
+					flags = append(flags, args[i])
+				}
+			}
+		}
+	}
+	return append(flags, positional...)
 }
 
 // tlsOptions resolves TLS config from CLI flags (priority) then env vars.
