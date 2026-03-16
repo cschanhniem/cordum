@@ -512,7 +512,7 @@ func TestCleanupRunIdempotencyReservationLogsDeleteFailures(t *testing.T) {
 		"failed to cleanup idempotency key after run creation failure",
 		"key=idem-key",
 		"run_id=run-123",
-		"error=redis unavailable",
+		`error="redis unavailable"`,
 	} {
 		if !strings.Contains(logOutput, want) {
 			t.Fatalf("expected log output to contain %q, got %q", want, logOutput)
@@ -575,8 +575,8 @@ func TestMarkRunFailedAfterStartErrorLogsPersistenceFailures(t *testing.T) {
 		"failed to persist run failure status",
 		"failed to append run failure timeline event",
 		"run_id=run-log",
-		"error=update failed",
-		"error=timeline failed",
+		`error="update failed"`,
+		`error="timeline failed"`,
 	} {
 		if !strings.Contains(logOutput, want) {
 			t.Fatalf("expected log output to contain %q, got %q", want, logOutput)

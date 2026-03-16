@@ -21,7 +21,6 @@ import (
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/locks"
-	"github.com/cordum/cordum/core/infra/logging"
 	wf "github.com/cordum/cordum/core/workflow"
 	"github.com/redis/go-redis/v9"
 )
@@ -210,7 +209,7 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 			}
 		}
 		if len(rollbackErrs) > 0 {
-			logging.Warn("api-gateway", "pack install rollback had errors", "errors", strings.Join(rollbackErrs, "; "))
+			slog.Warn("pack install rollback had errors", "errors", strings.Join(rollbackErrs, "; "))
 		}
 	}
 
@@ -324,7 +323,7 @@ func (s *server) handleUninstallPack(w http.ResponseWriter, r *http.Request) {
 	owner := packLockOwner(r)
 	release, err := acquirePackLocks(r.Context(), s.lockStore, packID, owner)
 	if err != nil {
-		logging.Warn("api-gateway", "pack lock conflict", "method", r.Method, "path", r.URL.Path, "error", err)
+		slog.Warn("pack lock conflict", "method", r.Method, "path", r.URL.Path, "error", err)
 		writeErrorJSON(w, http.StatusConflict, "resource is locked")
 		return
 	}

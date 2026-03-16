@@ -7,7 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordum/cordum/core/infra/logging"
+	"log/slog"
+
 	schemas "github.com/cordum/cordum/core/infra/schema"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
@@ -169,7 +170,7 @@ func (e *Engine) checkStepOutputPolicy(ctx context.Context, run *WorkflowRun, st
 	}
 	record, err := e.outputSafety.CheckOutputMeta(res, nil)
 	if err != nil {
-		logging.Error("workflow-engine", "step output policy check failed", "run_id", run.ID, "step_id", stepID, "error", err)
+		slog.Error("step output policy check failed", "run_id", run.ID, "step_id", stepID, "error", err)
 		return false // fail-open on error to preserve backward compat
 	}
 	now := time.Now().UTC()

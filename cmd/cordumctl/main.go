@@ -8,12 +8,14 @@ import (
 	"os"
 	"strings"
 
+	"github.com/cordum/cordum/core/infra/logging"
 	sdk "github.com/cordum/cordum/sdk/client"
 )
 
 const defaultGateway = "http://localhost:8081"
 
 func main() {
+	logging.Init("cordumctl")
 	if len(os.Args) < 2 {
 		usage()
 		os.Exit(1)
