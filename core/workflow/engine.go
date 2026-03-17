@@ -261,7 +261,7 @@ func (e *Engine) HandleJobResult(ctx context.Context, res *pb.JobResult) {
 		return
 	}
 
-	slog.Debug("step result received", "component", "workflow", "runId", runID, "stepId", stepID, "jobId", res.JobId)
+	slog.Debug("step result received", "component", "workflow", "runId", runID, "traceId", runID, "stepId", stepID, "jobId", res.JobId)
 
 	unlock, ok := e.lockRun(runID)
 	if !ok {
@@ -417,7 +417,7 @@ func (e *Engine) HandleJobResult(ctx context.Context, res *pb.JobResult) {
 	run.UpdatedAt = now
 	updateRunStatus(run, wfDef, now)
 	if prevStatus != run.Status {
-		slog.Debug("run state transition", "component", "workflow", "runId", run.ID, "from", string(prevStatus), "to", string(run.Status))
+		slog.Debug("run state transition", "component", "workflow", "runId", run.ID, "traceId", run.ID, "from", string(prevStatus), "to", string(run.Status))
 		e.appendTimeline(ctx, run, "run_status", "", "", string(run.Status), "", "", nil)
 	}
 
@@ -2124,7 +2124,7 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 			}
 
 			// Dispatch to NATS — state is already persisted so a crash here is safe.
-			slog.Debug("step dispatching", "component", "workflow", "runId", run.ID, "stepId", stepID, "jobId", jobID, "stepType", string(step.Type))
+			slog.Debug("step dispatching", "component", "workflow", "runId", run.ID, "traceId", run.ID, "stepId", stepID, "jobId", jobID, "stepType", string(step.Type))
 			packet := makeJobPacket(run.ID, req)
 			if err := e.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
 				slog.Error("publish step", "run_id", run.ID, "step_id", stepID, "error", err)

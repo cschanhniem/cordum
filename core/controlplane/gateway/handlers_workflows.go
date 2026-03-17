@@ -465,6 +465,7 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	reqID := requestIdFromContext(r.Context())
 	run := &wf.WorkflowRun{
 		ID:             runID,
 		WorkflowID:     wfID,
@@ -477,9 +478,13 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:      time.Now().UTC(),
 		UpdatedAt:      time.Now().UTC(),
 		IdempotencyKey: idempotencyKey,
+		Metadata:       map[string]string{},
+	}
+	if reqID != "" {
+		run.Metadata["request_id"] = reqID
 	}
 	if dryRun {
-		run.Metadata = map[string]string{"dry_run": "true"}
+		run.Metadata["dry_run"] = "true"
 		run.Labels = map[string]string{"dry_run": "true"}
 	}
 	if err := s.workflowStore.CreateRun(r.Context(), run); err != nil {
@@ -534,7 +539,14 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 	if wfDef != nil {
 		startWfName = wfDef.Name
 	}
+	loggerFromContext(r.Context()).Info("workflow run started",
+		"runId", runID,
+		"workflowId", wfID,
+		"requestId", reqID,
+	)
 	s.appendAuditEntryNamed(r.Context(), "start", "run", runID, startWfName, policyActorID(r), policyRole(r), "start run "+runID)
+	// For workflows, the runId serves as the traceId for the entire execution tree.
+	w.Header().Set("X-Trace-Id", runID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]string{"run_id": runID})
 }

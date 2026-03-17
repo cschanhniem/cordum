@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/prometheus/client_golang/prometheus"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
@@ -218,6 +219,9 @@ func (s *server) startBusTaps() error {
 	for _, subj := range []string{"sys.job.>", "sys.audit.>"} {
 		subject := subj
 		if err := s.bus.Subscribe(subject, "", func(p *pb.BusPacket) error {
+			// Always broadcast to WS clients first — duplicate broadcasts are
+			// harmless (dashboard re-renders) and ensures visibility even on retry.
+			s.enqueueBusPacket(p)
 			if subject == "sys.job.>" {
 				// Check if gateway is shutting down before starting
 				// potentially long-running workflow result processing.
@@ -228,9 +232,10 @@ func (s *server) startBusTaps() error {
 				}
 				handlerCtx, handlerCancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer handlerCancel()
-				s.handleWorkflowJobResult(handlerCtx, p.GetJobResult())
+				if err := s.handleWorkflowJobResult(handlerCtx, p.GetJobResult()); err != nil {
+					return err
+				}
 			}
-			s.enqueueBusPacket(p)
 			return nil
 		}); err != nil {
 			slog.Error("bus subscribe failed", "subject", subject, "error", err)
@@ -519,25 +524,29 @@ func (s *server) enqueueWSEvent(data []byte, tenant string, jobID string) {
 	}
 }
 
-func (s *server) handleWorkflowJobResult(ctx context.Context, jr *pb.JobResult) {
+func (s *server) handleWorkflowJobResult(ctx context.Context, jr *pb.JobResult) error {
 	if s == nil || s.workflowEng == nil || jr == nil || jr.JobId == "" {
-		return
+		return nil
 	}
 	runID, _ := splitWorkflowJobID(jr.JobId)
 	if runID == "" {
-		return
+		return nil
 	}
 
 	if s.jobStore != nil {
 		lockKey := "cordum:wf:run:lock:" + runID
 		token, err := s.jobStore.TryAcquireLock(ctx, lockKey, 30*time.Second)
-		if err != nil || token == "" {
-			return
+		if err != nil {
+			return bus.RetryAfter(err, 1*time.Second)
+		}
+		if token == "" {
+			return bus.RetryAfter(fmt.Errorf("run lock busy: %s", runID), 500*time.Millisecond)
 		}
 		defer func() { _ = s.jobStore.ReleaseLock(context.Background(), lockKey, token) }()
 	}
 
 	s.workflowEng.HandleJobResult(ctx, jr)
+	return nil
 }
 
 func splitWorkflowJobID(jobID string) (runID, stepID string) {

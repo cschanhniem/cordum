@@ -217,6 +217,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key, X-Tenant-ID, X-Principal-Id, X-Principal-Role, X-Request-Id, Idempotency-Key, X-Idempotency-Key")
+		w.Header().Set("Access-Control-Expose-Headers", "X-Request-Id, X-Trace-Id")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -558,6 +559,17 @@ func (r *statusRecorder) Flush() {
 // loggerKey is the context key for the request-scoped logger.
 type loggerKey struct{}
 
+// requestIdKey is the context key for the request ID string.
+type requestIdKey struct{}
+
+// requestIdFromContext returns the request ID from the context, or empty string.
+func requestIdFromContext(ctx context.Context) string {
+	if id, ok := ctx.Value(requestIdKey{}).(string); ok {
+		return id
+	}
+	return ""
+}
+
 // loggerFromContext returns the request-scoped *slog.Logger, falling back to
 // slog.Default() if no logger is attached.
 func loggerFromContext(ctx context.Context) *slog.Logger {
@@ -577,6 +589,9 @@ func requestLoggingMiddleware(next http.Handler) http.Handler {
 			requestID = generateRequestID()
 		}
 
+		// Echo X-Request-Id in all responses so callers can correlate.
+		w.Header().Set("X-Request-Id", requestID)
+
 		logger := slog.Default().With(
 			"requestId", requestID,
 			"method", r.Method,
@@ -586,6 +601,7 @@ func requestLoggingMiddleware(next http.Handler) http.Handler {
 		logger.Debug("request received", "remoteAddr", r.RemoteAddr)
 
 		ctx := context.WithValue(r.Context(), loggerKey{}, logger)
+		ctx = context.WithValue(ctx, requestIdKey{}, requestID)
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		start := time.Now()
 

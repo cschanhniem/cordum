@@ -15,6 +15,9 @@ const (
 	reconcilerLockKey = "cordum:workflow-engine:reconciler:default"
 )
 
+// Reconciler polls for stuck workflow runs and advances them.
+type Reconciler = reconciler
+
 type reconciler struct {
 	workflowStore *RedisStore
 	engine        *Engine
@@ -22,6 +25,11 @@ type reconciler struct {
 	pollInterval  time.Duration
 	lockTTL       time.Duration
 	runScanLimit  int64
+}
+
+// NewReconciler creates a workflow reconciler that polls for stuck runs.
+func NewReconciler(workflowStore *RedisStore, engine *Engine, jobStore model.JobStore, pollInterval time.Duration, runScanLimit int64) *reconciler {
+	return newReconciler(workflowStore, engine, jobStore, pollInterval, runScanLimit)
 }
 
 func newReconciler(workflowStore *RedisStore, engine *Engine, jobStore model.JobStore, pollInterval time.Duration, runScanLimit int64) *reconciler {

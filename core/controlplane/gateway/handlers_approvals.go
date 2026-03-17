@@ -164,8 +164,17 @@ func (s *server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 		}
 		// Enrich with workflow labels from the original job request so the
 		// dashboard can distinguish gate approvals from policy approvals.
+		// Also skip approvals whose workflow run has already terminated.
 		if req, err := s.jobStore.GetJobRequest(r.Context(), job.ID); err == nil && req != nil {
 			if req.Labels != nil {
+				// Filter out stale approvals: if the run is terminal, skip this item.
+				if runID := strings.TrimSpace(req.Labels["run_id"]); runID != "" && s.workflowStore != nil {
+					if run, runErr := s.workflowStore.GetRun(r.Context(), runID); runErr == nil && run != nil {
+						if wf.IsTerminalRunStatus(run.Status) {
+							continue
+						}
+					}
+				}
 				if v := req.Labels["workflow_id"]; v != "" {
 					item["workflow_id"] = v
 				}

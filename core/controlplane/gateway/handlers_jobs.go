@@ -1559,9 +1559,16 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Info("job submitted http", "job_id", jobID)
+	reqID := requestIdFromContext(r.Context())
+	loggerFromContext(r.Context()).Info("job submitted",
+		"jobId", jobID,
+		"traceId", traceID,
+		"requestId", reqID,
+		"topic", req.Topic,
+	)
 
 	s.appendAuditEntryNamed(r.Context(), "submit", "job", jobID, req.Topic, policyActorID(r), policyRole(r), "submit job "+jobID)
+	w.Header().Set("X-Trace-Id", traceID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]string{
 		"job_id":   jobID,

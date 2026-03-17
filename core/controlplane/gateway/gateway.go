@@ -485,6 +485,15 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 		return fmt.Errorf("start bus taps: %w", err)
 	}
 
+	// Start workflow reconciler as a safety net for stuck runs. The reconciler
+	// polls every 5 seconds, scanning Running/Pending/Waiting runs for completed
+	// jobs that were missed (e.g. due to lock contention during NATS delivery).
+	// Uses its own distributed lock so multiple gateway replicas won't conflict.
+	reconcilerCtx, reconcilerCancel := context.WithCancel(context.Background())
+	defer reconcilerCancel()
+	wfReconciler := wf.NewReconciler(workflowStore, workflowEng, jobStore, 5*time.Second, 200)
+	go wfReconciler.Start(reconcilerCtx)
+
 	grpcLis, err := net.Listen("tcp", grpcAddr)
 	if err != nil {
 		return fmt.Errorf("listen grpc (%s): %w", grpcAddr, err)

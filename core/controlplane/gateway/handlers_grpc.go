@@ -287,7 +287,11 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		return nil, status.Errorf(codes.Unavailable, "failed to enqueue job")
 	}
 
-	slog.Info("job submitted", "job_id", jobID)
+	slog.Info("job submitted",
+		"jobId", jobID,
+		"traceId", traceID,
+		"topic", payloadReq.Topic,
+	)
 	return &pb.SubmitJobResponse{JobId: jobID, TraceId: traceID}, nil
 }
 
