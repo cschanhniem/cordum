@@ -529,7 +529,7 @@ func (s *server) handleWorkflowJobResult(ctx context.Context, jr *pb.JobResult) 
 	if s == nil || s.workflowEng == nil || jr == nil || jr.JobId == "" {
 		return nil
 	}
-	runID, _ := splitWorkflowJobID(jr.JobId)
+	runID, stepID := splitWorkflowJobID(jr.JobId)
 	if runID == "" {
 		return nil
 	}
@@ -541,6 +541,11 @@ func (s *server) handleWorkflowJobResult(ctx context.Context, jr *pb.JobResult) 
 			return bus.RetryAfter(err, 1*time.Second)
 		}
 		if token == "" {
+			// Before retrying, check if this message is stale (run terminal or missing).
+			// This breaks the infinite retry storm for orphan messages from completed runs.
+			if s.isStaleJobResult(ctx, runID, stepID, jr.JobId) {
+				return nil // ACK — proven stale, retrying won't help
+			}
 			return bus.RetryAfter(fmt.Errorf("run lock busy: %s", runID), 500*time.Millisecond)
 		}
 		defer func() { _ = s.jobStore.ReleaseLock(context.Background(), lockKey, token) }()
@@ -549,12 +554,58 @@ func (s *server) handleWorkflowJobResult(ctx context.Context, jr *pb.JobResult) 
 	if err := s.workflowEng.HandleJobResult(ctx, jr); err != nil {
 		if errors.Is(err, wf.ErrRunNotFound) {
 			slog.Info("discarding job result for deleted/missing run",
-				"run_id", runID, "job_id", jr.JobId)
+				"component", "gateway", "run_id", runID,
+				"step_id", stepID, "job_id", jr.JobId)
 			return nil // ACK — run is gone, retrying won't help
 		}
 		return bus.RetryAfter(err, 1*time.Second)
 	}
 	return nil
+}
+
+// isStaleJobResult checks whether a job result message can be safely discarded
+// because the target run is missing or in a terminal state, or the step is
+// already terminal. This prevents orphan messages from creating infinite
+// lock-contention retry storms against completed/deleted runs.
+func (s *server) isStaleJobResult(ctx context.Context, runID, stepID, jobID string) bool {
+	if s.workflowStore == nil {
+		return false // can't check — keep retrying
+	}
+	run, err := s.workflowStore.GetRun(ctx, runID)
+	if err != nil {
+		// Run not found — it's stale. GetRun wraps redis.Nil, and the
+		// engine wraps that as ErrRunNotFound. Check both.
+		if errors.Is(err, redis.Nil) || errors.Is(err, wf.ErrRunNotFound) {
+			slog.Info("discarding stale job result: run not found",
+				"component", "gateway", "run_id", runID,
+				"step_id", stepID, "job_id", jobID)
+			return true
+		}
+		// Redis error — can't determine staleness, keep retrying
+		return false
+	}
+	// Run is in a terminal state — no further results can affect it
+	if wf.IsTerminalRunStatus(run.Status) {
+		slog.Info("discarding stale job result: run is terminal",
+			"component", "gateway", "run_id", runID,
+			"step_id", stepID, "job_id", jobID,
+			"run_status", string(run.Status))
+		return true
+	}
+	// Check if the specific step is already terminal
+	if stepID != "" && run.Steps != nil {
+		if step, ok := run.Steps[stepID]; ok && step != nil {
+			if step.Status == wf.StepStatusSucceeded || step.Status == wf.StepStatusFailed ||
+				step.Status == wf.StepStatusCancelled || step.Status == wf.StepStatusTimedOut {
+				slog.Info("discarding stale job result: step is terminal",
+					"component", "gateway", "run_id", runID,
+					"step_id", stepID, "job_id", jobID,
+					"step_status", string(step.Status))
+				return true
+			}
+		}
+	}
+	return false // run and step are still active — keep retrying
 }
 
 func splitWorkflowJobID(jobID string) (runID, stepID string) {

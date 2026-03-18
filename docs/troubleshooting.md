@@ -910,6 +910,52 @@ redis-cli DEL "cordum:wf:delay:poller"
 
 ---
 
+## 14. Orphan NATS Messages / "run lock busy" Retry Storm
+
+**Symptoms**: Gateway logs flood with `run lock busy: <run_id>` errors. New workflow runs appear stuck even though workers report completion. `sys.job.>` subject has hundreds of stale messages.
+
+**Likely causes**:
+
+| Cause | Fix |
+|-------|-----|
+| Deleted/completed runs left orphan job result messages in NATS | Gateway now auto-detects and ACKs stale messages (see below) |
+| Old gateway version without stale-result detection | Upgrade gateway — `isStaleJobResult` checks terminal run/step state on lock contention |
+
+**Diagnostic commands**:
+```bash
+# Count pending messages in the CORDUM_SYS stream
+nats stream info CORDUM_SYS
+
+# List consumers and their pending counts
+nats consumer ls CORDUM_SYS
+
+# Check for specific orphan run IDs in gateway logs
+grep "discarding stale job result" /var/log/cordum/gateway.log
+```
+
+**How the fix works**: When a job result message encounters lock contention, the gateway checks if the target run is missing (deleted) or in a terminal state (succeeded/failed/cancelled/timed_out), or if the target step is already terminal. If any condition is true, the message is ACKed immediately instead of retried — breaking the retry storm.
+
+**Log lines to expect** (structured JSON when `CORDUM_LOG_FORMAT=json`):
+- `"msg":"discarding stale job result: run not found"` — run was deleted
+- `"msg":"discarding stale job result: run is terminal"` — run already completed
+- `"msg":"discarding stale job result: step is terminal"` — step already finished
+
+**Manual purge** (if queue has pre-fix stale data):
+```bash
+# Purge all stale sys.job messages (safe — active results will be re-published by workers)
+nats stream purge CORDUM_SYS --subject "sys.job.>" --force
+```
+
+**JetStream consumer bounds** (env vars in `core/infra/bus/nats.go`):
+
+| Setting | Default | Env Var | Purpose |
+|---------|---------|---------|---------|
+| MaxDeliver | 100 | — | Max redeliveries before message is terminated |
+| AckWait | 10min | `NATS_JS_ACK_WAIT` | Time before NATS redelivers unacked message |
+| MaxAckPending | 2048 | `NATS_MAX_ACK_PENDING` | Max in-flight messages per consumer |
+
+---
+
 ## Related Docs
 
 - [production.md](production.md) — Production readiness guide with incident runbooks
