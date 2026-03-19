@@ -541,6 +541,215 @@ func TestHandleWorkflowJobResultNilInputs(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Regression: lock-busy + terminal run → ACK (no infinite retry storm)
+// ---------------------------------------------------------------------------
+
+func TestHandleWorkflowJobResultLockBusyTerminalRunDiscards(t *testing.T) {
+	s, busMock, _ := newTestGateway(t)
+	ctx := context.Background()
+
+	engine := wf.NewEngine(s.workflowStore, busMock).WithMemory(s.memStore)
+	s.workflowEng = engine
+
+	wfDef := &wf.Workflow{
+		ID:    "wf-stale-terminal",
+		OrgID: "default",
+		Steps: map[string]*wf.Step{
+			"step": {ID: "step", Type: wf.StepTypeWorker, Topic: "job.default"},
+		},
+	}
+	if err := s.workflowStore.SaveWorkflow(ctx, wfDef); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+	run := &wf.WorkflowRun{
+		ID: "run-stale-1", WorkflowID: wfDef.ID, OrgID: "default",
+		Steps: map[string]*wf.StepRun{}, Status: wf.RunStatusPending,
+		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	}
+	if err := s.workflowStore.CreateRun(ctx, run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	if err := engine.StartRun(ctx, wfDef.ID, run.ID); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+
+	// Complete the run normally.
+	updated, _ := s.workflowStore.GetRun(ctx, run.ID)
+	stepRun := updated.Steps["step"]
+	if stepRun == nil || stepRun.JobID == "" {
+		t.Fatal("expected dispatched job ID")
+	}
+	if err := engine.HandleJobResult(ctx, &pb.JobResult{
+		JobId: stepRun.JobID, Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
+	}); err != nil {
+		t.Fatalf("complete run: %v", err)
+	}
+	final, _ := s.workflowStore.GetRun(ctx, run.ID)
+	if final.Status != wf.RunStatusSucceeded {
+		t.Fatalf("expected succeeded, got %s", final.Status)
+	}
+
+	// Now simulate an orphan message arriving with lock contention.
+	lockKey := "cordum:wf:run:lock:" + run.ID
+	token, err := s.jobStore.TryAcquireLock(ctx, lockKey, 30*time.Second)
+	if err != nil || token == "" {
+		t.Fatalf("pre-acquire lock: err=%v token=%q", err, token)
+	}
+	defer func() { _ = s.jobStore.ReleaseLock(ctx, lockKey, token) }()
+
+	// This should ACK (return nil) because the run is terminal,
+	// NOT return a retry error.
+	orphanResult := &pb.JobResult{
+		JobId: stepRun.JobID, Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
+	}
+	retryErr := s.handleWorkflowJobResult(ctx, orphanResult)
+	if retryErr != nil {
+		t.Fatalf("expected nil (ACK) for orphan result on terminal run, got: %v", retryErr)
+	}
+}
+
+func TestHandleWorkflowJobResultLockBusyDeletedRunDiscards(t *testing.T) {
+	s, busMock, _ := newTestGateway(t)
+	ctx := context.Background()
+
+	engine := wf.NewEngine(s.workflowStore, busMock).WithMemory(s.memStore)
+	s.workflowEng = engine
+
+	// Simulate a lock held for a run that doesn't exist.
+	lockKey := "cordum:wf:run:lock:run-ghost-1"
+	token, err := s.jobStore.TryAcquireLock(ctx, lockKey, 30*time.Second)
+	if err != nil || token == "" {
+		t.Fatalf("pre-acquire lock: err=%v token=%q", err, token)
+	}
+	defer func() { _ = s.jobStore.ReleaseLock(ctx, lockKey, token) }()
+
+	jr := &pb.JobResult{
+		JobId:  "run-ghost-1:step@1",
+		Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
+	}
+	retryErr := s.handleWorkflowJobResult(ctx, jr)
+	if retryErr != nil {
+		t.Fatalf("expected nil (ACK) for orphan result on missing run, got: %v", retryErr)
+	}
+}
+
+func TestHandleWorkflowJobResultLockBusyActiveRunRetries(t *testing.T) {
+	s, busMock, _ := newTestGateway(t)
+	ctx := context.Background()
+
+	engine := wf.NewEngine(s.workflowStore, busMock).WithMemory(s.memStore)
+	s.workflowEng = engine
+
+	wfDef := &wf.Workflow{
+		ID:    "wf-active-lock",
+		OrgID: "default",
+		Steps: map[string]*wf.Step{
+			"step": {ID: "step", Type: wf.StepTypeWorker, Topic: "job.default"},
+		},
+	}
+	if err := s.workflowStore.SaveWorkflow(ctx, wfDef); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+	run := &wf.WorkflowRun{
+		ID: "run-active-1", WorkflowID: wfDef.ID, OrgID: "default",
+		Steps: map[string]*wf.StepRun{}, Status: wf.RunStatusPending,
+		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	}
+	if err := s.workflowStore.CreateRun(ctx, run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	if err := engine.StartRun(ctx, wfDef.ID, run.ID); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+
+	updated, _ := s.workflowStore.GetRun(ctx, run.ID)
+	stepRun := updated.Steps["step"]
+	if stepRun == nil || stepRun.JobID == "" {
+		t.Fatal("expected dispatched job ID")
+	}
+
+	// Lock the run to simulate contention.
+	lockKey := "cordum:wf:run:lock:" + run.ID
+	token, err := s.jobStore.TryAcquireLock(ctx, lockKey, 30*time.Second)
+	if err != nil || token == "" {
+		t.Fatalf("pre-acquire lock: err=%v token=%q", err, token)
+	}
+	defer func() { _ = s.jobStore.ReleaseLock(ctx, lockKey, token) }()
+
+	// For an active run, lock-busy should still return retry error.
+	jr := &pb.JobResult{
+		JobId: stepRun.JobID, Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
+	}
+	retryErr := s.handleWorkflowJobResult(ctx, jr)
+	if retryErr == nil {
+		t.Fatal("expected retry error for active run with lock contention")
+	}
+	if !strings.Contains(retryErr.Error(), "run lock busy") {
+		t.Fatalf("expected 'run lock busy' error, got: %v", retryErr)
+	}
+}
+
+func TestIsStaleJobResult(t *testing.T) {
+	s, busMock, _ := newTestGateway(t)
+	ctx := context.Background()
+
+	engine := wf.NewEngine(s.workflowStore, busMock).WithMemory(s.memStore)
+	s.workflowEng = engine
+
+	// Test: missing run → stale
+	if !s.isStaleJobResult(ctx, "nonexistent-run", "step", "nonexistent-run:step@1") {
+		t.Fatal("expected stale for missing run")
+	}
+
+	// Test: nil workflowStore → not stale (can't check)
+	noStore := &server{}
+	if noStore.isStaleJobResult(ctx, "x", "y", "x:y@1") {
+		t.Fatal("expected not stale when store is nil")
+	}
+
+	// Setup a workflow and run for remaining tests.
+	wfDef := &wf.Workflow{
+		ID: "wf-stale-check", OrgID: "default",
+		Steps: map[string]*wf.Step{
+			"step": {ID: "step", Type: wf.StepTypeWorker, Topic: "job.default"},
+		},
+	}
+	if err := s.workflowStore.SaveWorkflow(ctx, wfDef); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+	run := &wf.WorkflowRun{
+		ID: "run-stale-check", WorkflowID: wfDef.ID, OrgID: "default",
+		Steps: map[string]*wf.StepRun{}, Status: wf.RunStatusPending,
+		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	}
+	if err := s.workflowStore.CreateRun(ctx, run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	if err := engine.StartRun(ctx, wfDef.ID, run.ID); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+
+	// Test: active run, active step → not stale
+	if s.isStaleJobResult(ctx, run.ID, "step", run.ID+":step@1") {
+		t.Fatal("expected not stale for active run")
+	}
+
+	// Complete the run.
+	updated, _ := s.workflowStore.GetRun(ctx, run.ID)
+	stepRun := updated.Steps["step"]
+	if err := engine.HandleJobResult(ctx, &pb.JobResult{
+		JobId: stepRun.JobID, Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
+	}); err != nil {
+		t.Fatalf("complete run: %v", err)
+	}
+
+	// Test: terminal run → stale
+	if !s.isStaleJobResult(ctx, run.ID, "step", run.ID+":step@1") {
+		t.Fatal("expected stale for terminal run")
+	}
+}
+
 func TestFilterQuarantinedPacketStripsDenied(t *testing.T) {
 	pkt := &pb.BusPacket{
 		Payload: &pb.BusPacket_JobResult{

@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 )
 
@@ -68,6 +69,8 @@ func evalTemplates(value any, scope map[string]any) (any, error) {
 			// reject null against a typed property. Hardcoded YAML nulls
 			// (child was already nil) are preserved as-is.
 			if evaled == nil && child != nil {
+				slog.Warn("evalTemplates: template resolved to nil, key omitted",
+					"key", k, "template", fmt.Sprintf("%v", child))
 				continue
 			}
 			out[k] = evaled
