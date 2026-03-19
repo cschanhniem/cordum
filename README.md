@@ -276,6 +276,10 @@ func main() {
 
 SDKs: **Go** (stable) | [**Python**](https://github.com/cordum-io/cap) | [**Node**](https://github.com/cordum-io/cap)
 
+## Integration Packs
+
+Extend Cordum with [26+ integration packs](https://github.com/cordum-io/cordum-packs) for Slack, GitHub, AWS, Jira, and more. Each pack is a CAP-native worker with policy-gated workflows. Browse the catalog at [packs.cordum.io](https://packs.cordum.io).
+
 ## Community
 
 - **Discord:** [Join the conversation](https://discord.gg/nvHzPCcWWt)
@@ -328,7 +332,7 @@ See [LICENSE](LICENSE) for full terms.
 
 <p align="center">
   <strong>Ready to govern your AI agents?</strong><br/>
-  <a href="https://cordum.io">cordum.io</a> · <a href="https://github.com/cordum-io/cap">CAP Protocol</a> · <a href="https://discord.gg/nvHzPCcWWt">Discord</a>
+  <a href="https://cordum.io">cordum.io</a> · <a href="https://github.com/cordum-io/cap">CAP Protocol</a> · <a href="https://packs.cordum.io">Packs</a> · <a href="https://discord.gg/nvHzPCcWWt">Discord</a>
 </p>
 
 <p align="center">

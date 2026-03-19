@@ -40,6 +40,24 @@ func (e *Engine) buildJobPayload(run *WorkflowRun, step *Step, item any) (map[st
 		} else {
 			return nil, fmt.Errorf("step input must be object, got %T", evaluated)
 		}
+		// Detect template keys that resolved to nil and were dropped by
+		// evalTemplates. If any such key is required by the step's inline
+		// input schema, fail early with a clear error instead of letting
+		// downstream schema validation produce a confusing "missing properties".
+		reqSet := requiredFromInlineSchema(step.InputSchema)
+		for k, raw := range step.Input {
+			if _, exists := base[k]; exists {
+				continue
+			}
+			if s, ok := raw.(string); ok && strings.Contains(s, "${") {
+				if reqSet[k] {
+					return nil, fmt.Errorf(
+						"step input field %q has template %q that resolved to nil — "+
+							"check that run.Input contains the expected data (run input keys: %v)",
+						k, s, runInputKeys)
+				}
+			}
+		}
 	} else if run != nil && len(run.Input) > 0 {
 		base = run.Input
 	}
@@ -252,4 +270,28 @@ func (e *Engine) buildApprovalGateRequest(wfDef *Workflow, run *WorkflowRun, ste
 		req.Env["dry_run"] = "true"
 	}
 	return req
+}
+
+// requiredFromInlineSchema extracts the set of required field names from an
+// inline JSON Schema object. Returns nil if the schema is nil or has no
+// "required" key.
+func requiredFromInlineSchema(schema map[string]any) map[string]bool {
+	if schema == nil {
+		return nil
+	}
+	raw, ok := schema["required"]
+	if !ok {
+		return nil
+	}
+	arr, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	out := make(map[string]bool, len(arr))
+	for _, v := range arr {
+		if s, ok := v.(string); ok {
+			out[s] = true
+		}
+	}
+	return out
 }

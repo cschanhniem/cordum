@@ -108,6 +108,71 @@ func TestBuildJobPayloadStripsNilValues(t *testing.T) {
 	}
 }
 
+// TestBuildJobPayloadNilRunInputReturnsExplicitError verifies that when
+// run.Input is nil and a step template references ${input.date_range},
+// the error message explicitly mentions the field name and "resolved to nil"
+// instead of a confusing "missing properties" schema validation error.
+func TestBuildJobPayloadNilRunInputReturnsExplicitError(t *testing.T) {
+	engine := &Engine{}
+	run := &WorkflowRun{Input: nil}
+	step := &Step{
+		Input: map[string]any{
+			"scan_type":  "product",
+			"date_range": "${input.date_range}",
+		},
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"scan_type":  map[string]any{"type": "string"},
+				"date_range": map[string]any{"type": "object"},
+			},
+			"required": []any{"scan_type", "date_range"},
+		},
+	}
+	_, err := engine.buildJobPayload(run, step, nil)
+	if err == nil {
+		t.Fatal("expected error when required template resolves to nil")
+	}
+	if !strings.Contains(err.Error(), "date_range") {
+		t.Fatalf("error should mention the field name, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "resolved to nil") {
+		t.Fatalf("error should say 'resolved to nil', got: %v", err)
+	}
+}
+
+// TestBuildJobPayloadPartialRunInputReturnsExplicitError verifies that when
+// run.Input exists but is missing a key referenced by a required step
+// template, the error is explicit about which field resolved to nil.
+func TestBuildJobPayloadPartialRunInputReturnsExplicitError(t *testing.T) {
+	engine := &Engine{}
+	run := &WorkflowRun{Input: map[string]any{"scan_type": "daily"}}
+	step := &Step{
+		Input: map[string]any{
+			"scan_type":  "product",
+			"date_range": "${input.date_range}",
+		},
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"scan_type":  map[string]any{"type": "string"},
+				"date_range": map[string]any{"type": "object"},
+			},
+			"required": []any{"scan_type", "date_range"},
+		},
+	}
+	_, err := engine.buildJobPayload(run, step, nil)
+	if err == nil {
+		t.Fatal("expected error when required template resolves to nil")
+	}
+	if !strings.Contains(err.Error(), "date_range") {
+		t.Fatalf("error should mention the field name, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "resolved to nil") {
+		t.Fatalf("error should say 'resolved to nil', got: %v", err)
+	}
+}
+
 func TestValidateStepOutputInlineSchema(t *testing.T) {
 	memStore, srv := newMemoryStore(t)
 	defer srv.Close()
