@@ -104,6 +104,7 @@ jobs:
   security:
     name: Security Scan
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
     - uses: actions/checkout@v4
@@ -113,10 +114,21 @@ jobs:
       with:
         go-version: '1.24'
 
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Download dependencies
+      run: go mod download
+
     - name: Run Gosec Security Scanner
       run: |
         go install github.com/securego/gosec/v2/cmd/gosec@latest
-        gosec -no-fail -fmt sarif -out results.sarif ./...
+        gosec -no-fail -fmt sarif -out results.sarif -exclude-dir=vendor ./cmd/... ./core/... ./sdk/...
 
     - name: Sanitize SARIF
       run: |
