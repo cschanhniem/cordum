@@ -75,8 +75,8 @@ var (
 	}
 	allowedTransitions = map[model.JobState][]model.JobState{
 		"":                     {model.JobStatePending, model.JobStateApproval, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateFailed},
-		model.JobStatePending:  {model.JobStateApproval, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout},
-		model.JobStateApproval: {model.JobStatePending, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout},
+		model.JobStatePending:  {model.JobStateApproval, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout, model.JobStateSucceeded},
+		model.JobStateApproval: {model.JobStatePending, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout, model.JobStateSucceeded},
 		// Quarantined transitions from active states: output policy 2-phase evaluation
 		// can quarantine a job at any point during execution if the output scanner
 		// detects unsafe content. See ADR-005 (output-policy-2-phase).

@@ -567,7 +567,7 @@ func (e *Engine) handleJobRequest(req *pb.JobRequest, traceID string) error {
 			}
 		}
 
-		if currentState == "" || currentState == JobStateApproval {
+		if currentState == "" {
 			if err := e.setJobState(jobID, JobStatePending); err != nil {
 				return RetryAfter(err, retryDelayStore)
 			}
@@ -643,7 +643,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 		// publish a synthetic success result instead of dispatching to workers.
 		// Publish before state transition so a failed publish can be retried.
 		isApprovalGate := topic == capsdk.SubjectApprovalGate || topic == capsdk.SubjectWorkflowApprovalGate
-		if isApprovalGate && record.Reason == "approval granted" {
+		if record.Reason == "approval granted" || isApprovalGate {
 			pkt := &pb.BusPacket{
 				TraceId:         traceID,
 				SenderId:        defaultSenderID,
