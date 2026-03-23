@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -546,5 +547,40 @@ func TestWithJobLock_RenewalIntermittentFailureNoAbandon(t *testing.T) {
 	store.fakeJobStore.mu.RUnlock()
 	if locked {
 		t.Fatal("expected lock to be released")
+	}
+}
+
+// TestWithJobLock_ConcurrentAbandonedFlagSafe verifies that the abandoned
+// flag (now atomic.Bool) does not race when multiple goroutines concurrently
+// call withJobLock with failing renewals. This test would trigger a data race
+// under the race detector if the flag were a bare bool.
+func TestWithJobLock_ConcurrentAbandonedFlagSafe(t *testing.T) {
+	const concurrency = 50
+	var wg sync.WaitGroup
+	var abandonCount atomic.Int32
+
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			store := &alwaysFailRenewStore{fakeJobStore: newFakeJobStore()}
+			engine := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil)
+
+			ttl := 30 * time.Millisecond // renewal every 10ms, fast failure
+			err := engine.withJobLock(fmt.Sprintf("job-race-%d", id), ttl, func(lockCtx context.Context) error {
+				<-lockCtx.Done()
+				return nil
+			})
+
+			if errors.Is(err, errLockAbandoned) {
+				abandonCount.Add(1)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	// All jobs should have been abandoned due to always-failing renewals
+	if got := abandonCount.Load(); got != concurrency {
+		t.Fatalf("expected %d abandoned jobs, got %d", concurrency, got)
 	}
 }

@@ -127,7 +127,7 @@ func (e *Engine) withJobLock(jobID string, ttl time.Duration, fn func(context.Co
 	// fenceCtx is cancelled when lock ownership can no longer be guaranteed.
 	// All store operations inside fn must derive timeouts from fenceCtx.
 	fenceCtx, fenceCancel := context.WithCancelCause(e.ctx) // #nosec G118 -- fenceCancel called in deferred cleanup below
-	abandoned := false
+	var abandoned atomic.Bool
 
 	// Start lock renewal goroutine at ttl/3 interval to prevent expiry
 	// during long-running safety checks or routing decisions.
@@ -149,7 +149,7 @@ func (e *Engine) withJobLock(jobID string, ttl time.Duration, fn func(context.Co
 					if consecutiveFailures >= maxRenewalFailures {
 						slog.Error("lock renewal abandoned, fencing critical section",
 							"job_id", jobID, "failures", consecutiveFailures, "error", err)
-						abandoned = true
+						abandoned.Store(true)
 						fenceCancel(errLockAbandoned)
 						if e.metrics != nil {
 							e.metrics.IncJobLockAbandoned()
@@ -176,7 +176,7 @@ func (e *Engine) withJobLock(jobID string, ttl time.Duration, fn func(context.Co
 
 		// Skip lock release after abandonment — another handler may
 		// already hold the lock and releasing would drop their lock.
-		if abandoned {
+		if abandoned.Load() {
 			slog.Warn("skipping lock release after abandonment",
 				"job_id", jobID)
 			return
@@ -199,7 +199,7 @@ func (e *Engine) withJobLock(jobID string, ttl time.Duration, fn func(context.Co
 	// If lock was abandoned during fn execution, wrap the error to signal
 	// that state mutations may be incomplete — do NOT retry, as another
 	// handler may already be processing the same job.
-	if abandoned {
+	if abandoned.Load() {
 		if fnErr != nil {
 			return fmt.Errorf("lock abandoned during execution: %w", fnErr)
 		}

@@ -463,7 +463,15 @@ func scanWithContentPatterns(content []byte, rule compiledOutputRule) []outputFi
 	for _, pattern := range rule.patterns {
 		hits := runRegexWithTimeout(pattern.re, text, maxFindingsPerPattern)
 		if hits == nil {
-			slog.Warn("safety-kernel: regex timeout", "rule", rule.id, "pattern", pattern.raw)
+			// FAIL-CLOSED: regex timeout is a potential ReDoS attack.
+			// Generate a finding so the output is quarantined, not allowed.
+			slog.Error("safety-kernel: regex timeout (fail-closed)", "rule", rule.id, "pattern", pattern.raw)
+			out = append(out, outputFinding{
+				Type:     "regex_timeout",
+				Severity: "high",
+				Detail:   "regex pattern timed out - possible ReDoS, output quarantined for safety",
+				Scanner:  rule.id,
+			})
 			continue
 		}
 		for _, hit := range hits {
