@@ -116,9 +116,10 @@ func TestRedisJobStoreTransitionGuard(t *testing.T) {
 	if err := store.SetState(ctx, jobID, model.JobStatePending); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
-	// invalid backwards transition
-	if err := store.SetState(ctx, jobID, model.JobStatePending); err != nil {
-		t.Fatalf("same state should be ok: %v", err)
+	// Same-state transition PENDING→PENDING must be rejected to prevent
+	// double-approval races where concurrent requests both succeed.
+	if err := store.SetState(ctx, jobID, model.JobStatePending); err == nil {
+		t.Fatal("PENDING → PENDING should be rejected (same-state not allowed)")
 	}
 	if err := store.SetState(ctx, jobID, model.JobStateDispatched); err != nil {
 		t.Fatalf("advance: %v", err)
@@ -145,8 +146,8 @@ func TestRedisJobStoreTransitionGuard(t *testing.T) {
 	if err := store.SetState(ctx, jobPendingFail, model.JobStateFailed); err != nil {
 		t.Fatalf("pending -> failed should be ok: %v", err)
 	}
-	if err := store.SetState(ctx, jobPendingFail, model.JobStateFailed); err != nil {
-		t.Fatalf("same terminal state should be ok: %v", err)
+	if err := store.SetState(ctx, jobPendingFail, model.JobStateFailed); err == nil {
+		t.Fatal("FAILED → FAILED should be rejected (terminal, no self-transition)")
 	}
 
 	jobScheduledFail := "job-456-scheduled-fail"
@@ -1313,9 +1314,11 @@ func TestIsAllowedTransition_QuarantinedIsTerminal(t *testing.T) {
 			t.Fatalf("Quarantined → %s should NOT be allowed (terminal state)", to)
 		}
 	}
-	// Self-transition is always allowed.
-	if !isAllowedTransition(model.JobStateQuarantined, model.JobStateQuarantined) {
-		t.Fatal("Quarantined → Quarantined (self) should be allowed")
+	// Same-state self-transitions on terminal states must NOT be allowed.
+	// Removing the blanket from==to shortcut prevents double-approval bugs
+	// where concurrent requests both succeed because PENDING→PENDING passes.
+	if isAllowedTransition(model.JobStateQuarantined, model.JobStateQuarantined) {
+		t.Fatal("Quarantined → Quarantined (self) should NOT be allowed (terminal)")
 	}
 }
 

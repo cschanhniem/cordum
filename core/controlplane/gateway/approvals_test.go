@@ -643,10 +643,13 @@ func TestApproveJobDoubleApproveIdempotent(t *testing.T) {
 		t.Fatalf("first approve: expected 200 got %d body=%s", rr1.Code, rr1.Body.String())
 	}
 
-	// Second approval should return 409 — job is no longer awaiting approval.
+	// Second approval should return 200 with "already_approved" (idempotent).
 	rr2 := approve()
-	if rr2.Code != http.StatusConflict {
-		t.Fatalf("second approve: expected 409 got %d body=%s", rr2.Code, rr2.Body.String())
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("second approve: expected 200 (idempotent) got %d body=%s", rr2.Code, rr2.Body.String())
+	}
+	if !strings.Contains(rr2.Body.String(), "already_approved") {
+		t.Fatalf("second approve: expected already_approved in body, got %s", rr2.Body.String())
 	}
 }
 

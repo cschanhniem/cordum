@@ -80,7 +80,9 @@ var (
 		// Quarantined transitions from active states: output policy 2-phase evaluation
 		// can quarantine a job at any point during execution if the output scanner
 		// detects unsafe content. See ADR-005 (output-policy-2-phase).
-		model.JobStateScheduled:  {model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout, model.JobStateSucceeded, model.JobStateCancelled, model.JobStateQuarantined},
+		// SCHEDULED self-transition allowed for dispatch publish rollback
+		// (DISPATCHED→SCHEDULED fails, second replay starts at SCHEDULED).
+		model.JobStateScheduled: {model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout, model.JobStateSucceeded, model.JobStateCancelled, model.JobStateQuarantined},
 		model.JobStateDispatched: {model.JobStateScheduled, model.JobStateRunning, model.JobStateSucceeded, model.JobStateFailed, model.JobStateCancelled, model.JobStateTimeout, model.JobStateQuarantined},
 		model.JobStateRunning:    {model.JobStateSucceeded, model.JobStateFailed, model.JobStateCancelled, model.JobStateTimeout, model.JobStateQuarantined},
 		// Succeeded → Quarantined: async output scanning may flag content after the
@@ -144,8 +146,9 @@ func normalizeTimestampMicrosUpper(ts int64) int64 {
 
 // RedisJobStore implements model.JobStore backed by Redis.
 type RedisJobStore struct {
-	client  redis.UniversalClient
-	metaTTL time.Duration
+	client          redis.UniversalClient
+	metaTTL         time.Duration
+	idempotencyTTL  time.Duration // TTL for idempotency keys; must outlive job lifecycle
 }
 
 // Client returns the underlying Redis client for use by other subsystems
@@ -334,8 +337,19 @@ func NewRedisJobStore(url string) (*RedisJobStore, error) {
 		return nil, fmt.Errorf("connect redis: %w", err)
 	}
 
-	slog.Debug("job store connected", "component", "store", "metaTTL", ttl.String())
-	return &RedisJobStore{client: client, metaTTL: ttl}, nil
+	// Idempotency keys must outlive the job lifecycle to prevent
+	// duplicate jobs on late retries. Default: 90 days.
+	idempotencyTTL := 90 * 24 * time.Hour
+	if v := os.Getenv("CORDUM_IDEMPOTENCY_TTL"); v != "" {
+		if parsed, err := time.ParseDuration(v); err != nil {
+			slog.Warn("invalid CORDUM_IDEMPOTENCY_TTL, using default", "value", v, "default", idempotencyTTL)
+		} else if parsed > 0 {
+			idempotencyTTL = parsed
+		}
+	}
+
+	slog.Debug("job store connected", "component", "store", "metaTTL", ttl.String(), "idempotencyTTL", idempotencyTTL.String())
+	return &RedisJobStore{client: client, metaTTL: ttl, idempotencyTTL: idempotencyTTL}, nil
 }
 
 func (s *RedisJobStore) SetState(ctx context.Context, jobID string, state model.JobState) error {
@@ -1168,7 +1182,9 @@ func (s *RedisJobStore) TrySetIdempotencyKeyScoped(ctx context.Context, tenant, 
 	}
 
 	// Phase 2: Try to claim the scoped key.
-	ok, err := s.client.SetNX(ctx, idKey, jobID, s.metaTTL).Result()
+	// Use idempotencyTTL (90d default) instead of metaTTL (7d default)
+	// to prevent duplicate jobs on late retries after metaTTL expiry.
+	ok, err := s.client.SetNX(ctx, idKey, jobID, s.idempotencyTTL).Result()
 	if err != nil {
 		return false, "", fmt.Errorf("job store try set idempotency key scoped %s: %w", jobID, err)
 	}
@@ -1192,7 +1208,7 @@ func (s *RedisJobStore) SetIdempotencyKeyScoped(ctx context.Context, tenant, key
 	if idKey == "" {
 		return fmt.Errorf("idempotency key required")
 	}
-	_, err := s.client.SetNX(ctx, idKey, jobID, s.metaTTL).Result()
+	_, err := s.client.SetNX(ctx, idKey, jobID, s.idempotencyTTL).Result()
 	if err != nil {
 		return fmt.Errorf("job store set idempotency key scoped %s: %w", jobID, err)
 	}
@@ -1587,9 +1603,6 @@ func (s *RedisJobStore) getDeadline(ctx context.Context, jobID string) (int64, e
 }
 
 func isAllowedTransition(from, to model.JobState) bool {
-	if from == to {
-		return true
-	}
 	allowed, ok := allowedTransitions[from]
 	if !ok {
 		return false
