@@ -15,6 +15,19 @@ topics:
   job.valuation-agents.process: valuation-agents
   job.underwriting-agents.process: underwriting-agents
   job.cordum.approval-gate: approval-gates
+  # GTM Proof Engine
+  job.gtm-engine.research: gtm-engine-think
+  job.gtm-engine.synthesize: gtm-engine-think
+  job.gtm-engine.extract-pain: gtm-engine-think
+  job.gtm-engine.draft-outreach: gtm-engine-think
+  job.gtm-engine.draft-proof: gtm-engine-think
+  job.gtm-engine.summarize-scorecard: gtm-engine-think
+  job.gtm-engine.eval-kill: gtm-engine-act
+  job.gtm-engine.compute-milestones: gtm-engine-act
+  job.gtm-engine.advance-stage: gtm-engine-act
+  job.gtm-engine.send-email: gtm-engine-act
+  job.gtm-engine.notify-slack: gtm-engine-act
+  job.gtm-engine.create-issues: gtm-engine-act
 pools:
   default:
     requires: []
@@ -47,4 +60,8 @@ pools:
   underwriting-agents:
     requires: []
   approval-gates:
+    requires: []
+  gtm-engine-think:
+    requires: []
+  gtm-engine-act:
     requires: []

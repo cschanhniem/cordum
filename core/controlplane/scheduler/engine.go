@@ -567,7 +567,7 @@ func (e *Engine) handleJobRequest(req *pb.JobRequest, traceID string) error {
 			}
 		}
 
-		if currentState == "" {
+		if currentState == "" || currentState == JobStateApproval {
 			if err := e.setJobState(jobID, JobStatePending); err != nil {
 				return RetryAfter(err, retryDelayStore)
 			}
