@@ -156,7 +156,7 @@ export default function PolicyPage() {
   const principalId = useConfigStore((state) => state.principalId);
   const canEditPolicy = normalizeRole(principalRole) === "admin";
   const [searchParams] = useSearchParams();
-  const approvalsQuery = useInfiniteQuery<ApprovalsResponse>({
+  const approvalsQuery = useInfiniteQuery({
     queryKey: ["approvals"],
     queryFn: ({ pageParam }) =>
       api.listApprovals(
