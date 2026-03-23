@@ -360,11 +360,12 @@ func (s *RedisUserStore) UpdatePassword(ctx context.Context, userID, newPassword
 		return fmt.Errorf("redis set user: %w", err)
 	}
 
-	// Revoke all existing sessions for this user. This must not fail-open:
-	// if session revocation fails, the password change should still be
-	// considered incomplete to prevent stale sessions from persisting.
+	// Revoke all existing sessions for this user. Password change is the
+	// critical operation — session cleanup is best-effort. If Redis is
+	// temporarily unavailable, sessions will expire via TTL.
 	if err := s.DeleteUserSessions(ctx, userID); err != nil {
-		return fmt.Errorf("revoke sessions after password change: %w", err)
+		slog.Warn("session cleanup after password change failed, sessions will expire via TTL",
+			"user_id", userID, "error", err)
 	}
 	return nil
 }
@@ -522,6 +523,13 @@ func (s *RedisUserStore) Delete(ctx context.Context, id string) error {
 	pipe.SRem(ctx, userTenantIndexPrefix+user.Tenant, user.Username)
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("redis soft-delete user: %w", err)
+	}
+
+	// Revoke all sessions for the deleted user. Best-effort — user is
+	// already disabled so sessions will fail validation on next use.
+	if err := s.DeleteUserSessions(ctx, id); err != nil {
+		slog.Warn("session cleanup after user delete failed",
+			"user_id", id, "error", err)
 	}
 	return nil
 }

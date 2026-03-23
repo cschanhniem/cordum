@@ -52,12 +52,14 @@ type OIDCProvider struct {
 	jwksURI    string
 	httpClient *http.Client
 
-	mu          sync.RWMutex
-	rsaKeys     map[string]*rsa.PublicKey
-	ecKeys      map[string]*ecdsa.PublicKey
-	lastRefresh time.Time
-	allowedAlgs map[string]struct{}
-	redisClient redis.UniversalClient // optional — used for cross-replica JWKS cache
+	mu              sync.RWMutex
+	rsaKeys         map[string]*rsa.PublicKey
+	ecKeys          map[string]*ecdsa.PublicKey
+	lastRefresh     time.Time
+	lastFullRefresh time.Time // when keys were last fully replaced (grace period anchor)
+	allowedAlgs     map[string]struct{}
+	redisClient     redis.UniversalClient // optional — used for cross-replica JWKS cache
+	refreshCooldown time.Duration         // configurable via OIDC_JWKS_REFRESH_COOLDOWN
 
 	stopCh chan struct{}
 	done   chan struct{}
@@ -132,16 +134,26 @@ func NewOIDCProvider(cfg OIDCConfig) (*OIDCProvider, error) {
 	}
 	cfg.AllowedSigningAlgs = allowedAlgs
 
+	cooldown := time.Minute
+	if v := os.Getenv("OIDC_JWKS_REFRESH_COOLDOWN"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			cooldown = d
+		} else {
+			slog.Warn("invalid OIDC_JWKS_REFRESH_COOLDOWN, using default", "value", v, "default", cooldown)
+		}
+	}
+
 	p := &OIDCProvider{
 		cfg: cfg,
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
-		rsaKeys:     make(map[string]*rsa.PublicKey),
-		ecKeys:      make(map[string]*ecdsa.PublicKey),
-		stopCh:      make(chan struct{}),
-		done:        make(chan struct{}),
-		allowedAlgs: make(map[string]struct{}, len(cfg.AllowedSigningAlgs)),
+		rsaKeys:         make(map[string]*rsa.PublicKey),
+		ecKeys:          make(map[string]*ecdsa.PublicKey),
+		stopCh:          make(chan struct{}),
+		done:            make(chan struct{}),
+		allowedAlgs:     make(map[string]struct{}, len(cfg.AllowedSigningAlgs)),
+		refreshCooldown: cooldown,
 	}
 	for _, alg := range cfg.AllowedSigningAlgs {
 		p.allowedAlgs[alg] = struct{}{}
@@ -408,8 +420,26 @@ func (p *OIDCProvider) refreshJWKS(ctx context.Context) error {
 	}
 
 	p.mu.Lock()
-	p.rsaKeys = rsaKeys
-	p.ecKeys = ecKeys
+	if len(rsaKeys) == 0 && len(ecKeys) == 0 {
+		// Empty JWKS response: preserve existing cache, don't evict working keys.
+		slog.Warn("JWKS response contained no valid keys, preserving existing cache")
+	} else if time.Since(p.lastFullRefresh) > time.Hour {
+		// Grace period expired: fully replace cache with latest JWKS keys.
+		// This ensures revoked/rotated IdP keys are eventually removed.
+		p.rsaKeys = rsaKeys
+		p.ecKeys = ecKeys
+		p.lastFullRefresh = time.Now()
+		slog.Info("JWKS cache fully replaced after grace period")
+	} else {
+		// Within grace period: merge new keys with existing to allow
+		// graceful key rotation without breaking in-flight tokens.
+		for kid, key := range rsaKeys {
+			p.rsaKeys[kid] = key
+		}
+		for kid, key := range ecKeys {
+			p.ecKeys[kid] = key
+		}
+	}
 	p.lastRefresh = time.Now()
 	p.mu.Unlock()
 
@@ -457,21 +487,40 @@ func (p *OIDCProvider) backgroundRefresh() {
 }
 
 // refreshIfUnknownKid attempts an on-demand JWKS refresh if the kid is not
-// found in cache. Rate-limited to at most once per minute.
+// found in cache. Uses double-checked locking to prevent thundering herd:
+// the rate-limit check is re-verified under the write lock so concurrent
+// goroutines coalesce into a single refresh.
 func (p *OIDCProvider) refreshIfUnknownKid(kid string) bool {
+	// Fast path: check under read lock.
 	p.mu.RLock()
 	_, hasRSA := p.rsaKeys[kid]
 	_, hasEC := p.ecKeys[kid]
-	lastRefresh := p.lastRefresh
 	p.mu.RUnlock()
 
 	if hasRSA || hasEC {
 		return true
 	}
-	// Rate limit: at most one refresh per minute
-	if time.Since(lastRefresh) < time.Minute {
+
+	// Slow path: acquire write lock and re-check everything.
+	// This prevents the TOCTOU race where N goroutines all pass the
+	// rate-limit check and trigger N concurrent JWKS refreshes.
+	p.mu.Lock()
+	// Re-check kid under write lock — another goroutine may have refreshed.
+	_, hasRSA = p.rsaKeys[kid]
+	_, hasEC = p.ecKeys[kid]
+	if hasRSA || hasEC {
+		p.mu.Unlock()
+		return true
+	}
+	// Re-check rate limit under write lock — prevents thundering herd.
+	if time.Since(p.lastRefresh) < p.refreshCooldown {
+		p.mu.Unlock()
 		return false
 	}
+	// Mark refresh in progress so concurrent goroutines see the updated timestamp.
+	p.lastRefresh = time.Now()
+	p.mu.Unlock()
+
 	// Bound on-demand refresh to prevent request-path pile-up under IdP slowness.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
