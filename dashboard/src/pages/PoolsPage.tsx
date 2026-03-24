@@ -9,6 +9,7 @@ import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
 import { ProgressBar } from "../components/ProgressBar";
 import type { Heartbeat } from "../types/api";
+import { ErrorBanner } from "../components/ui/ErrorBanner";
 
 const STALE_WORKER_MINUTES = 2;
 
@@ -36,7 +37,7 @@ export default function PoolsPage() {
     queryFn: () => api.getConfig("system", "default"),
   });
 
-  const workers = useMemo(() => (workersQuery.data || []) as Heartbeat[], [workersQuery.data]);
+  const workers = useMemo(() => workersQuery.data || [], [workersQuery.data]);
 
   const cutoff = Date.now() - STALE_WORKER_MINUTES * 60 * 1000;
   const staleWorkers = useMemo(() => {
@@ -106,6 +107,10 @@ export default function PoolsPage() {
   const totalWorkers = workers.length;
   const healthyWorkers = totalWorkers - staleWorkers.length;
   const totalTopics = pools.reduce((sum, p) => sum + p.topics.length, 0);
+
+  if (workersQuery.isError) {
+    return <ErrorBanner message={workersQuery.error instanceof Error ? workersQuery.error.message : "Failed to load workers"} onRetry={() => void workersQuery.refetch()} />;
+  }
 
   return (
     <div className="space-y-6">

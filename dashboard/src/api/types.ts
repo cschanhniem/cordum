@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 export interface ApiResponse<T> {
-  items: T extends Array<infer _> ? T : T[];
+  items?: T extends Array<infer _> ? T : T[];
   next_cursor?: number | null;
 }
 
@@ -726,7 +726,13 @@ export interface Approval {
     status?: string;
     metadata?: Record<string, unknown>;
     risk_tags?: string[];
+    requires?: string[];
     capabilities?: string[];
+    capability?: string;
+    actor_id?: string;
+    actor_type?: string;
+    pack_id?: string;
+    tenant?: string;
   };
   decision?: string;
   policy_rule_id?: string;

@@ -127,7 +127,7 @@ func (e *Engine) withJobLock(jobID string, ttl time.Duration, fn func(context.Co
 	// fenceCtx is cancelled when lock ownership can no longer be guaranteed.
 	// All store operations inside fn must derive timeouts from fenceCtx.
 	fenceCtx, fenceCancel := context.WithCancelCause(e.ctx) // #nosec G118 -- fenceCancel called in deferred cleanup below
-	abandoned := false
+	var abandoned atomic.Bool
 
 	// Start lock renewal goroutine at ttl/3 interval to prevent expiry
 	// during long-running safety checks or routing decisions.
@@ -149,7 +149,7 @@ func (e *Engine) withJobLock(jobID string, ttl time.Duration, fn func(context.Co
 					if consecutiveFailures >= maxRenewalFailures {
 						slog.Error("lock renewal abandoned, fencing critical section",
 							"job_id", jobID, "failures", consecutiveFailures, "error", err)
-						abandoned = true
+						abandoned.Store(true)
 						fenceCancel(errLockAbandoned)
 						if e.metrics != nil {
 							e.metrics.IncJobLockAbandoned()
@@ -176,7 +176,7 @@ func (e *Engine) withJobLock(jobID string, ttl time.Duration, fn func(context.Co
 
 		// Skip lock release after abandonment — another handler may
 		// already hold the lock and releasing would drop their lock.
-		if abandoned {
+		if abandoned.Load() {
 			slog.Warn("skipping lock release after abandonment",
 				"job_id", jobID)
 			return
@@ -199,7 +199,7 @@ func (e *Engine) withJobLock(jobID string, ttl time.Duration, fn func(context.Co
 	// If lock was abandoned during fn execution, wrap the error to signal
 	// that state mutations may be incomplete — do NOT retry, as another
 	// handler may already be processing the same job.
-	if abandoned {
+	if abandoned.Load() {
 		if fnErr != nil {
 			return fmt.Errorf("lock abandoned during execution: %w", fnErr)
 		}
@@ -274,8 +274,12 @@ func (e *Engine) WithAsyncFailMode(mode string) *Engine {
 	return e
 }
 
-func (e *Engine) isAsyncFailClosed() bool {
-	return e.asyncFailMode != "open"
+// isAsyncFailOpen reports whether the engine allows output through when the
+// async output safety check fails or times out. Returns true only when
+// explicitly set to "open" via WithAsyncFailMode("open"). The default mode
+// (empty string or "closed") quarantines on error (fail-closed).
+func (e *Engine) isAsyncFailOpen() bool {
+	return e.asyncFailMode == "open"
 }
 
 // WithInputFailMode sets the behavior when the safety kernel is unreachable.
@@ -289,6 +293,13 @@ func (e *Engine) WithInputFailMode(mode string) *Engine {
 
 func (e *Engine) isInputFailOpen() bool {
 	return e.inputFailMode == "open"
+}
+
+// isApprovalGateTopic returns true if the topic is a synthetic approval gate
+// subject, not an actual worker topic. Only these topics should be auto-completed
+// with synthetic SUCCEEDED results; worker topics must always be dispatched.
+func isApprovalGateTopic(topic string) bool {
+	return topic == capsdk.SubjectApprovalGate || topic == capsdk.SubjectWorkflowApprovalGate
 }
 
 // Start registers subscriptions for the scheduler.
@@ -567,7 +578,7 @@ func (e *Engine) handleJobRequest(req *pb.JobRequest, traceID string) error {
 			}
 		}
 
-		if currentState == "" || currentState == JobStateApproval {
+		if currentState == "" {
 			if err := e.setJobState(jobID, JobStatePending); err != nil {
 				return RetryAfter(err, retryDelayStore)
 			}
@@ -639,11 +650,12 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 		if record.Constraints != nil {
 			applyConstraints(req, record.Constraints)
 		}
-		// Approval gate auto-complete: when an approval gate job is granted,
+		// Approval gate auto-complete: when an approval gate job is processed,
 		// publish a synthetic success result instead of dispatching to workers.
-		// Publish before state transition so a failed publish can be retried.
-		isApprovalGate := topic == capsdk.SubjectApprovalGate || topic == capsdk.SubjectWorkflowApprovalGate
-		if isApprovalGate && record.Reason == "approval granted" {
+		// IMPORTANT: Only auto-complete actual approval gate topics, NOT regular
+		// worker jobs that went through the approval flow. Worker jobs with
+		// reason "approval granted" must still be dispatched to their handlers.
+		if isApprovalGateTopic(topic) {
 			pkt := &pb.BusPacket{
 				TraceId:         traceID,
 				SenderId:        defaultSenderID,
@@ -651,8 +663,9 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 				ProtocolVersion: protocolVersionV1,
 				Payload: &pb.BusPacket_JobResult{
 					JobResult: &pb.JobResult{
-						JobId:  jobID,
-						Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
+						JobId:    jobID,
+						WorkerId: defaultSenderID,
+						Status:   pb.JobStatus_JOB_STATUS_SUCCEEDED,
 					},
 				},
 			}
@@ -1266,22 +1279,21 @@ func (e *Engine) startAsyncOutputCheck(jobID, topic string, res *pb.JobResult, r
 		e.observeOutputEvalDuration(topic, elapsed.Seconds())
 		if err != nil {
 			e.incAsyncOutputTimeout(topic)
-			if e.isAsyncFailClosed() {
-				slog.Error("async output check failed, fail-closed: quarantining", "job_id", jobID, "error", err)
-				record = OutputSafetyRecord{
-					Decision:        OutputQuarantine,
-					Reason:          "async output check error — fail-closed: " + err.Error(),
-					Phase:           "async",
-					CheckedAt:       time.Now().UTC().UnixNano() / int64(time.Microsecond),
-					CheckDurationMs: elapsed.Milliseconds(),
-					OriginalPtr:     strings.TrimSpace(resCopy.GetResultPtr()),
-				}
-				// Fall through to process the quarantine decision below.
-			} else {
+			if e.isAsyncFailOpen() {
 				slog.Warn("async output check failed, fail-open: allowing", "job_id", jobID, "error", err)
 				e.incOutputPolicySkipped(topic)
 				return
 			}
+			slog.Error("async output check failed, fail-closed: quarantining", "job_id", jobID, "error", err)
+			record = OutputSafetyRecord{
+				Decision:        OutputQuarantine,
+				Reason:          "async output check error — fail-closed: " + err.Error(),
+				Phase:           "async",
+				CheckedAt:       time.Now().UTC().UnixNano() / int64(time.Microsecond),
+				CheckDurationMs: elapsed.Milliseconds(),
+				OriginalPtr:     strings.TrimSpace(resCopy.GetResultPtr()),
+			}
+			// Fall through to process the quarantine decision below.
 		}
 		e.incOutputPolicyChecked(topic)
 		e.incOutputEvaluations(topic)

@@ -32,5 +32,7 @@ export function usePermission(requiredRoles: string[]): {
 }
 
 export function useIsAdmin(): boolean {
-  return usePermission(["admin"]).allowed;
+  const { allowed } = usePermission(["admin"]);
+  return allowed;
 }
+

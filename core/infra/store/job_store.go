@@ -75,12 +75,14 @@ var (
 	}
 	allowedTransitions = map[model.JobState][]model.JobState{
 		"":                     {model.JobStatePending, model.JobStateApproval, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateFailed},
-		model.JobStatePending:  {model.JobStateApproval, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout},
-		model.JobStateApproval: {model.JobStatePending, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout},
+		model.JobStatePending:  {model.JobStateApproval, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout, model.JobStateSucceeded},
+		model.JobStateApproval: {model.JobStatePending, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout, model.JobStateSucceeded},
 		// Quarantined transitions from active states: output policy 2-phase evaluation
 		// can quarantine a job at any point during execution if the output scanner
 		// detects unsafe content. See ADR-005 (output-policy-2-phase).
-		model.JobStateScheduled:  {model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout, model.JobStateSucceeded, model.JobStateCancelled, model.JobStateQuarantined},
+		// SCHEDULED self-transition allowed for dispatch publish rollback
+		// (DISPATCHED→SCHEDULED fails, second replay starts at SCHEDULED).
+		model.JobStateScheduled: {model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout, model.JobStateSucceeded, model.JobStateCancelled, model.JobStateQuarantined},
 		model.JobStateDispatched: {model.JobStateScheduled, model.JobStateRunning, model.JobStateSucceeded, model.JobStateFailed, model.JobStateCancelled, model.JobStateTimeout, model.JobStateQuarantined},
 		model.JobStateRunning:    {model.JobStateSucceeded, model.JobStateFailed, model.JobStateCancelled, model.JobStateTimeout, model.JobStateQuarantined},
 		// Succeeded → Quarantined: async output scanning may flag content after the
@@ -144,8 +146,9 @@ func normalizeTimestampMicrosUpper(ts int64) int64 {
 
 // RedisJobStore implements model.JobStore backed by Redis.
 type RedisJobStore struct {
-	client  redis.UniversalClient
-	metaTTL time.Duration
+	client          redis.UniversalClient
+	metaTTL         time.Duration
+	idempotencyTTL  time.Duration // TTL for idempotency keys; must outlive job lifecycle
 }
 
 // Client returns the underlying Redis client for use by other subsystems
@@ -211,12 +214,9 @@ func (s *RedisJobStore) CancelJob(ctx context.Context, jobID string) (model.JobS
 		}
 
 		// Remove from tenant active set — CANCELLED is terminal.
+		// No TTL on active set — it self-manages via SAdd/SRem on state transitions.
 		if tenant != "" {
-			activeKey := tenantActiveKey(tenant)
-			pipe.SRem(ctx, activeKey, jobID)
-			if s.metaTTL > 0 {
-				pipe.Expire(ctx, activeKey, s.metaTTL)
-			}
+			pipe.SRem(ctx, tenantActiveKey(tenant), jobID)
 		}
 
 		pipe.ZAdd(ctx, "job:recent", redis.Z{Score: float64(now), Member: jobID})
@@ -334,8 +334,19 @@ func NewRedisJobStore(url string) (*RedisJobStore, error) {
 		return nil, fmt.Errorf("connect redis: %w", err)
 	}
 
-	slog.Debug("job store connected", "component", "store", "metaTTL", ttl.String())
-	return &RedisJobStore{client: client, metaTTL: ttl}, nil
+	// Idempotency keys must outlive the job lifecycle to prevent
+	// duplicate jobs on late retries. Default: 90 days.
+	idempotencyTTL := 90 * 24 * time.Hour
+	if v := os.Getenv("CORDUM_IDEMPOTENCY_TTL"); v != "" {
+		if parsed, err := time.ParseDuration(v); err != nil {
+			slog.Warn("invalid CORDUM_IDEMPOTENCY_TTL, using default", "value", v, "default", idempotencyTTL)
+		} else if parsed > 0 {
+			idempotencyTTL = parsed
+		}
+	}
+
+	slog.Debug("job store connected", "component", "store", "metaTTL", ttl.String(), "idempotencyTTL", idempotencyTTL.String())
+	return &RedisJobStore{client: client, metaTTL: ttl, idempotencyTTL: idempotencyTTL}, nil
 }
 
 func (s *RedisJobStore) SetState(ctx context.Context, jobID string, state model.JobState) error {
@@ -388,15 +399,15 @@ func (s *RedisJobStore) SetState(ctx context.Context, jobID string, state model.
 			pipe.ZAdd(ctx, idx, redis.Z{Score: float64(now), Member: jobID})
 		}
 
+		// Tenant active set: no TTL — self-manages via SAdd/SRem.
+		// A TTL would expire the key for long-running jobs, making them
+		// vanish from active counts while still running.
 		if tenant != "" {
 			activeKey := tenantActiveKey(tenant)
 			if isActiveState(state) {
 				pipe.SAdd(ctx, activeKey, jobID)
 			} else if terminalStates[state] {
 				pipe.SRem(ctx, activeKey, jobID)
-			}
-			if s.metaTTL > 0 {
-				pipe.Expire(ctx, activeKey, s.metaTTL)
 			}
 		}
 
@@ -475,7 +486,7 @@ func (s *RedisJobStore) buildJobRecords(ctx context.Context, members []redis.Z) 
 		stateCmds[jobID] = pipe.Get(ctx, jobStateKey(jobID))
 	}
 	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
-		slog.Warn("redis pipeline exec", "op", "build_job_records", "error", err)
+		return nil, fmt.Errorf("job store build records pipeline: %w", err)
 	}
 
 	for _, m := range members {
@@ -667,8 +678,8 @@ func (s *RedisJobStore) SetJobMeta(ctx context.Context, req *pb.JobRequest) erro
 
 	if budget := req.GetBudget(); budget != nil && budget.GetDeadlineMs() > 0 {
 		deadline := time.Now().Add(time.Duration(budget.GetDeadlineMs()) * time.Millisecond)
-		pipe.HSet(ctx, metaKey, metaFieldDeadline, deadline.Unix())
-		pipe.ZAdd(ctx, deadlineIndexKey(), redis.Z{Score: float64(deadline.Unix()), Member: req.GetJobId()})
+		pipe.HSet(ctx, metaKey, metaFieldDeadline, deadline.UnixMicro())
+		pipe.ZAdd(ctx, deadlineIndexKey(), redis.Z{Score: float64(deadline.UnixMicro()), Member: req.GetJobId()})
 	}
 
 	if _, err := pipe.Exec(ctx); err != nil {
@@ -719,8 +730,8 @@ func (s *RedisJobStore) SetDeadline(ctx context.Context, jobID string, deadline 
 		return fmt.Errorf("invalid job deadline")
 	}
 	pipe := s.client.TxPipeline()
-	pipe.HSet(ctx, jobMetaKey(jobID), metaFieldDeadline, deadline.Unix())
-	pipe.ZAdd(ctx, deadlineIndexKey(), redis.Z{Score: float64(deadline.Unix()), Member: jobID})
+	pipe.HSet(ctx, jobMetaKey(jobID), metaFieldDeadline, deadline.UnixMicro())
+	pipe.ZAdd(ctx, deadlineIndexKey(), redis.Z{Score: float64(deadline.UnixMicro()), Member: jobID})
 	_, err := pipe.Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("job store set deadline %s: %w", jobID, err)
@@ -729,13 +740,16 @@ func (s *RedisJobStore) SetDeadline(ctx context.Context, jobID string, deadline 
 }
 
 // ListExpiredDeadlines returns jobs whose deadline has passed.
+// The nowUnix parameter is normalized to microsecond precision for consistency
+// with deadline scores (which are stored as microseconds).
 func (s *RedisJobStore) ListExpiredDeadlines(ctx context.Context, nowUnix int64, limit int64) ([]model.JobRecord, error) {
 	if limit <= 0 {
 		limit = 100
 	}
+	nowMicros := normalizeTimestampMicrosUpper(nowUnix)
 	members, err := s.client.ZRangeByScoreWithScores(ctx, deadlineIndexKey(), &redis.ZRangeBy{
 		Min:    "-inf",
-		Max:    fmt.Sprintf("%d", nowUnix),
+		Max:    fmt.Sprintf("%d", nowMicros),
 		Offset: 0,
 		Count:  limit,
 	}).Result()
@@ -1168,7 +1182,9 @@ func (s *RedisJobStore) TrySetIdempotencyKeyScoped(ctx context.Context, tenant, 
 	}
 
 	// Phase 2: Try to claim the scoped key.
-	ok, err := s.client.SetNX(ctx, idKey, jobID, s.metaTTL).Result()
+	// Use idempotencyTTL (90d default) instead of metaTTL (7d default)
+	// to prevent duplicate jobs on late retries after metaTTL expiry.
+	ok, err := s.client.SetNX(ctx, idKey, jobID, s.idempotencyTTL).Result()
 	if err != nil {
 		return false, "", fmt.Errorf("job store try set idempotency key scoped %s: %w", jobID, err)
 	}
@@ -1192,7 +1208,7 @@ func (s *RedisJobStore) SetIdempotencyKeyScoped(ctx context.Context, tenant, key
 	if idKey == "" {
 		return fmt.Errorf("idempotency key required")
 	}
-	_, err := s.client.SetNX(ctx, idKey, jobID, s.metaTTL).Result()
+	_, err := s.client.SetNX(ctx, idKey, jobID, s.idempotencyTTL).Result()
 	if err != nil {
 		return fmt.Errorf("job store set idempotency key scoped %s: %w", jobID, err)
 	}
@@ -1587,9 +1603,6 @@ func (s *RedisJobStore) getDeadline(ctx context.Context, jobID string) (int64, e
 }
 
 func isAllowedTransition(from, to model.JobState) bool {
-	if from == to {
-		return true
-	}
 	allowed, ok := allowedTransitions[from]
 	if !ok {
 		return false

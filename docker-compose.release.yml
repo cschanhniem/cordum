@@ -39,10 +39,13 @@ services:
         "yes",
         "--requirepass",
         "${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}",
+        "--aclfile",
+        "/etc/redis/acl.conf",
       ]
     # No host port exposure — internal service accessible via Docker network only.
     volumes:
       - "${CORDUM_TLS_DIR:?error: CORDUM_TLS_DIR is not set}:/etc/cordum/tls:ro"
+      - "${CORDUM_REDIS_ACL_FILE:-./config/redis/acl-prod.conf}:/etc/redis/acl.conf:ro"
       - redis_data:/data
     healthcheck:
       test: ["CMD-SHELL", "redis-cli --tls --cacert /etc/cordum/tls/ca/ca.crt --cert /etc/cordum/tls/client/tls.crt --key /etc/cordum/tls/client/tls.key -a \"$REDIS_PASSWORD\" ping | grep -q PONG"]

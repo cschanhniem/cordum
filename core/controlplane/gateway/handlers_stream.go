@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,8 +31,40 @@ var wsPacketsDroppedTotal = prometheus.NewCounter(prometheus.CounterOpts{
 	Help: "Total WebSocket bus packets dropped due to marshal failure",
 })
 
+var wsSlowClientEvictions = prometheus.NewCounterVec(prometheus.CounterOpts{
+	Name: "cordum_gateway_ws_slow_client_evictions_total",
+	Help: "Total WebSocket clients evicted because their send buffer was full",
+}, []string{"reason"})
+
 func init() {
 	prometheus.MustRegister(wsPacketsDroppedTotal)
+	prometheus.MustRegister(wsSlowClientEvictions)
+}
+
+const (
+	defaultWSClientBufSize = 256
+	minWSClientBufSize     = 1
+	maxWSClientBufSize     = 10000
+)
+
+// wsClientBufferSize reads CORDUM_WS_CLIENT_BUFFER_SIZE and clamps to [1, 10000].
+func wsClientBufferSize() int {
+	raw := strings.TrimSpace(os.Getenv("CORDUM_WS_CLIENT_BUFFER_SIZE"))
+	if raw == "" {
+		return defaultWSClientBufSize
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil || v < minWSClientBufSize {
+		slog.Warn("invalid CORDUM_WS_CLIENT_BUFFER_SIZE, using default",
+			"value", raw, "default", defaultWSClientBufSize)
+		return defaultWSClientBufSize
+	}
+	if v > maxWSClientBufSize {
+		slog.Warn("CORDUM_WS_CLIENT_BUFFER_SIZE exceeds max, clamping",
+			"requested", v, "max", maxWSClientBufSize)
+		return maxWSClientBufSize
+	}
+	return v
 }
 
 // stopBusTaps shuts down the broadcast goroutine by closing eventsCh.
@@ -274,13 +308,15 @@ func (s *server) startBusTaps() error {
 				}
 				for _, conn := range slowClients {
 					if client := s.clients[conn]; client != nil {
-						// Signal handler goroutine to exit by closing its channel.
-						// The handler's defer will close the actual connection.
 						client.closeChannel()
 					}
 					delete(s.clients, conn)
 				}
 				s.clientsMu.Unlock()
+				if n := len(slowClients); n > 0 {
+					wsSlowClientEvictions.WithLabelValues("buffer_full").Add(float64(n))
+					slog.Warn("ws: evicted slow clients", "count", n)
+				}
 			case <-s.shutdownCh:
 				return
 			}
@@ -536,19 +572,44 @@ func (s *server) handleWorkflowJobResult(ctx context.Context, jr *pb.JobResult) 
 
 	if s.jobStore != nil {
 		lockKey := "cordum:wf:run:lock:" + runID
-		token, err := s.jobStore.TryAcquireLock(ctx, lockKey, 30*time.Second)
-		if err != nil {
-			return bus.RetryAfter(err, 1*time.Second)
-		}
-		if token == "" {
-			// Before retrying, check if this message is stale (run terminal or missing).
-			// This breaks the infinite retry storm for orphan messages from completed runs.
-			if s.isStaleJobResult(ctx, runID, stepID, jr.JobId) {
-				return nil // ACK — proven stale, retrying won't help
+		// Spin-wait up to 3 seconds for the run lock. The reconciler or
+		// cancel handler may hold it briefly. Giving up too quickly causes
+		// the message to bounce through NATS redelivery which is slower.
+		lockDeadline := time.Now().Add(3 * time.Second)
+		var token string
+		for {
+			var err error
+			lockCtx, lockCancel := context.WithTimeout(ctx, 2*time.Second)
+			token, err = s.jobStore.TryAcquireLock(lockCtx, lockKey, 30*time.Second)
+			lockCancel()
+			if err != nil {
+				slog.Warn("workflow result: lock acquire error",
+					"run_id", runID, "step_id", stepID, "job_id", jr.JobId, "error", err)
+				return bus.RetryAfter(err, 1*time.Second)
 			}
-			return bus.RetryAfter(fmt.Errorf("run lock busy: %s", runID), 500*time.Millisecond)
+			if token != "" {
+				break // acquired
+			}
+			if time.Now().After(lockDeadline) {
+				// Couldn't acquire after 3s — check if stale before NATS retry
+				if s.isStaleJobResult(ctx, runID, stepID, jr.JobId) {
+					return nil // ACK — proven stale
+				}
+				slog.Warn("workflow result: run lock contended, deferring to NATS retry",
+					"run_id", runID, "step_id", stepID, "job_id", jr.JobId,
+					"lock_key", lockKey)
+				return bus.RetryAfter(fmt.Errorf("run lock busy: %s", runID), 500*time.Millisecond)
+			}
+			time.Sleep(100 * time.Millisecond)
 		}
-		defer func() { _ = s.jobStore.ReleaseLock(context.Background(), lockKey, token) }()
+		defer func() {
+			releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if rErr := s.jobStore.ReleaseLock(releaseCtx, lockKey, token); rErr != nil {
+				slog.Warn("workflow result: lock release failed, will expire via TTL",
+					"run_id", runID, "lock_key", lockKey, "error", rErr)
+			}
+		}()
 	}
 
 	if err := s.workflowEng.HandleJobResult(ctx, jr); err != nil {
@@ -639,7 +700,7 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
 	slog.Info("ws connected", "remote", r.RemoteAddr)
 
 	authCtx := authFromRequest(r)
-	client := &wsClient{ch: make(chan wsEvent, 100)}
+	client := &wsClient{ch: make(chan wsEvent, s.wsClientBufSz)}
 	if authCtx != nil {
 		client.tenant = strings.TrimSpace(authCtx.Tenant)
 		client.allowCrossTenant = authCtx.AllowCrossTenant
@@ -721,7 +782,7 @@ func (s *server) handleJobStream(w http.ResponseWriter, r *http.Request) {
 	slog.Info("job ws connected", "job_id", jobID, "remote", r.RemoteAddr)
 
 	authCtx := authFromRequest(r)
-	client := &wsClient{ch: make(chan wsEvent, 100), tenant: strings.TrimSpace(tenant), jobID: jobID}
+	client := &wsClient{ch: make(chan wsEvent, s.wsClientBufSz), tenant: strings.TrimSpace(tenant), jobID: jobID}
 	if authCtx != nil {
 		client.apiKey = authCtx.APIKey
 	}

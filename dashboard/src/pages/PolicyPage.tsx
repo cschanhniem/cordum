@@ -19,8 +19,6 @@ import { ApprovalStatusBadge, JobStatusBadge } from "../components/StatusBadge";
 import { useConfigStore } from "../state/config";
 import { PolicyFirewallView } from "../components/policy/PolicyFirewallView";
 import type {
-  ApprovalItem,
-  ApprovalsResponse,
   PolicyAuditEntry,
   PolicyAuditResponse,
   PolicyBundleDetail,
@@ -28,9 +26,12 @@ import type {
   PolicyBundleSnapshotsResponse,
   PolicyBundleSummary,
   PolicyBundlesResponse,
-  PolicyRule,
+  RawPolicyRule,
   PolicyRulesResponse,
 } from "../types/api";
+import type { Approval } from "../api/types";
+import type { ApprovalsResponse } from "../lib/api";
+import { ErrorBanner } from "../components/ui/ErrorBanner";
 
 const schema = z.object({
   topic: z.string().min(1, "Topic required"),
@@ -91,7 +92,14 @@ function decisionBadgeMeta(decision?: string): { label: string; variant: "succes
   return { label: meta.label, variant: toneToVariant[meta.tone] || "default" };
 }
 
-function isSafeApproval(item: ApprovalItem): boolean {
+/** Approval with a guaranteed non-null job field (filtered upstream). */
+type ResolvedApproval = Approval & { job: NonNullable<Approval["job"]> };
+
+function isResolvedApproval(item: Approval): item is ResolvedApproval {
+  return item.job != null && typeof item.job.id === "string" && item.job.id.length > 0;
+}
+
+function isSafeApproval(item: ResolvedApproval): boolean {
   const decision = (item.decision || "").toUpperCase();
   if (decision.includes("DENY") || decision.includes("THROTTLE")) {
     return false;
@@ -156,35 +164,35 @@ export default function PolicyPage() {
   const principalId = useConfigStore((state) => state.principalId);
   const canEditPolicy = normalizeRole(principalRole) === "admin";
   const [searchParams] = useSearchParams();
-  const approvalsQuery = useInfiniteQuery<ApprovalsResponse>({
+  const approvalsQuery = useInfiniteQuery({
     queryKey: ["approvals"],
     queryFn: ({ pageParam }) =>
       api.listApprovals(
         100,
         typeof pageParam === "number" || typeof pageParam === "string" ? pageParam : undefined,
-      ) as unknown as Promise<ApprovalsResponse>,
+      ),
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
     initialPageParam: undefined as number | string | undefined,
   });
   const snapshotsQuery = useQuery<{ snapshots?: string[] }>({
     queryKey: ["policy", "snapshots"],
-    queryFn: () => api.listPolicySnapshots() as unknown as Promise<{ snapshots?: string[] }>,
+    queryFn: () => api.listPolicySnapshots(),
   });
   const policyBundlesQuery = useQuery<PolicyBundlesResponse>({
     queryKey: ["policy", "bundles"],
-    queryFn: () => api.getPolicyBundles() as unknown as Promise<PolicyBundlesResponse>,
+    queryFn: () => api.getPolicyBundles(),
   });
   const policyRulesQuery = useQuery<PolicyRulesResponse>({
     queryKey: ["policy", "rules"],
-    queryFn: () => api.listPolicyRules() as unknown as Promise<PolicyRulesResponse>,
+    queryFn: () => api.listPolicyRules(),
   });
   const policyBundleSnapshotsQuery = useQuery<PolicyBundleSnapshotsResponse>({
     queryKey: ["policy", "bundle-snapshots"],
-    queryFn: () => api.listPolicyBundleSnapshots() as unknown as Promise<PolicyBundleSnapshotsResponse>,
+    queryFn: () => api.listPolicyBundleSnapshots(),
   });
   const policyAuditQuery = useQuery<PolicyAuditResponse>({
     queryKey: ["policy", "audit"],
-    queryFn: () => api.listPolicyAudit() as unknown as Promise<PolicyAuditResponse>,
+    queryFn: () => api.listPolicyAudit(),
   });
 
   const approveMutation = useMutation({
@@ -243,7 +251,7 @@ export default function PolicyPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkReason, setBulkReason] = useState("");
   const [bulkNote, setBulkNote] = useState("");
-  const [selectedApproval, setSelectedApproval] = useState<ApprovalItem | null>(null);
+  const [selectedApproval, setSelectedApproval] = useState<ResolvedApproval | null>(null);
   const [compareText, setCompareText] = useState("");
   const [selectedSnapshotId, setSelectedSnapshotId] = useState("");
   const [snapshotNote, setSnapshotNote] = useState("");
@@ -275,7 +283,7 @@ export default function PolicyPage() {
 
   const snapshotDetailQuery = useQuery<PolicyBundleSnapshot>({
     queryKey: ["policy", "bundle-snapshot", selectedSnapshotId],
-    queryFn: () => api.getPolicyBundleSnapshot(selectedSnapshotId) as unknown as Promise<PolicyBundleSnapshot>,
+    queryFn: () => api.getPolicyBundleSnapshot(selectedSnapshotId),
     enabled: Boolean(selectedSnapshotId),
   });
 
@@ -313,7 +321,7 @@ export default function PolicyPage() {
 
   const policyBundleDetailQuery = useQuery<PolicyBundleDetail>({
     queryKey: ["policy", "bundle", selectedBundleId],
-    queryFn: () => api.getPolicyBundle(selectedBundleId) as unknown as Promise<PolicyBundleDetail>,
+    queryFn: () => api.getPolicyBundle(selectedBundleId),
     enabled: Boolean(selectedBundleId && selectedBundle),
     refetchOnWindowFocus: false,
   });
@@ -494,11 +502,11 @@ export default function PolicyPage() {
     });
   }, [bundleDraft.id, selectedBundle, selectedBundleId]);
 
-  const approvals = useMemo<ApprovalItem[]>(
+  const approvals = useMemo<ResolvedApproval[]>(
     () =>
       approvalsQuery.data?.pages
         .flatMap((page) => page.items)
-        .filter((item): item is ApprovalItem => Boolean(item?.job?.id)) ?? [],
+        .filter(isResolvedApproval) ?? [],
     [approvalsQuery.data]
   );
   const safeApprovals = useMemo(() => approvals.filter((item) => isSafeApproval(item)), [approvals]);
@@ -620,6 +628,13 @@ export default function PolicyPage() {
     }
     setPublishSelection(new Set(secopsBundles.map((item) => item.id)));
   };
+
+  const hasError = approvalsQuery.isError || policyBundlesQuery.isError || policyRulesQuery.isError || policyAuditQuery.isError;
+  if (hasError) {
+    const errorMessage = approvalsQuery.error?.message || policyBundlesQuery.error?.message || policyRulesQuery.error?.message || policyAuditQuery.error?.message || "Failed to load policy data";
+    const retryAll = () => { void approvalsQuery.refetch(); void policyBundlesQuery.refetch(); void policyRulesQuery.refetch(); void policyAuditQuery.refetch(); };
+    return <ErrorBanner message={errorMessage} onRetry={retryAll} />;
+  }
 
   return (
     <div className="space-y-6">
@@ -792,7 +807,7 @@ export default function PolicyPage() {
                             {safe ? <Badge variant="success">SAFE</Badge> : null}
                             <Badge variant={decision.variant}>{decision.label}</Badge>
                             <ApprovalStatusBadge required={item.approval_required} />
-                            <JobStatusBadge state={item.job.state} />
+                            <JobStatusBadge state={item.job.status} />
                           </div>
                         </div>
                         <div className="mt-3 flex flex-wrap gap-2">
@@ -1363,7 +1378,7 @@ export default function PolicyPage() {
               <div className="space-y-3">
                 {policyRules.map((rule, index) => {
                   const decision = decisionBadgeMeta(rule.decision as string | undefined);
-                  const source = rule.source as PolicyRule["source"] | undefined;
+                  const source = rule.source as RawPolicyRule["source"] | undefined;
                   const sourceLabel = source?.pack_id
                     ? `${source.pack_id}${source.overlay_name ? ` / ${source.overlay_name}` : ""}`
                     : source?.fragment_id || "unknown";
@@ -1729,23 +1744,23 @@ export default function PolicyPage() {
             <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Approval Detail</div>
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-sm font-semibold text-ink">Job {selectedApproval.job.id}</div>
-                <div className="text-xs text-muted-foreground">Topic {selectedApproval.job.topic || "-"}</div>
+                <div className="text-sm font-semibold text-ink">Job {selectedApproval.jobId || selectedApproval.job?.id}</div>
+                <div className="text-xs text-muted-foreground">Topic {selectedApproval.topic || selectedApproval.job?.topic || "-"}</div>
               </div>
               <Badge variant={decisionBadgeMeta(selectedApproval.decision).variant}>
                 {decisionBadgeMeta(selectedApproval.decision).label}
               </Badge>
             </div>
             <div className="flex flex-wrap gap-2">
-              <ApprovalStatusBadge required={selectedApproval.approval_required} />
-              <JobStatusBadge state={selectedApproval.job.state} />
+              <ApprovalStatusBadge required={false} />
+              <JobStatusBadge state={selectedApproval.status} />
             </div>
             <div className="rounded-2xl border border-border bg-card/70 p-4 text-xs text-muted-foreground">
-              <div>Rule: {selectedApproval.policy_rule_id || "-"}</div>
-              <div>Snapshot: {selectedApproval.policy_snapshot || "-"}</div>
-              <div>Reason: {selectedApproval.policy_reason || "-"}</div>
-              <div>Capability: {selectedApproval.job.capability || "-"}</div>
-              <div>Pack: {selectedApproval.job.pack_id || "-"}</div>
+              <div>Rule: {selectedApproval.policyRule || "-"}</div>
+              <div>Snapshot: {selectedApproval.policySnapshot || "-"}</div>
+              <div>Reason: {selectedApproval.reason || "-"}</div>
+              <div>Capabilities: {(selectedApproval.capabilities ?? []).join(", ") || "-"}</div>
+              <div>Tenant: {selectedApproval.tenant || "-"}</div>
             </div>
             {selectedApproval.constraints ? (
               <div>

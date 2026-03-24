@@ -158,6 +158,17 @@ func (r *PendingReplayer) replayApproved(ctx context.Context, cutoff time.Time) 
 
 	replayed := 0
 	for _, rec := range records {
+		// Re-check current state to avoid racing with the gateway's approve handler.
+		// The ListJobsByState index may be stale if the job was already transitioned
+		// out of JobStateApproval by the time we get here.
+		currentState, err := r.store.GetState(ctx, rec.ID)
+		if err != nil {
+			continue
+		}
+		if currentState != JobStateApproval {
+			continue
+		}
+
 		req, err := store.GetJobRequest(ctx, rec.ID)
 		if err != nil || req == nil {
 			continue

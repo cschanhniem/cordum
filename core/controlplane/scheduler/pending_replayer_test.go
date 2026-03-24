@@ -275,6 +275,51 @@ func TestPendingReplayerSkipsUnapprovedJobs(t *testing.T) {
 	}
 }
 
+// TestPendingReplayerSkipsAlreadyTransitionedApprovedJobs verifies that
+// replayApproved() does not re-submit jobs that have already transitioned
+// out of JobStateApproval (e.g. by the gateway approve handler). This
+// prevents the race condition where the replayer re-submits a job that was
+// already approved and dispatched, causing it to go through a fresh safety
+// check and return to REQUIRE_APPROVAL state.
+func TestPendingReplayerSkipsAlreadyTransitionedApprovedJobs(t *testing.T) {
+	store := &replayerStore{
+		fakeJobStore: newFakeJobStore(),
+		reqs:         map[string]*pb.JobRequest{},
+	}
+
+	bus := &fakeBus{}
+	registry := newTestRegistry(t)
+	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), store, nil)
+
+	// Create a job that WAS in JobStateApproval but has already been
+	// transitioned to JobStatePending by the gateway approve handler.
+	req := &pb.JobRequest{
+		JobId:    "job-already-approved",
+		Topic:    "job.test",
+		TenantId: "default",
+		Labels:   map[string]string{"approval_granted": "true"},
+	}
+	if err := store.SetJobRequest(context.Background(), req); err != nil {
+		t.Fatalf("set job request: %v", err)
+	}
+	// First set to approval (so it appears in the state index)
+	if err := store.SetState(context.Background(), req.JobId, JobStateApproval); err != nil {
+		t.Fatalf("set state approval: %v", err)
+	}
+	// Then transition to pending (simulating gateway approve handler)
+	if err := store.SetState(context.Background(), req.JobId, JobStatePending); err != nil {
+		t.Fatalf("set state pending: %v", err)
+	}
+
+	replayer := NewPendingReplayer(engine, store, 0, time.Millisecond)
+	replayer.replayApproved(context.Background(), time.Now())
+
+	// The job should NOT be re-submitted since it's no longer in JobStateApproval
+	if len(bus.published) != 0 {
+		t.Fatalf("expected already-transitioned job to be skipped, but %d messages were published", len(bus.published))
+	}
+}
+
 // TestPendingReplayerSingleTickPerTTLWindow verifies that when two replayer
 // goroutines race to acquire the distributed lock, only one executes tick()
 // per TTL window. After the TTL expires, the second replica can acquire the

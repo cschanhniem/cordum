@@ -1,0 +1,34 @@
+title = "Cordum Gitleaks Configuration"
+
+[extend]
+# Extend the default gitleaks rules
+useDefault = true
+
+[allowlist]
+# Allow test files and fixtures to contain mock secrets
+paths = [
+    '''_test\.go$''',
+    '''testdata/''',
+    '''fixtures/''',
+    '''\.env\.example$''',
+    '''secret_validator_test\.go$''',
+]
+
+[[rules]]
+id = "cordum-env-secret"
+description = "Hardcoded secret in .env file"
+regex = '''(?i)(REDIS_PASSWORD|CORDUM_API_KEY|CORDUM_ADMIN_PASSWORD)\s*=\s*[^\s$]{8,}'''
+path = '''\.env$'''
+
+[[rules]]
+id = "generic-password-assignment"
+description = "Password assigned in code"
+regex = '''(?i)(password|passwd|secret|token)\s*[:=]\s*["'][^"'$\{]{8,}["']'''
+paths = [
+    '''\.go$''',
+    '''\.ts$''',
+    '''\.py$''',
+    '''\.yaml$''',
+    '''\.yml$''',
+    '''\.json$''',
+]

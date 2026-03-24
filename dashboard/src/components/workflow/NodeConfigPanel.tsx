@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useFieldArray, useForm } from "react-hook-form";
+import { useFieldArray, useForm, type Resolver } from "react-hook-form";
 import { logger } from "../../lib/logger";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -612,7 +612,7 @@ export function NodeConfigPanel({ node, onSave, onClose, onDelete, allNodes }: N
     control,
     formState: { errors, isDirty },
   } = useForm({
-    resolver: zodResolver(schema as z.ZodTypeAny) as any,
+    resolver: zodResolver(schema as z.ZodTypeAny) as Resolver<Record<string, unknown>>,
     defaultValues: nodeToDefaults(node) as Record<string, unknown>,
   });
 
@@ -649,7 +649,7 @@ export function NodeConfigPanel({ node, onSave, onClose, onDelete, allNodes }: N
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <h3 className="text-sm font-semibold text-ink capitalize">{nodeType} Config</h3>
-        <button
+        <button type="button"
           onClick={onClose}
           className="rounded-lg p-1 text-muted-foreground hover:bg-surface2 hover:text-ink transition-colors"
         >

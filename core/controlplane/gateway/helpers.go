@@ -333,6 +333,25 @@ func parseBool(raw string) bool {
 	}
 }
 
+func parseFloatEnv(key string, defaultVal float64) float64 {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return defaultVal
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		slog.Warn("invalid float env var, using default", "key", key, "value", raw, "default", defaultVal)
+		return defaultVal
+	}
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
+}
+
 func idempotencyKeyFromRequest(r *http.Request) string {
 	if r == nil {
 		return ""
@@ -869,4 +888,23 @@ func clampListLimit(limit int64) int64 {
 		return maxListLimit
 	}
 	return limit
+}
+
+// parsePagination extracts limit and cursor from query parameters.
+// Returns clamped limit and cursor defaulting to now (microseconds).
+func parsePagination(r *http.Request, defaultLimit int64) (limit, cursor int64) {
+	limit = defaultLimit
+	if q := r.URL.Query().Get("limit"); q != "" {
+		if v, err := strconv.ParseInt(q, 10, 64); err == nil && v > 0 {
+			limit = v
+		}
+	}
+	limit = clampListLimit(limit)
+	cursor = time.Now().UnixNano() / int64(time.Microsecond)
+	if q := r.URL.Query().Get("cursor"); q != "" {
+		if v, err := strconv.ParseInt(q, 10, 64); err == nil && v > 0 {
+			cursor = v
+		}
+	}
+	return limit, cursor
 }

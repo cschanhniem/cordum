@@ -7,7 +7,8 @@ import { Card, CardHeader, CardTitle } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
 import { Button } from "../components/ui/Button";
 import { JobStatusBadge, RunStatusBadge } from "../components/StatusBadge";
-import type { JobRecord, PackRecord, Workflow, WorkflowRun } from "../types/api";
+import type { JobRecord, PackRecord, RawWorkflow, RawWorkflowRun } from "../types/api";
+import { ErrorBanner } from "../components/ui/ErrorBanner";
 
 export default function SearchPage() {
   const navigate = useNavigate();
@@ -39,7 +40,7 @@ export default function SearchPage() {
   const runs = useMemo(() => {
     const q = query.toLowerCase();
     return (runsQuery.data?.items || [])
-      .filter((run: WorkflowRun) =>
+      .filter((run: RawWorkflowRun) =>
         [run.id, run.workflow_id, run.status, run.org_id, run.team_id]
           .filter(Boolean)
           .some((value) => String(value).toLowerCase().includes(q))
@@ -49,8 +50,8 @@ export default function SearchPage() {
 
   const workflows = useMemo(() => {
     const q = query.toLowerCase();
-    return (workflowsQuery.data || [])
-      .filter((workflow: Workflow) =>
+    return (workflowsQuery.data?.items || [])
+      .filter((workflow: RawWorkflow) =>
         [workflow.id, workflow.name, workflow.description]
           .filter(Boolean)
           .some((value) => String(value).toLowerCase().includes(q))
@@ -79,6 +80,14 @@ export default function SearchPage() {
       )
       .slice(0, 8);
   }, [jobsQuery.data, query]);
+
+  const hasError = runsQuery.isError || workflowsQuery.isError || packsQuery.isError || jobsQuery.isError;
+  const errorMessage = runsQuery.error?.message || workflowsQuery.error?.message || packsQuery.error?.message || jobsQuery.error?.message || "Failed to load search results";
+  const retryAll = () => { void runsQuery.refetch(); void workflowsQuery.refetch(); void packsQuery.refetch(); void jobsQuery.refetch(); };
+
+  if (hasError) {
+    return <ErrorBanner message={errorMessage} onRetry={retryAll} />;
+  }
 
   return (
     <div className="space-y-6">
@@ -112,7 +121,7 @@ export default function SearchPage() {
               <div className="text-sm text-muted-foreground">No matching runs.</div>
             ) : (
               <div className="space-y-3">
-                {runs.map((run: any) => (
+                {runs.map((run) => (
                   <div key={run.id} className="rounded-2xl border border-border bg-card/70 p-3">
                     <div className="flex items-center justify-between">
                       <div>
@@ -141,7 +150,7 @@ export default function SearchPage() {
                 {workflows.length === 0 ? (
                   <div className="text-sm text-muted-foreground">No matching workflows.</div>
                 ) : (
-                  workflows.map((workflow: any) => (                <div key={workflow.id} className="rounded-2xl border border-border bg-card/70 p-3">
+                  workflows.map((workflow) => (                <div key={workflow.id} className="rounded-2xl border border-border bg-card/70 p-3">
                   <div className="text-sm font-semibold text-ink">{workflow.name || workflow.id}</div>
                   <div className="text-xs text-muted-foreground">{workflow.description || "No description"}</div>
                   <div className="mt-2 flex justify-end">
@@ -169,7 +178,7 @@ export default function SearchPage() {
               <div className="text-sm text-muted-foreground">No matching packs.</div>
             ) : (
               <div className="space-y-3">
-                {packs.map((pack: any) => (
+                {packs.map((pack) => (
                   <div key={pack.id} className="rounded-2xl border border-border bg-card/70 p-3">
                     <div className="text-sm font-semibold text-ink">{pack.manifest?.metadata?.title || pack.id}</div>
                     <div className="text-xs text-muted-foreground">{pack.manifest?.metadata?.description || "No description"}</div>
@@ -198,7 +207,7 @@ export default function SearchPage() {
               <div className="text-sm text-muted-foreground">No matching jobs.</div>
             ) : (
               <div className="space-y-3">
-                {jobs.map((job: any) => (
+                {jobs.map((job) => (
                   <div key={job.id} className="rounded-2xl border border-border bg-card/70 p-3">
                     <div className="flex items-center justify-between">
                       <div>
