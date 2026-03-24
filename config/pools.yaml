@@ -25,7 +25,7 @@ topics:
   job.gtm-engine.eval-kill: gtm-engine-act
   job.gtm-engine.compute-milestones: gtm-engine-act
   job.gtm-engine.advance-stage: gtm-engine-act
-  job.gtm-engine.send-email: gtm-engine-act
+  job.gtm-engine.send-email: gtm-engine-think
   job.gtm-engine.notify-slack: gtm-engine-act
   job.gtm-engine.create-issues: gtm-engine-act
 pools:
