@@ -908,3 +908,51 @@ func parsePagination(r *http.Request, defaultLimit int64) (limit, cursor int64) 
 	}
 	return limit, cursor
 }
+
+// ---------- Handler guard helpers ----------
+
+// requireStoreAndRole checks that all provided stores are non-nil and the
+// caller has the required role. Returns false (and writes the error response)
+// if any check fails; the caller should return immediately.
+// Pass role="" to skip the role check (public endpoints).
+func (s *server) requireStoreAndRole(w http.ResponseWriter, r *http.Request, role string, stores ...any) bool {
+	for _, store := range stores {
+		if store == nil {
+			writeErrorJSON(w, http.StatusServiceUnavailable, "service unavailable")
+			return false
+		}
+	}
+	if role != "" {
+		if err := s.requireRole(r, role); err != nil {
+			writeForbidden(w, r, err)
+			return false
+		}
+	}
+	return true
+}
+
+// requireJobTenantAccess verifies the caller has access to the tenant that
+// owns the given job. Returns false (and writes 403) if denied.
+func (s *server) requireJobTenantAccess(w http.ResponseWriter, r *http.Request, jobID string) bool {
+	if s.jobStore == nil {
+		return true
+	}
+	if tenant, _ := s.jobStore.GetTenant(r.Context(), jobID); tenant != "" {
+		if err := s.requireTenantAccess(r, tenant); err != nil {
+			writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
+			return false
+		}
+	}
+	return true
+}
+
+// requirePathParam extracts a path parameter and writes a 400 error if empty.
+// Returns the value and true on success, or "" and false on failure.
+func requirePathParam(w http.ResponseWriter, r *http.Request, name string) (string, bool) {
+	val := r.PathValue(name)
+	if val == "" {
+		writeErrorJSON(w, http.StatusBadRequest, "missing "+name)
+		return "", false
+	}
+	return val, true
+}

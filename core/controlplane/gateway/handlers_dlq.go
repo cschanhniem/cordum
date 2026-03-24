@@ -147,11 +147,8 @@ func (s *server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, "missing job_id")
 		return
 	}
-	if tenant, _ := s.jobStore.GetTenant(r.Context(), jobID); tenant != "" {
-		if err := s.requireTenantAccess(r, tenant); err != nil {
-			writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
-			return
-		}
+	if !s.requireJobTenantAccess(w, r, jobID) {
+		return
 	}
 	origReq, origReqErr := s.jobStore.GetJobRequest(r.Context(), jobID)
 	if origReqErr != nil {

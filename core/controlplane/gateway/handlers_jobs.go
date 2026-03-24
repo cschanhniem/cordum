@@ -608,11 +608,8 @@ func (s *server) handleListJobDecisions(w http.ResponseWriter, r *http.Request) 
 		writeErrorJSON(w, http.StatusBadRequest, "missing id")
 		return
 	}
-	if tenant, _ := s.jobStore.GetTenant(r.Context(), id); tenant != "" {
-		if err := s.requireTenantAccess(r, tenant); err != nil {
-			writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
-			return
-		}
+	if !s.requireJobTenantAccess(w, r, id) {
+		return
 	}
 	limit, _ := parsePagination(r, 50)
 	decisions, err := s.jobStore.ListSafetyDecisions(r.Context(), id, limit)
@@ -1028,11 +1025,8 @@ func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, "missing id")
 		return
 	}
-	if tenant, _ := s.jobStore.GetTenant(r.Context(), id); tenant != "" {
-		if err := s.requireTenantAccess(r, tenant); err != nil {
-			writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
-			return
-		}
+	if !s.requireJobTenantAccess(w, r, id) {
+		return
 	}
 
 	state, err := s.jobStore.CancelJob(r.Context(), id)
