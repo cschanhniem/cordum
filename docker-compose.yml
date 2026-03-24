@@ -36,14 +36,11 @@ services:
       - --tls-ca-cert-file
       - /etc/cordum/tls/ca/ca.crt
       - --tls-auth-clients
-      - "yes"
-      - --aclfile
-      - /etc/redis/acl.conf
+      - "no"
     ports:
       - "6379:6379"
     volumes:
       - ./certs:/etc/cordum/tls:ro
-      - ./config/redis/acl-dev.conf:/etc/redis/acl.conf:ro
       - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "--tls", "--cacert", "/etc/cordum/tls/ca/ca.crt", "--cert", "/etc/cordum/tls/client/tls.crt", "--key", "/etc/cordum/tls/client/tls.key", "-a", "${REDIS_PASSWORD:-cordum-dev}", "ping"]
