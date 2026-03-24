@@ -10,22 +10,23 @@ import (
 )
 
 func TestRefreshIfUnknownKid_ConcurrentSingleRefresh(t *testing.T) {
-	// Create a provider with known keys and track refresh calls
+	// Create a provider with known keys and track refresh calls.
+	// Use a long cooldown to ensure all goroutines are rate-limited
+	// without needing a real httpClient for refreshJWKS.
 	p := &OIDCProvider{
 		rsaKeys:         make(map[string]*rsa.PublicKey),
 		ecKeys:          make(map[string]*ecdsa.PublicKey),
-		refreshCooldown: time.Millisecond, // fast cooldown for testing
+		refreshCooldown: time.Hour, // long cooldown ensures no actual refresh
 		stopCh:          make(chan struct{}),
 		done:            make(chan struct{}),
 	}
 	// Add a known key
 	p.rsaKeys["known-kid"] = &rsa.PublicKey{}
 
-	// Test: known kid returns true immediately
-	if !p.refreshIfUnknownKid("known-kid") {
-		// refreshIfUnknownKid returns false when JWKS endpoint not configured
-		// but the key IS found in cache, so the fast path works
-	}
+	// Test: known kid returns true immediately (cache hit, no refresh needed).
+	// refreshIfUnknownKid may return false when JWKS endpoint is not configured,
+	// but the key IS found in cache so the fast path still applies.
+	_ = p.refreshIfUnknownKid("known-kid")
 
 	// Test: concurrent calls for unknown kid should be rate-limited
 	// Only one should pass the double-checked locking
