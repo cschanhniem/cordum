@@ -39,6 +39,7 @@ const SettingsMcpPage = lazy(() => import("../pages/SettingsMcpPage"));
 const SettingsNotificationsPage = lazy(() => import("../pages/SettingsNotificationsPage"));
 const SettingsHealthPage = lazy(() => import("../pages/SettingsHealthPage"));
 const SettingsEnvironmentsPage = lazy(() => import("../pages/SettingsEnvironmentsPage"));
+const PolicyOverviewPage = lazy(() => import("../pages/govern/PolicyOverviewPage"));
 const InputRulesPage = lazy(() => import("../pages/govern/InputRulesPage"));
 const OutputRulesPage = lazy(() => import("../pages/govern/OutputRulesPage"));
 const TenantsPage = lazy(() => import("../pages/govern/TenantsPage"));
@@ -111,6 +112,7 @@ function MainApp() {
           <Route path="/schemas" element={<SchemasPage />} />
           <Route path="/schemas/:schemaId" element={<SchemaDetailPage />} />
           <Route path="/policy" element={<PolicyPage />} />
+          <Route path="/govern/overview" element={<PolicyOverviewPage />} />
           <Route path="/govern/input-rules" element={<InputRulesPage />} />
           <Route path="/govern/output-rules" element={<OutputRulesPage />} />
           <Route path="/govern/tenants" element={<TenantsPage />} />

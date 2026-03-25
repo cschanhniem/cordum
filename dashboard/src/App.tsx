@@ -50,6 +50,7 @@ const SettingsConfigPage = lazy(() => import("./pages/SettingsConfigPage"));
 const SettingsMcpPage = lazy(() => import("./pages/SettingsMcpPage"));
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage"));
 const SettingsHubPage = lazy(() => import("./pages/SettingsHubPage"));
+const GovernPolicyOverviewPage = lazy(() => import("./pages/govern/PolicyOverviewPage"));
 const GovernInputRulesPage = lazy(() => import("./pages/govern/InputRulesPage"));
 const GovernOutputRulesPage = lazy(() => import("./pages/govern/OutputRulesPage"));
 const GovernTenantsPage = lazy(() => import("./pages/govern/TenantsPage"));
@@ -60,9 +61,9 @@ const GovernSimulatorPage = lazy(() => import("./pages/govern/SimulatorPage"));
 const GovernQuarantinePage = lazy(() => import("./pages/govern/QuarantinePage"));
 
 export const LEGACY_POLICY_ROUTE_REDIRECTS = {
-  root: "/govern/input-rules",
-  builder: "/govern/input-rules",
-  rules: "/govern/input-rules",
+  root: "/govern/overview",
+  builder: "/govern/overview",
+  rules: "/govern/overview",
   input: "/govern/input-rules",
   output: "/govern/output-rules",
   tenants: "/govern/tenants",
@@ -120,6 +121,7 @@ function ProtectedRoutes() {
           <Route path="/approvals" element={<ApprovalsPage />} />
 
           {/* GOVERN */}
+          <Route path="/govern/overview" element={<GovernPolicyOverviewPage />} />
           <Route path="/govern/input-rules" element={<GovernInputRulesPage />} />
           <Route path="/govern/output-rules" element={<GovernOutputRulesPage />} />
           <Route path="/govern/tenants" element={<GovernTenantsPage />} />
