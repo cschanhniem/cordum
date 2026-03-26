@@ -117,6 +117,8 @@ function ProtectedRoutes() {
           {/* ORCHESTRATE */}
           <Route path="/workflows" element={<WorkflowsPage />} />
           <Route path="/workflows/new" element={<WorkflowCreatePage />} />
+          <Route path="/workflows/studio/new" element={<WorkflowStudioPage />} />
+          <Route path="/workflows/:id/studio" element={<WorkflowStudioPage />} />
           <Route path="/workflows/:id/edit" element={<WorkflowCreatePage />} />
           <Route path="/workflows/:id" element={<WorkflowDetailPage />} />
           <Route path="/workflows/:id/studio" element={<WorkflowStudioPage />} />
