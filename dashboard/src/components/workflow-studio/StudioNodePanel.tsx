@@ -122,7 +122,7 @@ export function StudioNodePanel({
           transition={{ type: "spring", stiffness: 300, damping: 30 }}
           className="w-80 border-l border-border bg-surface-0 overflow-y-auto shrink-0 flex flex-col"
         >
-          {isEdit && selectedNode ? (
+          {isEdit ? (
             <StudioConfigPanel
               node={selectedNode}
               onSave={handleConfigSave}

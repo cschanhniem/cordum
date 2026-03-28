@@ -16,7 +16,6 @@ import { InputRuleEditorDrawer } from "@/components/policy/input-rules/InputRule
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonCard } from "@/components/ui/Skeleton";
-import { StatusBadge } from "@/components/ui/StatusBadge";
 import { SafetyDecisionBadge } from "@/components/ui/SafetyDecisionBadge";
 import { InfoBanner } from "@/components/ui/InfoBanner";
 import { InstrumentCard } from "@/components/ui/InstrumentCard";

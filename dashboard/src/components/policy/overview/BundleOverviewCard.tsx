@@ -7,11 +7,8 @@ import { RuleDetailRow } from "./RuleDetailRow";
 import {
   ChevronDown,
   Code2,
-  Eye,
-  EyeOff,
   Zap,
   Settings,
-  Upload,
   Copy,
   Check,
   Tag,

@@ -2,15 +2,10 @@ import { useState, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { SafetyDecisionBadge } from "@/components/ui/SafetyDecisionBadge";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { RuleDetailRow } from "./RuleDetailRow";
 import {
   ArrowUp,
   ArrowDown,
   ArrowUpDown,
-  ChevronDown,
-  Tag,
-  AlertTriangle,
-  Shield,
 } from "lucide-react";
 import type { PolicyBundle, PolicyRule } from "@/api/types";
 

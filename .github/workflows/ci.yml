@@ -30,6 +30,9 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-go-
 
+    - name: Drop local replace directives (CI uses published modules)
+      run: go mod edit -dropreplace github.com/cordum-io/cap/v2
+
     - name: Download dependencies
       run: go mod download
 
@@ -89,6 +92,9 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-go-
 
+    - name: Drop local replace directives (CI uses published modules)
+      run: go mod edit -dropreplace github.com/cordum-io/cap/v2
+
     - name: Download dependencies
       run: go mod download
 
@@ -121,6 +127,9 @@ jobs:
         key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
         restore-keys: |
           ${{ runner.os }}-go-
+
+    - name: Drop local replace directives (CI uses published modules)
+      run: go mod edit -dropreplace github.com/cordum-io/cap/v2
 
     - name: Download dependencies
       run: go mod download

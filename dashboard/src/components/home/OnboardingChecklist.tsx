@@ -1,7 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { CheckCircle2, ArrowRight, Cpu, Workflow, ShieldCheck, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/Button";
 
 interface OnboardingChecklistProps {
   jobs: number;

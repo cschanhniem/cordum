@@ -1,5 +1,4 @@
 import { useMemo } from "react";
-import { cn } from "@/lib/utils";
 import { SafetyDecisionBadge } from "@/components/ui/SafetyDecisionBadge";
 import type { PolicyBundle, PolicyRule } from "@/api/types";
 
