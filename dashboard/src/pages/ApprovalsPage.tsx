@@ -4,6 +4,7 @@
  * Secondary hierarchy: workflow/job audit metadata and raw payloads for drill-down.
  */
 import { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import type { Approval } from "@/api/types";
 import { useApprovals, useApproveJob, useRejectJob } from "@/hooks/useApprovals";
@@ -425,6 +426,7 @@ export function handleDenyConfirm(
 }
 
 export default function ApprovalsPage() {
+  const navigate = useNavigate();
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState("pending");
   const [selectedApproval, setSelectedApproval] = useState<Approval | null>(null);
@@ -611,8 +613,13 @@ export default function ApprovalsPage() {
           title={activeTab === "pending" ? "No pending approvals" : "No approvals found"}
           description={
             activeTab === "pending"
-              ? "All clear — no actions are waiting for human review."
+              ? "Approvals are triggered when a job matches a require_approval rule in your input policy."
               : "Try adjusting your search terms or status filter."
+          }
+          action={
+            activeTab === "pending"
+              ? <Button variant="outline" size="sm" onClick={() => navigate("/govern/overview?tab=input-rules")}>View input rules</Button>
+              : undefined
           }
         />
       ) : (
@@ -748,20 +755,33 @@ export default function ApprovalsPage() {
             </p>
             <div>
               <label className="mb-1 block text-xs font-mono uppercase tracking-wide text-muted-foreground">
-                Reason
+                Reason <span className="text-destructive">*</span>
               </label>
               <textarea
                 value={denyReason}
-                onChange={(e) => setDenyReason(e.target.value)}
+                onChange={(e) => {
+                  if (e.target.value.length <= 500) setDenyReason(e.target.value);
+                }}
                 placeholder="Why should this request be denied?"
                 rows={3}
+                maxLength={500}
+                aria-required="true"
+                aria-label="Denial reason"
                 className="w-full resize-none rounded-2xl border border-border bg-surface-2 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
               />
+              <p className={cn(
+                "text-xs mt-1 text-right",
+                denyReason.length > 400 ? "text-[var(--color-warning)]" : "text-muted-foreground",
+                denyReason.length >= 500 && "text-destructive",
+              )}>
+                {denyReason.length} / 500
+              </p>
             </div>
           </div>
         }
-        confirmLabel="Deny"
+        confirmLabel={denyReason.trim() ? "Deny" : "Enter reason to deny"}
         variant="destructive"
+        isPending={!denyReason.trim()}
       />
 
       {selectedApproval && (
@@ -810,7 +830,7 @@ export default function ApprovalsPage() {
                 type="button"
                 aria-label="Close approval detail"
                 onClick={() => setSelectedApproval(null)}
-                className="rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
+                className="flex items-center justify-center min-w-[44px] min-h-[44px] -mr-2 rounded-full text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
               >
                 <X className="h-4 w-4" />
               </button>

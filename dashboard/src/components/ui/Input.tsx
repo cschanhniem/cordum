@@ -7,6 +7,11 @@ interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(
   ({ className, icon, ...props }, ref) => {
+    // Fall back to placeholder as aria-label when no explicit label association
+    // exists (no id for htmlFor, no aria-label). Hidden inputs are exempt.
+    const effectiveAriaLabel =
+      props["aria-label"] ?? (props.id || props.type === "hidden" ? undefined : props.placeholder);
+
     return (
       <div className="relative">
         {icon && (
@@ -16,6 +21,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
         )}
         <input
           ref={ref}
+          aria-label={effectiveAriaLabel}
           className={cn(
             "flex h-9 w-full rounded-2xl border border-border bg-surface-2/50 px-3 py-2 text-sm text-foreground",
             "placeholder:text-muted-foreground/60",

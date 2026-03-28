@@ -93,7 +93,7 @@ export function JobPipelineFunnel() {
     return (
       <Card className="flex h-[430px] min-h-[430px] flex-col">
         <div className="space-y-3">
-          <h3 className="text-sm font-semibold text-ink">Job Pipeline</h3>
+          <h2 className="text-sm font-semibold text-ink">Job Pipeline</h2>
           <p className="text-xs text-muted-foreground">
             Pipeline metrics are not available from the gateway.
           </p>
@@ -107,7 +107,7 @@ export function JobPipelineFunnel() {
       <div className="flex min-h-0 flex-1 flex-col gap-4">
         <div className="flex items-start justify-between">
           <div>
-            <h3 className="text-sm font-semibold text-ink">Job Pipeline</h3>
+            <h2 className="text-sm font-semibold text-ink">Job Pipeline</h2>
             <p className="text-xs text-muted-foreground">Live execution flow by stage</p>
           </div>
           <span className="rounded-full border border-border bg-surface2 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">

@@ -49,7 +49,7 @@ export function EventTimeline() {
   return (
     <Card>
       <div className="space-y-3">
-        <h3 className="text-sm font-semibold text-ink">Recent Events</h3>
+        <h2 className="text-sm font-semibold text-ink">Recent Events</h2>
 
         {displayed.length === 0 ? (
           <p className="py-6 text-center text-xs text-muted-foreground">

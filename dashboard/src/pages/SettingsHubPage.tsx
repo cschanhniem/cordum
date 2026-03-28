@@ -13,8 +13,8 @@ const settingsCards = [
   { icon: Server, title: "MCP Server", description: "Configure MCP server connections", path: "/settings/mcp" },
   { icon: Bell, title: "Notifications", description: "Notification channels and preferences", path: "/settings/notifications" },
   { icon: Users, title: "Users & RBAC", description: "User management and role assignments", path: "/settings/users" },
-  { icon: ShieldCheck, title: "Input Safety", description: "Configure input safety policies", path: "/govern/input-rules" },
-  { icon: ShieldAlert, title: "Output Safety", description: "Configure output quarantine settings", path: "/govern/output-rules" },
+  { icon: ShieldCheck, title: "Input Safety", description: "Configure input safety policies", path: "/govern/overview?tab=input-rules" },
+  { icon: ShieldAlert, title: "Output Safety", description: "Configure output quarantine settings", path: "/govern/overview?tab=output-rules" },
 ];
 
 export default function SettingsHubPage() {
@@ -43,9 +43,9 @@ export default function SettingsHubPage() {
                 <card.icon className="w-5 h-5 text-cordum" />
               </div>
               <div className="min-w-0">
-                <h3 className="text-sm font-display font-semibold text-foreground group-hover:text-cordum transition-colors">
+                <h2 className="text-sm font-display font-semibold text-foreground group-hover:text-cordum transition-colors">
                   {card.title}
-                </h3>
+                </h2>
                 <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
                   {card.description}
                 </p>

@@ -3,12 +3,12 @@ import { buildSimulatorUrl } from "./simulatorQuery";
 
 describe("buildSimulatorUrl", () => {
   it("returns bare path when no params provided", () => {
-    expect(buildSimulatorUrl({})).toBe("/govern/simulator");
+    expect(buildSimulatorUrl({})).toBe("/govern/overview?tab=simulator");
   });
 
   it("includes bundle param when bundleId is set", () => {
     const url = buildSimulatorUrl({ bundleId: "default" });
-    expect(url).toBe("/govern/simulator?bundle=default");
+    expect(url).toBe("/govern/overview?tab=simulator&bundle=default");
   });
 
   it("includes topic and tenant params", () => {
@@ -29,7 +29,7 @@ describe("buildSimulatorUrl", () => {
 
   it("ignores empty/whitespace-only params", () => {
     const url = buildSimulatorUrl({ bundleId: "  ", topic: "", capabilities: [] });
-    expect(url).toBe("/govern/simulator");
+    expect(url).toBe("/govern/overview?tab=simulator");
   });
 
   it("includes workflow param", () => {

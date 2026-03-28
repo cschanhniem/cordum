@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { AlertTriangle, X } from "lucide-react";
 import { useDialogA11y } from "@/hooks/useDialogA11y";
+import { useMotionConfig } from "@/hooks/useMotionConfig";
 
 export interface ConfirmDialogProps {
   open: boolean;
@@ -42,6 +43,7 @@ export function ConfirmDialog({
   const resolvedLoading = loading ?? isPending ?? false;
   const resolvedOnClose = onClose ?? onCancel ?? (() => {});
   const [typed, setTyped] = useState("");
+  const { fadeIn, scaleIn } = useMotionConfig();
   const canConfirm = confirmText ? typed === confirmText : true;
 
   const handleConfirm = () => {
@@ -63,18 +65,12 @@ export function ConfirmDialog({
       {open && (
         <>
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.15 }}
+            {...fadeIn}
             className="fixed inset-0 z-[100] bg-[color:var(--surface-glass)] backdrop-blur-md"
             onClick={handleClose}
           />
           <motion.div
-            initial={{ opacity: 0, scale: 0.96, y: 8 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.96, y: 8 }}
-            transition={{ duration: 0.15, ease: "easeOut" }}
+            {...scaleIn}
             className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[101] w-full max-w-md"
           >
             <div

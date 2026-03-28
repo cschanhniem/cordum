@@ -525,9 +525,31 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  /* Global: disable all keyframe animations and reduce transitions.
+     Catches everything including third-party (ReactFlow, Recharts). */
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* Explicit overrides for named animation classes */
   .animate-rise,
-  .animate-scan {
-    animation: none;
+  .animate-slide-in,
+  .animate-fade-in,
+  .animate-scale-in,
+  .animate-scan,
+  .status-pulse {
+    animation: none !important;
+  }
+
+  /* Transition utility classes */
+  .transition-smooth,
+  .transition-colors-smooth {
+    transition-duration: 0ms !important;
   }
 }
 

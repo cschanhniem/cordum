@@ -4,6 +4,8 @@ import { SafetyDecisionBadge } from "@/components/ui/SafetyDecisionBadge";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { RuleDetailRow } from "./RuleDetailRow";
 import {
+  ArrowUp,
+  ArrowDown,
   ArrowUpDown,
   ChevronDown,
   Tag,
@@ -110,16 +112,19 @@ export function AllRulesTable({ bundles, filterText }: AllRulesTableProps) {
         "px-3 py-2.5 text-left font-mono text-xs uppercase tracking-widest text-muted-foreground bg-surface-2 cursor-pointer hover:text-foreground transition-colors select-none",
         className,
       )}
+      role="columnheader"
+      aria-sort={sortKey === sortId ? (sortAsc ? "ascending" : "descending") : "none"}
+      tabIndex={0}
       onClick={() => handleSort(sortId)}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleSort(sortId); } }}
     >
       <span className="flex items-center gap-1">
         {label}
-        <ArrowUpDown
-          className={cn(
-            "w-3 h-3",
-            sortKey === sortId ? "text-cordum" : "opacity-30",
-          )}
-        />
+        {sortKey === sortId ? (
+          sortAsc ? <ArrowUp className="w-3 h-3 text-cordum" /> : <ArrowDown className="w-3 h-3 text-cordum" />
+        ) : (
+          <ArrowUpDown className="w-3 h-3 opacity-30" />
+        )}
       </span>
     </th>
   );

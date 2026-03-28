@@ -54,11 +54,20 @@ export default function BundleDetailPage() {
   const publishPolicy = usePublishPolicy();
   const rollbackPolicy = useRollbackPolicy();
 
-  const [activeTab, setActiveTab] = useState<BundleTab>("yaml");
+  // Default to preview for published bundles — YAML for drafts
+  const urlTab = new URLSearchParams(window.location.search).get("tab") as BundleTab | null;
+  const [activeTab, setActiveTab] = useState<BundleTab>(urlTab ?? "preview");
   const [yamlDraft, setYamlDraft] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [publishOpen, setPublishOpen] = useState(false);
   const [rollbackSnapshotId, setRollbackSnapshotId] = useState<string | null>(null);
+
+  // Auto-switch to yaml tab for draft bundles (unless URL specifies a tab)
+  useEffect(() => {
+    if (bundle && !urlTab && bundle.status === "draft") {
+      setActiveTab("yaml");
+    }
+  }, [bundle?.status, urlTab]);
 
   // Track server content to detect when draft matches after refetch
   const serverContent = bundle?.content ?? "";
@@ -142,7 +151,7 @@ export default function BundleDetailPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => navigate("/govern/bundles")}>
+          <Button variant="ghost" size="sm" onClick={() => navigate("/govern/overview?tab=bundles")}>
             <ArrowLeft className="mr-1 h-3.5 w-3.5" />
             Bundles
           </Button>
@@ -289,7 +298,7 @@ export default function BundleDetailPage() {
             </div>
           </div>
 
-          <BundleDetailTabs active={activeTab} onChange={setActiveTab} />
+          <BundleDetailTabs active={activeTab} onChange={setActiveTab} snapshotCount={bundle?.snapshots?.length ?? 0} />
 
           <div className="min-h-[200px]">
             {activeTab === "yaml" && (
@@ -300,7 +309,7 @@ export default function BundleDetailPage() {
               />
             )}
             {activeTab === "preview" && (
-              <BundleVisualPreview yaml={currentYaml} />
+              <BundleVisualPreview yaml={currentYaml} onSwitchToCode={() => setActiveTab("yaml")} />
             )}
             {activeTab === "diff" && (
               <BundleDiffView bundleId={bundleId} draftYaml={currentYaml} />

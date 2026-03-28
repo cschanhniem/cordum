@@ -47,7 +47,7 @@ export default function SettingsEnvironmentsPage() {
       {isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}</div>
       ) : !envs?.length ? (
-        <EmptyState icon={<Globe className="w-8 h-8" />} title="No environments" description="Add an environment to connect to a Cordum cluster" />
+        <EmptyState icon={<Globe className="w-8 h-8" />} title="No environments" description="Add an environment to connect to a Cordum cluster" action={<Button variant="outline" size="sm" disabled>Coming soon</Button>} />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {envs.map((env, i) => (

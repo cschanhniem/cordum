@@ -1126,7 +1126,7 @@ export function auditResourceLink(
     case "job": return `/jobs/${resourceId}`;
     case "workflow": return `/workflows/${resourceId}/studio`;
     case "run": return `/workflows`;
-    case "policy": return `/govern/bundles`;
+    case "policy": return `/govern/overview?tab=bundles`;
     case "user": return `/settings`;
     case "pack": return `/packs`;
     case "approval": return `/approvals`;

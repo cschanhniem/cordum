@@ -108,6 +108,7 @@ export default function TenantDetailPage() {
       <EmptyState
         title="No policy bundles found"
         description="Create or sync a policy bundle before viewing tenant policy detail."
+        action={<Button variant="outline" size="sm" onClick={() => navigate("/govern/overview?tab=bundles")}>View bundles</Button>}
       />
     );
   }

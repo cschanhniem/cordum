@@ -422,6 +422,8 @@ export default function WorkflowRunDetailPage() {
                             <p className="text-xs text-muted-foreground italic mt-0.5">Skipped: dependency failed</p>
                           )}
                           <div className="flex items-center gap-2 mt-0.5">
+                            <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">{step.status}</span>
+                            <span className="text-border">·</span>
                             <span className="text-xs text-muted-foreground capitalize">{step.type}</span>
                             {step.duration && (
                               <span className={cn("text-xs font-mono", isActive ? "text-cordum" : "text-muted-foreground")}>
@@ -550,7 +552,11 @@ export default function WorkflowRunDetailPage() {
                 onChange={(e) => setChatInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && sendMessage()}
                 placeholder="Send a message to the workflow..."
-                className="flex-1 h-9 px-3 text-sm bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+                disabled={chatMutation.isPending}
+                className={cn(
+                  "flex-1 h-9 px-3 text-sm bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum",
+                  chatMutation.isPending && "opacity-50 cursor-not-allowed",
+                )}
               />
               <Button variant="primary" size="sm" onClick={sendMessage} disabled={!chatInput.trim() || chatMutation.isPending}>
                 <Send className="w-3.5 h-3.5" />

@@ -129,7 +129,7 @@ export function SafetyDecisionFeed() {
         <div className="flex items-start gap-2.5">
           <ShieldCheck className="mt-0.5 w-4 h-4 text-cordum shrink-0" />
           <div className="flex-1 min-w-0">
-            <h3 className="font-display text-sm font-semibold text-foreground">Live Safety Decisions</h3>
+            <h2 className="font-display text-sm font-semibold text-foreground">Live Safety Decisions</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
               Recent decisions from stream and history (latest {FEED_LIMIT})
             </p>

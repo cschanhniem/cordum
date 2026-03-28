@@ -10,7 +10,8 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonTable } from "@/components/ui/Skeleton";
-import { Search, RefreshCw, FileText, Download, Calendar } from "lucide-react";
+import { Search, RefreshCw, FileText, Download, Calendar, X } from "lucide-react";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import { toast } from "sonner";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
@@ -109,6 +110,7 @@ export default function AuditLogPage() {
   }, [handleObserver]);
 
   const filtersActive = !!actionFilter || !!dateFrom || !!dateTo || !!search;
+  const activeFilterCount = [actionFilter, dateFrom, dateTo, search].filter(Boolean).length;
 
   const exportCSV = () => {
     if (filtersActive) {
@@ -152,7 +154,7 @@ export default function AuditLogPage() {
       />
 
       {/* Filters */}
-      <div className="flex items-center gap-3 flex-wrap">
+      <div className={cn("flex items-center gap-3 flex-wrap", filtersActive && "border-l-[3px] border-l-[var(--color-info)] pl-3")}>
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
           <input
@@ -197,14 +199,29 @@ export default function AuditLogPage() {
           />
         </div>
         {filtersActive && (
-          <button
-            onClick={() => { setSearch(""); setActionFilter(""); setDateFrom(""); setDateTo(""); }}
-            className="h-8 px-3 text-xs text-muted-foreground hover:text-foreground transition-colors"
-          >
-            Clear filters
-          </button>
+          <StatusBadge variant="info">
+            {activeFilterCount} filter{activeFilterCount > 1 ? "s" : ""} active
+          </StatusBadge>
         )}
+        <button
+          onClick={() => { setSearch(""); setActionFilter(""); setDateFrom(""); setDateTo(""); }}
+          disabled={!filtersActive}
+          className={cn(
+            "h-8 px-3 text-xs transition-colors flex items-center gap-1",
+            filtersActive ? "text-muted-foreground hover:text-foreground" : "text-muted-foreground/40 cursor-not-allowed",
+          )}
+        >
+          <X className="w-3 h-3" />
+          Clear filters
+        </button>
       </div>
+
+      {/* Result count when filtered */}
+      {filtersActive && (
+        <p className="text-xs text-muted-foreground">
+          Showing {events.length} of {data?.pages?.[0]?.total ?? events.length}+ events
+        </p>
+      )}
 
       {/* Total count */}
       {total != null && (

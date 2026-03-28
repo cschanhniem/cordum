@@ -4,6 +4,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 
 interface BundleVisualPreviewProps {
   yaml: string;
+  onSwitchToCode?: () => void;
 }
 
 interface ParsedRule {
@@ -46,13 +47,22 @@ function decisionVariant(decision: string): "healthy" | "warning" | "governance"
   return "muted";
 }
 
-export function BundleVisualPreview({ yaml }: BundleVisualPreviewProps) {
+export function BundleVisualPreview({ yaml, onSwitchToCode }: BundleVisualPreviewProps) {
   const { rules, error } = useMemo(() => extractRules(yaml), [yaml]);
 
   if (error) {
     return (
-      <div className="rounded-2xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-        Unable to parse YAML for preview: {error}
+      <div className="rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-xs text-destructive space-y-2">
+        <p>Unable to parse YAML for preview: {error}</p>
+        {onSwitchToCode && (
+          <button
+            type="button"
+            onClick={onSwitchToCode}
+            className="text-xs font-medium text-accent hover:underline"
+          >
+            Switch to Code tab to fix syntax errors
+          </button>
+        )}
       </div>
     );
   }

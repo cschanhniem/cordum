@@ -867,7 +867,7 @@ export default function OutputSafetySettings() {
             <CardTitle>Output Rules</CardTitle>
             <CardDescription>Summary of active output-focused policy rules.</CardDescription>
           </div>
-          <Link to="/govern/input-rules" className="text-xs font-semibold text-accent hover:underline">
+          <Link to="/govern/overview?tab=input-rules" className="text-xs font-semibold text-accent hover:underline">
             Open Policy Studio
           </Link>
         </CardHeader>

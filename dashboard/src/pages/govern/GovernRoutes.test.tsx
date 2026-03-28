@@ -4,11 +4,11 @@ import { derivePolicyAccess } from "@/hooks/usePolicyAccess";
 
 describe("GOVERN legacy redirect contract", () => {
   it("maps major legacy policy paths to the expected GOVERN destinations", () => {
-    expect(LEGACY_POLICY_ROUTE_REDIRECTS.input).toBe("/govern/input-rules");
-    expect(LEGACY_POLICY_ROUTE_REDIRECTS.output).toBe("/govern/output-rules");
+    expect(LEGACY_POLICY_ROUTE_REDIRECTS.input).toBe("/govern/overview?tab=input-rules");
+    expect(LEGACY_POLICY_ROUTE_REDIRECTS.output).toBe("/govern/overview?tab=output-rules");
     expect(LEGACY_POLICY_ROUTE_REDIRECTS.tenants).toBe("/govern/tenants");
-    expect(LEGACY_POLICY_ROUTE_REDIRECTS.bundles).toBe("/govern/bundles");
-    expect(LEGACY_POLICY_ROUTE_REDIRECTS.simulator).toBe("/govern/simulator");
+    expect(LEGACY_POLICY_ROUTE_REDIRECTS.bundles).toBe("/govern/overview?tab=bundles");
+    expect(LEGACY_POLICY_ROUTE_REDIRECTS.simulator).toBe("/govern/overview?tab=simulator");
     expect(LEGACY_POLICY_ROUTE_REDIRECTS.quarantine).toBe("/govern/quarantine");
   });
 });

@@ -95,6 +95,14 @@ const DECISION_COLORS: Record<string, string> = {
   throttle: "#0f7f7a",
 };
 
+// Dash patterns per decision type — colorblind-accessible differentiation.
+const DECISION_DASH: Record<string, string | undefined> = {
+  allow: undefined,       // solid
+  deny: "8 4",            // dashed
+  require_approval: "4 2", // short dashes
+  throttle: "8 4 2 4",    // dash-dot
+};
+
 const LATENCY_COLORS: Record<string, string> = {
   p50: "#0f7f7a",
   p95: "#c58a1c",
@@ -498,6 +506,7 @@ export function PolicyAnalytics() {
                   stroke={DECISION_COLORS.allow}
                   fill={DECISION_COLORS.allow}
                   fillOpacity={0.6}
+                  strokeWidth={2}
                 />
                 <Area
                   type="monotone"
@@ -506,6 +515,8 @@ export function PolicyAnalytics() {
                   stroke={DECISION_COLORS.deny}
                   fill={DECISION_COLORS.deny}
                   fillOpacity={0.6}
+                  strokeWidth={2}
+                  strokeDasharray={DECISION_DASH.deny}
                 />
                 <Area
                   type="monotone"
@@ -514,6 +525,8 @@ export function PolicyAnalytics() {
                   stroke={DECISION_COLORS.require_approval}
                   fill={DECISION_COLORS.require_approval}
                   fillOpacity={0.6}
+                  strokeWidth={2}
+                  strokeDasharray={DECISION_DASH.require_approval}
                 />
                 <Area
                   type="monotone"
@@ -522,6 +535,8 @@ export function PolicyAnalytics() {
                   stroke={DECISION_COLORS.throttle}
                   fill={DECISION_COLORS.throttle}
                   fillOpacity={0.6}
+                  strokeWidth={2}
+                  strokeDasharray={DECISION_DASH.throttle}
                 />
               </AreaChart>
             </ResponsiveContainer>

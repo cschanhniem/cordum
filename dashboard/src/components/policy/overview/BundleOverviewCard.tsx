@@ -231,7 +231,7 @@ export function BundleOverviewCard({
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              navigate(`/govern/simulator`);
+              navigate(`/govern/overview?tab=simulator`);
             }}
             className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-mono border border-border text-muted-foreground hover:border-cordum hover:text-foreground transition-all"
           >

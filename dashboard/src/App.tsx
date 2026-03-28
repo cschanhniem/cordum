@@ -1,6 +1,6 @@
 import { Suspense, useEffect, type ReactNode } from "react";
 import { safeLazy as lazy } from "./lib/safeLazy";
-import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams, useSearchParams } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "sonner";
 import { registerQueryClient } from "./state/config";
@@ -52,14 +52,18 @@ const SettingsMcpPage = lazy(() => import("./pages/SettingsMcpPage"));
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage"));
 const SettingsHubPage = lazy(() => import("./pages/SettingsHubPage"));
 const GovernPolicyOverviewPage = lazy(() => import("./pages/govern/PolicyOverviewPage"));
-const GovernInputRulesPage = lazy(() => import("./pages/govern/InputRulesPage"));
-const GovernOutputRulesPage = lazy(() => import("./pages/govern/OutputRulesPage"));
 const GovernTenantsPage = lazy(() => import("./pages/govern/TenantsPage"));
 const GovernTenantDetailPage = lazy(() => import("./pages/govern/TenantDetailPage"));
-const GovernBundlesPage = lazy(() => import("./pages/govern/BundlesPage"));
 const GovernBundleDetailPage = lazy(() => import("./pages/govern/BundleDetailPage"));
-const GovernSimulatorPage = lazy(() => import("./pages/govern/SimulatorPage"));
 const GovernQuarantinePage = lazy(() => import("./pages/govern/QuarantinePage"));
+
+// Policy Studio tab redirects — old standalone page routes → tabbed Policy Studio
+function PolicyTabRedirect({ tab }: { tab: string }) {
+  const [searchParams] = useSearchParams();
+  const params = new URLSearchParams(searchParams);
+  params.set("tab", tab);
+  return <Navigate to={`/govern/overview?${params.toString()}`} replace />;
+}
 
 // Legacy workflow redirects (bookmarks / external links)
 function WorkflowViewRedirect() {
@@ -75,14 +79,14 @@ export const LEGACY_POLICY_ROUTE_REDIRECTS = {
   root: "/govern/overview",
   builder: "/govern/overview",
   rules: "/govern/overview",
-  input: "/govern/input-rules",
-  output: "/govern/output-rules",
+  input: "/govern/overview?tab=input-rules",
+  output: "/govern/overview?tab=output-rules",
   tenants: "/govern/tenants",
-  bundles: "/govern/bundles",
-  simulator: "/govern/simulator",
-  history: "/govern/bundles",
-  analytics: "/govern/simulator",
-  publish: "/govern/bundles",
+  bundles: "/govern/overview?tab=bundles",
+  simulator: "/govern/overview?tab=simulator",
+  history: "/govern/overview?tab=bundles",
+  analytics: "/govern/overview?tab=simulator",
+  publish: "/govern/overview?tab=bundles",
   quarantine: "/govern/quarantine",
 } as const;
 
@@ -136,13 +140,13 @@ function ProtectedRoutes() {
 
           {/* GOVERN */}
           <Route path="/govern/overview" element={<GovernPolicyOverviewPage />} />
-          <Route path="/govern/input-rules" element={<GovernInputRulesPage />} />
-          <Route path="/govern/output-rules" element={<GovernOutputRulesPage />} />
+          <Route path="/govern/input-rules" element={<PolicyTabRedirect tab="input-rules" />} />
+          <Route path="/govern/output-rules" element={<PolicyTabRedirect tab="output-rules" />} />
           <Route path="/govern/tenants" element={<GovernTenantsPage />} />
           <Route path="/govern/tenants/:id" element={<GovernTenantDetailPage />} />
-          <Route path="/govern/bundles" element={<GovernBundlesPage />} />
           <Route path="/govern/bundles/:id" element={<GovernBundleDetailPage />} />
-          <Route path="/govern/simulator" element={<GovernSimulatorPage />} />
+          <Route path="/govern/bundles" element={<PolicyTabRedirect tab="bundles" />} />
+          <Route path="/govern/simulator" element={<PolicyTabRedirect tab="simulator" />} />
           <Route path="/govern/quarantine" element={<GovernQuarantinePage />} />
           <Route path="/policies" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.root} replace />} />
           <Route path="/policies/input" element={<Navigate to={LEGACY_POLICY_ROUTE_REDIRECTS.input} replace />} />

@@ -234,7 +234,7 @@ function doesRuleMatchContext(rule: PolicyRule, ctx: ContextInputs): boolean {
 // Page component
 // ---------------------------------------------------------------------------
 
-export default function InputRulesPage() {
+export default function InputRulesPage({ hideHeader }: { hideHeader?: boolean } = {}) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const policyAccess = usePolicyAccess();
@@ -409,7 +409,7 @@ export default function InputRulesPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <PageHeader
+      {!hideHeader && <PageHeader
         label="Govern"
         title="Input Rules"
         subtitle="All input policy rules across every bundle. See what rules affect any tenant, topic, or workflow."
@@ -418,7 +418,7 @@ export default function InputRulesPage() {
             {affordances.canEditRule ? "editor access" : "read-only role"}
           </StatusBadge>
         }
-      />
+      />}
 
       <InfoBanner
         variant="cordum"
@@ -626,8 +626,19 @@ export default function InputRulesPage() {
       {/* ── Rule list ── */}
       {enrichedRules.length === 0 && !rulesLoading && (
         <EmptyState
-          title="No rules match filters"
-          description="Try adjusting the scope, decision, or search filters."
+          title={scopeFilter !== "all" || decisionFilter || bundleFilter || searchText ? "No rules match filters" : "No input rules configured"}
+          description={scopeFilter !== "all" || decisionFilter || bundleFilter || searchText ? "Try adjusting the scope, decision, or search filters." : "Input rules are defined in policy bundles. Create or sync a bundle to get started."}
+          action={
+            scopeFilter !== "all" || decisionFilter || bundleFilter || searchText ? (
+              <Button variant="ghost" size="sm" onClick={() => { setFilter("scope", ""); setFilter("decision", ""); setFilter("bundle", ""); setFilter("q", ""); }}>
+                Clear all filters
+              </Button>
+            ) : (
+              <Button variant="outline" size="sm" onClick={() => navigate("/govern/overview?tab=bundles")}>
+                View bundles
+              </Button>
+            )
+          }
         />
       )}
 

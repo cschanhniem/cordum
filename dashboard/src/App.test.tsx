@@ -42,11 +42,11 @@ describe("Command palette navigation integrity", () => {
     );
     const paths = governCommands.map((c) => c.path).sort();
     expect(paths).toEqual([
-      "/govern/bundles",
-      "/govern/input-rules",
-      "/govern/output-rules",
+      "/govern/overview?tab=bundles",
+      "/govern/overview?tab=input-rules",
+      "/govern/overview?tab=output-rules",
+      "/govern/overview?tab=simulator",
       "/govern/quarantine",
-      "/govern/simulator",
       "/govern/tenants",
     ]);
   });

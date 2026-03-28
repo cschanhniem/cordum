@@ -15,7 +15,8 @@ import {
   ArrowLeft, Copy, Play, XCircle, Clock, Shield,
   FileText, AlertTriangle, Eye,
 } from "lucide-react";
-import { cn, formatRelativeTime } from "@/lib/utils";
+import { cn, formatRelativeTime, formatDuration } from "@/lib/utils";
+import { useElapsedTimer } from "@/hooks/useElapsedTimer";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
@@ -353,6 +354,7 @@ export default function JobDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   // Cancel/retry handled by JobActions component
+  const isJobActive = (s?: string) => !!s && ["running", "dispatched", "pending", "scheduled"].includes(s);
 
   const { data: job, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["job", id],
@@ -367,6 +369,11 @@ export default function JobDetailPage() {
       return 5_000;
     },
   });
+
+  const { formatted: elapsedFormatted, elapsed } = useElapsedTimer(
+    job?.createdAt,
+    isJobActive(job?.status),
+  );
 
   const copyId = () => {
     if (id) {
@@ -477,7 +484,7 @@ export default function JobDetailPage() {
           <div className="instrument-card">
             <div className="flex items-center gap-2 mb-4">
               <FileText className="w-4 h-4 text-cordum" />
-              <h3 className="font-display font-semibold text-sm text-foreground">Job Identity</h3>
+              <h2 className="font-display font-semibold text-sm text-foreground">Job Identity</h2>
             </div>
             <dl className="grid grid-cols-[110px_1fr] gap-x-6 gap-y-3 items-baseline">
               {([
@@ -516,6 +523,33 @@ export default function JobDetailPage() {
                     </dd>
                   </div>
                 ))}
+              {isJobActive(job.status) && (
+                <div className="contents">
+                  <dt className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Elapsed</dt>
+                  <dd className="text-sm font-mono text-foreground flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-cordum animate-pulse" />
+                    {elapsedFormatted}
+                  </dd>
+                </div>
+              )}
+              {isJobActive(job.status) && job.createdAt && (
+                <div className="contents">
+                  <dt className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Elapsed</dt>
+                  <dd className="text-sm font-mono text-foreground flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-[var(--color-info)]" />
+                    <span>{elapsedFormatted}</span>
+                    <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-info)] animate-pulse" />
+                  </dd>
+                </div>
+              )}
+              {!isJobActive(job.status) && job.createdAt && job.updatedAt && (
+                <div className="contents">
+                  <dt className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Duration</dt>
+                  <dd className="text-sm font-mono text-foreground">
+                    {formatDuration(new Date(job.updatedAt).getTime() - new Date(job.createdAt).getTime())}
+                  </dd>
+                </div>
+              )}
             </dl>
           </div>
 
@@ -526,7 +560,7 @@ export default function JobDetailPage() {
           )}>
             <div className="flex items-center gap-2 mb-3">
               <Shield className="w-4 h-4 text-cordum" />
-              <h3 className="font-display font-semibold text-sm text-foreground">Safety Decision</h3>
+              <h2 className="font-display font-semibold text-sm text-foreground">Safety Decision</h2>
             </div>
             {job.safetyDecision?.type && (
               <div className="mb-4">
@@ -596,7 +630,7 @@ export default function JobDetailPage() {
       >
         <div className="flex items-center gap-2 mb-3">
           <Shield className="w-4 h-4 text-cordum" />
-          <h3 className="font-display font-semibold text-sm text-foreground">Safety Story</h3>
+          <h2 className="font-display font-semibold text-sm text-foreground">Safety Story</h2>
         </div>
         <div className="space-y-4">
           {/* Step 1: Input Evaluation */}
@@ -721,7 +755,7 @@ export default function JobDetailPage() {
       >
         <div className="flex items-center gap-2 mb-4">
           <Clock className="w-4 h-4 text-cordum" />
-          <h3 className="font-display font-semibold text-sm text-foreground">Event Timeline</h3>
+          <h2 className="font-display font-semibold text-sm text-foreground">Event Timeline</h2>
         </div>
         <JobTimeline job={job} />
       </motion.div>

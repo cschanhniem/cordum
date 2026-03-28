@@ -479,7 +479,7 @@ describe("ApprovalsPage decision-first rendering", () => {
     try {
       expect(container.textContent).toContain("No pending approvals");
       expect(container.textContent).toContain(
-        "All clear — no actions are waiting for human review.",
+        "Approvals are triggered when a job matches a require_approval rule",
       );
     } finally {
       cleanup();

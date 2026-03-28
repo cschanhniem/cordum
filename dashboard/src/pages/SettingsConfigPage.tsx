@@ -12,6 +12,7 @@ import { SkeletonCard } from "@/components/ui/Skeleton";
 import { Save, RotateCcw, AlertTriangle, Settings, Shield, Database, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { friendlyError } from "@/lib/friendlyError";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 
 type ConfigValue = string | number | boolean;
@@ -97,7 +98,7 @@ export default function SettingsConfigPage() {
   const saveMutation = useMutation({
     mutationFn: async () => post("/config", values),
     onSuccess: () => { setOriginalValues({ ...values }); toast.success("Configuration saved"); },
-    onError: () => toast.error("Failed to save configuration"),
+    onError: (err: unknown) => { const f = friendlyError(err, "save config"); toast.error(f.title, { description: f.description }); },
   });
 
   const updateValue = (key: string, value: ConfigValue) => {

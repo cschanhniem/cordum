@@ -51,7 +51,7 @@ export default function SchemasPage() {
           <p className="text-sm text-destructive">Failed to load schemas</p>
         </div>
       ) : filtered.length === 0 ? (
-        <EmptyState icon={<FileJson className="w-8 h-8" />} title="No schemas found" description="Register a schema to define data contracts" />
+        <EmptyState icon={<FileJson className="w-8 h-8" />} title="No schemas found" description="Register a JSON Schema to define data contracts for job inputs and outputs" action={<Button variant="primary" size="sm" onClick={() => navigate("/schemas/new")}><Plus className="w-3 h-3 mr-1" />Register schema</Button>} />
       ) : (
         <div className="instrument-card overflow-hidden">
           <div className="overflow-x-auto">

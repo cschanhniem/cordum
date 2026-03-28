@@ -16,6 +16,7 @@ import { DialogOverlay } from "@/components/ui/DialogOverlay";
 import { Search, UserPlus, Users, Shield, Trash2, X, Mail, Key } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { friendlyError } from "@/lib/friendlyError";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 
 interface User {
@@ -68,7 +69,7 @@ export default function SettingsUsersPage() {
       resetInviteForm();
     },
     onError: (err: Error) => {
-      toast.error("Failed to create user", { description: err.message });
+      { const f = friendlyError(err, "create user"); toast.error(f.title, { description: f.description }); };
     },
   });
 
@@ -80,7 +81,7 @@ export default function SettingsUsersPage() {
       toast.success("Role updated");
     },
     onError: (err: Error) => {
-      toast.error("Failed to update role", { description: err.message });
+      { const f = friendlyError(err, "update role"); toast.error(f.title, { description: f.description }); };
     },
   });
 
@@ -92,7 +93,7 @@ export default function SettingsUsersPage() {
       setDeleteTarget(null);
     },
     onError: (err: Error) => {
-      toast.error("Failed to remove user", { description: err.message });
+      { const f = friendlyError(err, "remove user"); toast.error(f.title, { description: f.description }); };
     },
   });
 
@@ -237,7 +238,7 @@ export default function SettingsUsersPage() {
       {/* Create User Dialog */}
       <DialogOverlay open={inviteOpen} onClose={() => { setInviteOpen(false); resetInviteForm(); }} label="Create user" className="w-[420px] bg-surface-1 border border-border rounded-xl shadow-2xl p-6">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-display font-semibold text-foreground">Create User</h3>
+          <h2 className="text-sm font-display font-semibold text-foreground">Create User</h2>
           <button type="button" onClick={() => { setInviteOpen(false); resetInviteForm(); }} className="p-1 rounded hover:bg-surface-2 transition-colors">
             <X className="w-4 h-4 text-muted-foreground" />
           </button>

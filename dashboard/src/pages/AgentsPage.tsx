@@ -220,12 +220,17 @@ export default function AgentsPage() {
         <EmptyState
           icon={<Cpu className="w-5 h-5" />}
           title="No agents found"
-          description={search ? "Try adjusting your search" : "No agents have connected yet"}
+          description={search ? "Try adjusting your search" : "Agents connect via the Cordum SDK. Start an agent with your API key to see it here."}
+          action={search ? undefined : (
+            <Button variant="outline" size="sm" onClick={() => navigate("/settings/keys")}>
+              View API keys
+            </Button>
+          )}
         />
       ) : (
         <div className="instrument-card overflow-hidden">
           <div className="flex items-center justify-between px-5 py-3 border-b border-border">
-            <h3 className="font-display font-semibold text-sm text-foreground">Worker Pool</h3>
+            <h2 className="font-display font-semibold text-sm text-foreground">Worker Pool</h2>
             <Button variant="outline" size="sm" onClick={() => refetch()}>
               <RefreshCw className="w-3 h-3 mr-1" />
               Refresh
@@ -321,7 +326,7 @@ function AgentRegistryTab() {
 
   if (workers.length === 0) {
     return (
-      <EmptyState icon={<Shield className="w-8 h-8" />} title="No agents registered" description="Agents will appear here after they connect and send heartbeats." />
+      <EmptyState icon={<Shield className="w-8 h-8" />} title="No agents registered" description="Agents will appear here after they connect and send heartbeats." action={<Button variant="outline" size="sm" onClick={() => navigate("/settings/keys")}>View API keys</Button>} />
     );
   }
 

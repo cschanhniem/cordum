@@ -1,19 +1,11 @@
 import { lazy } from "react";
 import type { LucideIcon } from "lucide-react";
 
-// Lazy-loaded tab content — each loads its respective page with hideHeader=true
-export const LazyInputRulesTab = lazy(
-  () => import("@/pages/govern/InputRulesPage"),
-);
-export const LazyOutputRulesTab = lazy(
-  () => import("@/pages/govern/OutputRulesPage"),
-);
-export const LazySimulatorTab = lazy(
-  () => import("@/pages/govern/SimulatorPage"),
-);
-export const LazyBundlesTab = lazy(
-  () => import("@/pages/govern/BundlesPage"),
-);
+// Lazy-loaded tab content — each wraps its page with hideHeader=true
+export const LazyInputRulesTab = lazy(() => import("./InputRulesTab"));
+export const LazyOutputRulesTab = lazy(() => import("./OutputRulesTab"));
+export const LazySimulatorTab = lazy(() => import("./SimulatorTab"));
+export const LazyBundlesTab = lazy(() => import("./BundlesTab"));
 
 export interface TabDefinition {
   id: string;

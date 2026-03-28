@@ -254,7 +254,7 @@ export default function AgentDetailPage() {
         {/* Safety Breakdown */}
         <div className="instrument-card">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="font-display font-semibold text-sm text-foreground">Safety Decisions</h3>
+            <h2 className="font-display font-semibold text-sm text-foreground">Safety Decisions</h2>
             <span className="font-mono text-xs text-muted-foreground">{totalDecisions.toLocaleString()} total</span>
           </div>
           <div className="text-center mb-4">
@@ -294,7 +294,7 @@ export default function AgentDetailPage() {
 
         {/* Policy Bindings */}
         <div className="instrument-card">
-          <h3 className="font-display font-semibold text-sm text-foreground mb-4">Active Policy Bindings</h3>
+          <h2 className="font-display font-semibold text-sm text-foreground mb-4">Active Policy Bindings</h2>
           {bundles.length === 0 ? (
             <div className="py-6 text-center">
               <p className="text-xs text-muted-foreground">No policy bundles bound to this agent's pool</p>
@@ -338,7 +338,7 @@ export default function AgentDetailPage() {
       <div className="instrument-card">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h3 className="font-display font-semibold text-sm text-foreground">Hourly Activity</h3>
+            <h2 className="font-display font-semibold text-sm text-foreground">Hourly Activity</h2>
             <p className="text-xs text-muted-foreground mt-0.5">Jobs processed per hour (last 24h)</p>
           </div>
         </div>
@@ -363,7 +363,7 @@ export default function AgentDetailPage() {
       {/* Recent Jobs */}
       <div className="instrument-card overflow-hidden">
         <div className="flex items-center justify-between px-5 py-3 border-b border-border">
-          <h3 className="font-display font-semibold text-sm text-foreground">Recent Jobs</h3>
+          <h2 className="font-display font-semibold text-sm text-foreground">Recent Jobs</h2>
           <Button variant="ghost" size="sm" onClick={() => navigate("/jobs")}>
             View all <ArrowLeft className="w-3 h-3 ml-1 rotate-180" />
           </Button>

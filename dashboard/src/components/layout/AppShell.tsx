@@ -1,5 +1,5 @@
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
-import { type ReactNode, useState, useEffect } from "react";
+import { type ReactNode, useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { useConfigStore } from "@/state/config";
@@ -10,6 +10,8 @@ import { useQuarantinedJobs } from "@/hooks/useOutputPolicy";
 import { useStatus } from "@/hooks/useStatus";
 import { useWorkerEvents } from "@/hooks/useWorkers";
 import { useKeyboardShortcuts, G_KEY_MAP } from "@/hooks/useKeyboardShortcuts";
+import { useDialogA11y } from "@/hooks/useDialogA11y";
+import { useReducedMotion } from "framer-motion";
 import { CommandPalette } from "@/components/CommandPalette";
 import { NotificationPopover } from "@/components/NotificationPopover";
 import { ConnectionIndicator } from "@/components/ConnectionIndicator";
@@ -31,6 +33,7 @@ import {
   Search,
   Command,
   ExternalLink,
+  Shield,
   ShieldCheck,
   ShieldAlert,
   GitBranch,
@@ -83,12 +86,8 @@ export const APP_SHELL_NAV_SECTIONS: NavSection[] = [
   {
     label: "Govern",
     items: [
-      { path: "/govern/overview", label: "Policy Overview", icon: Eye },
-      { path: "/govern/input-rules", label: "Input Rules", icon: ShieldCheck },
-      { path: "/govern/output-rules", label: "Output Rules", icon: ShieldAlert },
+      { path: "/govern/overview", label: "Policy Studio", icon: Shield },
       { path: "/govern/tenants", label: "Tenants", icon: Layers },
-      { path: "/govern/bundles", label: "Bundles", icon: GitBranch },
-      { path: "/govern/simulator", label: "Simulator", icon: Zap },
       { path: "/govern/quarantine", label: "Quarantine", icon: ShieldAlert, badge: "quarantine" },
     ],
   },
@@ -158,6 +157,12 @@ export function AppShell({ children }: AppShellProps) {
   const { data: quarantineData } = useQuarantinedJobs();
   const quarantineCount = quarantineData?.items?.length ?? 0;
 
+  // Accessibility: focus trap for mobile drawer + reduced motion
+  const prefersReducedMotion = useReducedMotion();
+  const closeMobileMenu = useCallback(() => setMobileOpen(false), []);
+  const drawerRef = useDialogA11y(closeMobileMenu);
+  const hamburgerRef = useRef<HTMLButtonElement>(null);
+
   // System health status — derived from GET /status (polled every 10s via useStatus)
   const { data: statusData, isError: statusError, isLoading: statusLoading } = useStatus();
   const systemStatus = deriveSystemStatus(statusData, statusError, statusLoading);
@@ -174,6 +179,15 @@ export function AppShell({ children }: AppShellProps) {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, []);
+
+  // Return focus to hamburger when mobile drawer closes
+  const prevMobileOpen = useRef(mobileOpen);
+  useEffect(() => {
+    if (prevMobileOpen.current && !mobileOpen) {
+      hamburgerRef.current?.focus();
+    }
+    prevMobileOpen.current = mobileOpen;
+  }, [mobileOpen]);
 
   // Close mobile drawer on navigation
   useEffect(() => {
@@ -201,6 +215,7 @@ export function AppShell({ children }: AppShellProps) {
 
       {/* Mobile hamburger */}
       <button type="button"
+        ref={hamburgerRef}
         onClick={() => setMobileOpen(true)}
         className="md:hidden fixed top-3 left-3 z-50 p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-md bg-surface-1 border border-border text-muted-foreground hover:text-foreground transition-colors"
         aria-label="Open navigation"
@@ -216,15 +231,24 @@ export function AppShell({ children }: AppShellProps) {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
+              transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.2 }}
               className="md:hidden fixed inset-0 z-50 bg-[color:var(--surface-glass)] backdrop-blur-md"
               onClick={() => setMobileOpen(false)}
             />
             <motion.aside
+              ref={drawerRef as React.Ref<HTMLElement>}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Navigation menu"
               initial={{ x: "-100%" }}
               animate={{ x: 0 }}
               exit={{ x: "-100%" }}
-              transition={{ type: "spring", stiffness: 300, damping: 30 }}
+              transition={prefersReducedMotion ? { duration: 0 } : { type: "spring", stiffness: 300, damping: 30 }}
+              onAnimationComplete={() => {
+                // Focus first interactive element inside drawer after slide-in
+                const firstFocusable = drawerRef.current?.querySelector<HTMLElement>("button, a, [tabindex]");
+                firstFocusable?.focus();
+              }}
               className="md:hidden fixed top-0 left-0 h-screen z-50 w-56 flex flex-col border-r border-border bg-surface-0"
             >
               {/* Close button */}
@@ -275,7 +299,7 @@ export function AppShell({ children }: AppShellProps) {
                             <item.icon className="w-4 h-4 shrink-0" />
                             <span className="flex-1">{item.label}</span>
                             {badgeCount > 0 && (
-                              <span className={cn(
+                              <span aria-live="polite" aria-atomic="true" className={cn(
                                 "text-xs font-mono font-bold px-1.5 py-0.5 rounded-full",
                                 item.badge === "approvals"
                                   ? "bg-status-warning/20 text-status-warning"
@@ -387,7 +411,7 @@ export function AppShell({ children }: AppShellProps) {
                             <span className="flex-1">{item.label}</span>
                           )}
                           {!collapsed && badgeCount > 0 && (
-                            <span className={cn(
+                            <span aria-live="polite" aria-atomic="true" className={cn(
                               "text-xs font-mono font-bold px-1.5 py-0.5 rounded-full",
                               item.badge === "approvals"
                                 ? "bg-status-warning/20 text-status-warning"
@@ -546,7 +570,7 @@ export function AppShell({ children }: AppShellProps) {
         </header>
 
         {/* Page content */}
-        <main className="flex-1 overflow-y-auto dot-grid">
+        <main id="main-content" className="flex-1 overflow-y-auto dot-grid">
           <motion.div
             key={location.pathname}
             initial={{ opacity: 0, y: 6 }}

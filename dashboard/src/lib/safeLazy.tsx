@@ -7,7 +7,7 @@ import { lazy, type ComponentType } from "react";
  * attempts fail, it renders an inline error component instead of leaving
  * the user on a blank screen with an unhandled promise rejection.
  */
-export function safeLazy<T extends ComponentType<unknown>>(
+export function safeLazy<T extends ComponentType<any>>(
   factory: () => Promise<{ default: T }>,
 ): React.LazyExoticComponent<T> {
   return lazy(() =>

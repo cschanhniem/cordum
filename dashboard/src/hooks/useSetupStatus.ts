@@ -88,7 +88,7 @@ export function useSetupStatus(): SetupStatus {
       {
         id: "policy-bundle",
         label: "Load first policy bundle",
-        route: "/govern/bundles",
+        route: "/govern/overview?tab=bundles",
         completed: bundles.length > 0,
         optional: false,
       },

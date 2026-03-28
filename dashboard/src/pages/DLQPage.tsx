@@ -192,13 +192,15 @@ export default function DLQPage() {
           <table className="w-full min-w-[750px]">
             <thead>
               <tr className="border-b border-border bg-surface-0">
-                <th className="w-10 px-3 py-3">
-                  <input
-                    type="checkbox"
-                    checked={allSelected}
-                    onChange={toggleAll}
-                    className="w-3.5 h-3.5 rounded border-border bg-surface-0 text-cordum focus:ring-cordum accent-[oklch(0.82_0.18_165)]"
-                  />
+                <th className="w-12 px-1 py-1">
+                  <label className="flex items-center justify-center min-w-[44px] min-h-[44px] cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={allSelected}
+                      onChange={toggleAll}
+                      className="w-4 h-4 rounded border-border bg-surface-0 text-cordum focus:ring-cordum accent-[oklch(0.82_0.18_165)]"
+                    />
+                  </label>
                 </th>
                 <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Job ID</th>
                 <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Topic</th>
@@ -219,13 +221,15 @@ export default function DLQPage() {
                     )}
                     {...clickableRowProps(() => setExpandedRow(expandedRow === d.id ? null : d.id))}
                   >
-                    <td className="w-10 px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        checked={selected.has(d.id)}
-                        onChange={() => toggleOne(d.id)}
-                        className="w-3.5 h-3.5 rounded border-border bg-surface-0 text-cordum focus:ring-cordum accent-[oklch(0.82_0.18_165)]"
-                      />
+                    <td className="w-12 px-1 py-1" onClick={(e) => e.stopPropagation()}>
+                      <label className="flex items-center justify-center min-w-[44px] min-h-[44px] cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={selected.has(d.id)}
+                          onChange={() => toggleOne(d.id)}
+                          className="w-4 h-4 rounded border-border bg-surface-0 text-cordum focus:ring-cordum accent-[oklch(0.82_0.18_165)]"
+                        />
+                      </label>
                     </td>
                     <td className="px-5 py-3 font-mono text-sm text-foreground">{(d.jobId ?? d.id ?? "").slice(0, 16)}</td>
                     <td className="px-5 py-3 text-sm text-foreground">{d.originalTopic ?? "—"}</td>
@@ -234,21 +238,21 @@ export default function DLQPage() {
                     </td>
                     <td className="px-5 py-3 text-center font-mono text-xs text-muted-foreground">{d.attempts ?? d.retryCount ?? 0}</td>
                     <td className="px-5 py-3 text-right text-xs text-muted-foreground font-mono">{formatRelativeTime(d.failedAt ?? d.createdAt ?? "")}</td>
-                    <td className="px-5 py-3" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex gap-1 justify-end">
+                    <td className="px-3 py-1" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex gap-0 justify-end">
                         <button type="button"
                           onClick={() => retryMutation.mutate({ id: d.id })}
                           disabled={retryMutation.isPending || purgeMutation.isPending}
-                          className="p-1.5 rounded hover:bg-surface-2 transition-colors text-cordum disabled:opacity-50 disabled:pointer-events-none"
-                          title="Retry"
+                          className="flex items-center justify-center min-w-[44px] min-h-[44px] rounded-lg hover:bg-surface-2 transition-colors text-cordum disabled:opacity-50 disabled:pointer-events-none"
+                          aria-label="Retry this entry"
                         >
                           <Play className="w-3.5 h-3.5" />
                         </button>
                         <button type="button"
                           onClick={() => purgeMutation.mutate(d.id)}
                           disabled={purgeMutation.isPending || retryMutation.isPending}
-                          className="p-1.5 rounded hover:bg-surface-2 transition-colors text-destructive disabled:opacity-50 disabled:pointer-events-none"
-                          title="Purge"
+                          className="flex items-center justify-center min-w-[44px] min-h-[44px] rounded-lg hover:bg-surface-2 transition-colors text-destructive disabled:opacity-50 disabled:pointer-events-none"
+                          aria-label="Purge this entry"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -267,7 +271,10 @@ export default function DLQPage() {
                             transition={{ duration: 0.2 }}
                             className="overflow-hidden"
                           >
-                            <div className="px-12 py-4 bg-surface-0/50 border-b border-border space-y-3">
+                            <div
+                              className="px-12 py-4 bg-surface-1 border-b border-border border-l-[3px] border-l-cordum space-y-3"
+                              style={{ boxShadow: "inset 0 2px 4px rgba(0,0,0,0.04)" }}
+                            >
                               <div>
                                 <p className="text-xs font-mono text-muted-foreground uppercase tracking-widest mb-2">Entry Details</p>
                                 <pre className="text-xs font-mono text-foreground bg-surface-0 border border-border rounded-2xl p-3 max-h-40 overflow-auto">

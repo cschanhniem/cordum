@@ -34,7 +34,7 @@ export function getBundleAffordances(canPublish: boolean) {
   };
 }
 
-export default function BundlesPage() {
+export default function BundlesPage({ hideHeader }: { hideHeader?: boolean } = {}) {
   const navigate = useNavigate();
   const policyAccess = usePolicyAccess();
   const { data, isLoading, isError, error, refetch } = usePolicyBundles();
@@ -56,21 +56,23 @@ export default function BundlesPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        label="Govern"
-        title="Bundles"
-        subtitle="Policy bundle inventory. Select a bundle to view YAML, diff, snapshots, and manage publish lifecycle."
-        actions={
-          <div className="flex items-center gap-2">
-            <Button variant="primary" size="sm" disabled title="Bundle creation not yet available — use the CLI to create new bundles">
-              <Plus className="w-3 h-3 mr-1" />Create Bundle
-            </Button>
-            <StatusBadge variant={policyAccess.canPublish ? "healthy" : "muted"}>
-              {policyAccess.canPublish ? "publish access" : "publish restricted"}
-            </StatusBadge>
-          </div>
-        }
-      />
+      {!hideHeader && (
+        <PageHeader
+          label="Govern"
+          title="Bundles"
+          subtitle="Policy bundle inventory. Select a bundle to view YAML, diff, snapshots, and manage publish lifecycle."
+          actions={
+            <div className="flex items-center gap-2">
+              <Button variant="primary" size="sm" disabled title="Bundle creation not yet available — use the CLI to create new bundles">
+                <Plus className="w-3 h-3 mr-1" />Create Bundle
+              </Button>
+              <StatusBadge variant={policyAccess.canPublish ? "healthy" : "muted"}>
+                {policyAccess.canPublish ? "publish access" : "publish restricted"}
+              </StatusBadge>
+            </div>
+          }
+        />
+      )}
 
       {isLoading && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

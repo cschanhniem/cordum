@@ -16,6 +16,7 @@ import { DialogOverlay } from "@/components/ui/DialogOverlay";
 import { Key, Plus, Copy, Trash2, X } from "lucide-react";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import { toast } from "sonner";
+import { friendlyError } from "@/lib/friendlyError";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 
 interface ApiKey {
@@ -64,7 +65,8 @@ export function handleCreateKeySuccess(data: { data?: { key?: string } } | undef
 }
 
 export function handleCreateKeyError(err: unknown) {
-  toast.error("Failed to create API key", { description: errorDescription(err) });
+  const f = friendlyError(err, "create API key");
+  toast.error(f.title, { description: f.description });
 }
 
 export function handleDeleteKeySuccess(deps: DeleteKeyMutationDeps) {
@@ -74,7 +76,8 @@ export function handleDeleteKeySuccess(deps: DeleteKeyMutationDeps) {
 }
 
 export function handleDeleteKeyError(err: unknown) {
-  toast.error("Failed to revoke API key", { description: errorDescription(err) });
+  const f = friendlyError(err, "revoke API key");
+  toast.error(f.title, { description: f.description });
 }
 
 export default function SettingsKeysPage() {
@@ -162,7 +165,7 @@ export default function SettingsKeysPage() {
       {/* Create Dialog */}
       <DialogOverlay open={createOpen} onClose={() => setCreateOpen(false)} label={createdKey ? "Key Created" : "Create API key"} className="w-[420px] bg-surface-1 border border-border rounded-xl shadow-2xl p-6">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-display font-semibold text-foreground">{createdKey ? "Key Created" : "Create API Key"}</h3>
+          <h2 className="text-sm font-display font-semibold text-foreground">{createdKey ? "Key Created" : "Create API Key"}</h2>
           <button type="button" onClick={() => setCreateOpen(false)} className="p-1 rounded hover:bg-surface-2"><X className="w-4 h-4 text-muted-foreground" /></button>
         </div>
         {createdKey ? (
