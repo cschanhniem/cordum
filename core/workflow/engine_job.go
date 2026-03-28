@@ -220,11 +220,19 @@ func (e *Engine) buildJobRequest(ctx context.Context, wfDef *Workflow, run *Work
 	if step.WorkerID != "" {
 		req.Labels["worker_id"] = step.WorkerID
 	}
-	for k, v := range step.RouteLabels {
-		if req.Labels == nil {
-			req.Labels = map[string]string{}
+	if len(step.RouteLabels) > 0 {
+		scope := buildEvalScope(run, nil)
+		for k, v := range step.RouteLabels {
+			if req.Labels == nil {
+				req.Labels = map[string]string{}
+			}
+			resolved, err := evalTemplates(v, scope)
+			if err != nil {
+				req.Labels[k] = v // fallback to raw value on error
+			} else {
+				req.Labels[k] = fmt.Sprint(resolved)
+			}
 		}
-		req.Labels[k] = v
 	}
 	if step.TimeoutSec > 0 {
 		req.Budget = &pb.Budget{

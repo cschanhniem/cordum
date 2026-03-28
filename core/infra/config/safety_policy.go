@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -206,17 +207,19 @@ type OutputPolicyMatch struct {
 }
 
 type PolicyMatch struct {
-	Tenants        []string          `yaml:"tenants"`
-	Topics         []string          `yaml:"topics"`
-	Capabilities   []string          `yaml:"capabilities"`
-	RiskTags       []string          `yaml:"risk_tags"`
-	Requires       []string          `yaml:"requires"`
-	PackIDs        []string          `yaml:"pack_ids"`
-	ActorIDs       []string          `yaml:"actor_ids"`
-	ActorTypes     []string          `yaml:"actor_types"`
-	Labels         map[string]string `yaml:"labels"`
-	SecretsPresent *bool             `yaml:"secrets_present,omitempty"`
-	MCP            MCPPolicy         `yaml:"mcp"`
+	Tenants        []string                `yaml:"tenants"`
+	Topics         []string                `yaml:"topics"`
+	Capabilities   []string                `yaml:"capabilities"`
+	RiskTags       []string                `yaml:"risk_tags"`
+	Requires       []string                `yaml:"requires"`
+	PackIDs        []string                `yaml:"pack_ids"`
+	ActorIDs       []string                `yaml:"actor_ids"`
+	ActorTypes     []string                `yaml:"actor_types"`
+	Labels         map[string]string       `yaml:"labels"`
+	LabelAllowlist map[string][]string     `yaml:"label_allowlist,omitempty"` // deny when label value NOT in list
+	LabelThreshold map[string]float64      `yaml:"label_threshold,omitempty"` // deny when label value > threshold
+	SecretsPresent *bool                   `yaml:"secrets_present,omitempty"`
+	MCP            MCPPolicy               `yaml:"mcp"`
 }
 
 type PolicyConstraints struct {
@@ -511,10 +514,59 @@ func matchRule(match PolicyMatch, input PolicyInput) bool {
 	if len(match.Labels) > 0 && !labelsMatch(match.Labels, input.Labels) {
 		return false
 	}
+	if len(match.LabelAllowlist) > 0 && !labelAllowlistMatch(match.LabelAllowlist, input.Labels) {
+		return false
+	}
+	if len(match.LabelThreshold) > 0 && !labelThresholdMatch(match.LabelThreshold, input.Labels) {
+		return false
+	}
 	if !mcpMatch(match.MCP, input.MCP) {
 		return false
 	}
 	return true
+}
+
+// labelAllowlistMatch returns true when ANY label value is NOT in its allowlist.
+// This is an inverse match: the rule fires (returns true) when a value is OUTSIDE the list.
+// If the label is missing from input, skip that check (fail-open).
+func labelAllowlistMatch(allowlists map[string][]string, labels map[string]string) bool {
+	for key, allowed := range allowlists {
+		actual, exists := labels[key]
+		if !exists {
+			continue // label not present → skip check (fail-open)
+		}
+		found := false
+		lower := strings.ToLower(strings.TrimSpace(actual))
+		for _, v := range allowed {
+			if strings.ToLower(strings.TrimSpace(v)) == lower {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return true // value NOT in allowlist → rule matches (deny)
+		}
+	}
+	return false // all present labels are in their allowlists → rule does NOT match
+}
+
+// labelThresholdMatch returns true when ANY label value exceeds its threshold.
+// If the label is missing or not a valid number, skip that check (fail-open).
+func labelThresholdMatch(thresholds map[string]float64, labels map[string]string) bool {
+	for key, maxVal := range thresholds {
+		actual, exists := labels[key]
+		if !exists {
+			continue
+		}
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(actual), 64)
+		if err != nil {
+			continue // not a number → skip (fail-open)
+		}
+		if parsed > maxVal {
+			return true // exceeds threshold → rule matches (deny)
+		}
+	}
+	return false
 }
 
 func containsString(list []string, value string) bool {

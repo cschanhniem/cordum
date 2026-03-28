@@ -200,6 +200,17 @@
           "type": "object",
           "additionalProperties": {"type": "string"}
         },
+        "label_allowlist": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
+        },
+        "label_threshold": {
+          "type": "object",
+          "additionalProperties": {"type": "number"}
+        },
         "secrets_present": {"type": "boolean"},
         "mcp": {"$ref": "#/definitions/mcpPolicy"}
       }
