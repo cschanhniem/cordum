@@ -69,9 +69,9 @@ export function StudioToolbar({
   }, [workflow, isEdit, onModeChange]);
 
   return (
-    <div className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-surface-0 shrink-0 min-h-[52px]">
+    <div className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-surface-0 shadow-sm shrink-0 min-h-[52px]">
       {/* Left section: back + name + badges */}
-      <div className="flex items-center gap-3 min-w-0 flex-1">
+      <div className="flex items-center gap-3 min-w-0 flex-1 border-r border-border/40 pr-4 mr-4">
         <button
           type="button"
           onClick={handleBack}
@@ -87,10 +87,10 @@ export function StudioToolbar({
             value={name}
             onChange={(e) => onNameChange(e.target.value)}
             placeholder="Workflow name..."
-            className="text-sm font-display font-semibold bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground min-w-0 flex-1 max-w-[300px]"
+            className="text-base font-display font-semibold bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground/60 min-w-0 flex-1 max-w-[300px] focus:ring-0"
           />
         ) : (
-          <h1 className="text-sm font-display font-semibold text-foreground truncate max-w-[300px]">
+          <h1 className="text-base font-display font-semibold text-foreground truncate max-w-[300px]">
             {name || "Untitled Workflow"}
           </h1>
         )}
@@ -109,21 +109,21 @@ export function StudioToolbar({
 
         {/* Draft badge for new workflows */}
         {isNew && isEdit && (
-          <StatusBadge variant="info">Draft</StatusBadge>
+          <StatusBadge variant="info" dot pulse>Draft</StatusBadge>
         )}
       </div>
 
       {/* Center: mode toggle */}
       {workflow?.id && (
-        <div className="flex items-center bg-surface-2 rounded-full p-0.5 mx-4 shrink-0">
+        <div className="flex items-center bg-surface-1 border border-border rounded-full p-0.5 mx-4 shrink-0">
           <button
             type="button"
             onClick={() => onModeChange("view")}
             disabled={isSaving}
             className={cn(
-              "flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all",
+              "flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all duration-150",
               !isEdit
-                ? "bg-surface-0 text-foreground shadow-sm"
+                ? "bg-[var(--primary)]/10 text-[var(--primary)] shadow-sm"
                 : "text-muted-foreground hover:text-foreground",
               isSaving && "opacity-50 cursor-not-allowed",
             )}
@@ -136,9 +136,9 @@ export function StudioToolbar({
             onClick={() => onModeChange("edit")}
             disabled={isSaving}
             className={cn(
-              "flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all",
+              "flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all duration-150",
               isEdit
-                ? "bg-surface-0 text-foreground shadow-sm"
+                ? "bg-[var(--primary)]/10 text-[var(--primary)] shadow-sm"
                 : "text-muted-foreground hover:text-foreground",
               isSaving && "opacity-50 cursor-not-allowed",
             )}

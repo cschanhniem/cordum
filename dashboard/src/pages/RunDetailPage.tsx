@@ -12,9 +12,9 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { SkeletonCard } from "@/components/ui/Skeleton";
 import { EmptyState } from "@/components/ui/EmptyState";
 import {
-  ArrowLeft, Send, Briefcase, Shield, GitBranch, Clock,
+  ArrowLeft, Send, Briefcase, Shield, ShieldAlert, GitBranch, Clock,
   CheckCircle2, XCircle, Loader2, MessageSquare, AlertTriangle,
-  ChevronDown, Copy, RotateCcw,
+  ChevronDown, Copy, RotateCcw, Hand,
 } from "lucide-react";
 import { cn, formatRelativeTime, formatDuration } from "@/lib/utils";
 import { toast } from "sonner";
@@ -39,7 +39,7 @@ interface RunStep {
   id: string;
   label: string;
   type: "worker" | "approval" | "condition" | "delay";
-  status: "succeeded" | "running" | "failed" | "pending" | "skipped";
+  status: "succeeded" | "running" | "waiting" | "failed" | "pending" | "skipped" | "quarantined";
   duration?: string;
   output?: string;
 }
@@ -57,8 +57,10 @@ function mapStepType(type: string): RunStep["type"] {
 function mapStepStatus(status?: string): RunStep["status"] {
   switch (status) {
     case "succeeded": return "succeeded";
-    case "running":
-    case "waiting": return "running";
+    case "running": return "running";
+    case "waiting": return "waiting";
+    case "quarantined":
+    case "output_quarantined": return "quarantined";
     case "failed":
     case "timed_out": return "failed";
     case "cancelled": return "skipped";
@@ -66,11 +68,14 @@ function mapStepStatus(status?: string): RunStep["status"] {
   }
 }
 
-function runStatusVariant(status: RunStatus): "healthy" | "warning" | "danger" | "info" | "muted" {
+function runStatusVariant(status?: string): "healthy" | "warning" | "danger" | "info" | "muted" | "governance" {
   switch (status) {
     case "succeeded": return "healthy";
     case "running": return "info";
     case "waiting": return "warning";
+    case "quarantined":
+    case "output_quarantined":
+    case "denied": return "governance";
     case "failed":
     case "timed_out": return "danger";
     case "cancelled": return "muted";
@@ -193,8 +198,8 @@ export default function WorkflowRunDetailPage() {
   // Auto-select first running or first step
   useEffect(() => {
     if (steps.length > 0 && !selectedStep) {
-      const running = steps.find(s => s.status === "running");
-      setSelectedStep(running ?? steps[0]);
+      const active = steps.find(s => s.status === "waiting") ?? steps.find(s => s.status === "running");
+      setSelectedStep(active ?? steps[0]);
     }
   }, [steps, selectedStep]);
 
@@ -244,7 +249,9 @@ export default function WorkflowRunDetailPage() {
     switch (status) {
       case "succeeded": return <CheckCircle2 className="w-4 h-4 text-[var(--color-success)]" />;
       case "running": return <Loader2 className="w-4 h-4 text-cordum animate-spin" />;
+      case "waiting": return <Hand className="w-4 h-4 text-[var(--color-warning)] animate-pulse" />;
       case "failed": return <XCircle className="w-4 h-4 text-destructive" />;
+      case "quarantined": return <ShieldAlert className="w-4 h-4 text-[var(--color-governance)]" />;
       case "skipped": return <ChevronDown className="w-4 h-4 text-muted-foreground" />;
       default: return <div className="w-4 h-4 rounded-full border-2 border-border" />;
     }
@@ -317,9 +324,9 @@ export default function WorkflowRunDetailPage() {
               ) : run?.status && ["succeeded", "failed", "denied", "cancelled", "timed_out"].includes(run.status) ? (
                 <span className={cn(
                   "text-xs font-mono",
-                  run.status === "succeeded" ? "text-[var(--color-success)]" : "text-destructive",
+                  run.status === "succeeded" ? "text-[var(--color-success)]" : run.status === "denied" ? "text-[color:rgba(139,92,186,1)]" : "text-destructive",
                 )}>
-                  {run.status === "succeeded" ? "Completed" : run.status === "failed" ? "Failed" : run.status === "cancelled" ? "Cancelled" : "Timed out"}
+                  {run.status === "succeeded" ? "Completed" : run.status === "failed" ? "Failed" : run.status === "denied" ? "Denied" : run.status === "cancelled" ? "Cancelled" : "Timed out"}
                   {run.updatedAt ? ` ${formatRelativeTime(run.updatedAt)}` : ""}
                 </span>
               ) : null}
@@ -382,7 +389,9 @@ export default function WorkflowRunDetailPage() {
                 <div className="space-y-0.5">
                   {steps.map((step, i) => {
                     const Icon = stepIcon(step.type);
-                    const isActive = step.status === "running";
+                    const isRunning = step.status === "running";
+                    const isWaiting = step.status === "waiting";
+                    const isActive = isRunning || isWaiting;
                     return (
                       <motion.div
                         key={step.id}
@@ -392,7 +401,7 @@ export default function WorkflowRunDetailPage() {
                         onClick={() => setSelectedStep(step)}
                         className={cn(
                           "relative flex items-center gap-3 px-3 py-3 rounded-2xl transition-colors cursor-pointer",
-                          isActive ? "bg-cordum/5 border border-cordum/20" : "hover:bg-surface-1",
+                          isRunning ? "bg-cordum/5 border border-cordum/20" : isWaiting ? "bg-[var(--color-warning)]/5 border border-[var(--color-warning)]/20" : "hover:bg-surface-1",
                           selectedStep?.id === step.id && !isActive && "bg-surface-1 border border-border",
                           step.status === "pending" && "opacity-50",
                         )}
@@ -463,6 +472,11 @@ export default function WorkflowRunDetailPage() {
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                       <Loader2 className="w-3 h-3 animate-spin text-cordum" />
                       Processing...
+                    </div>
+                  ) : selectedStep.status === "waiting" ? (
+                    <div className="flex items-center gap-2 text-xs text-[var(--color-warning)]">
+                      <Hand className="w-3 h-3 animate-pulse" />
+                      Awaiting approval
                     </div>
                   ) : (
                     <p className="text-xs text-muted-foreground">Waiting to execute</p>

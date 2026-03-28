@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -101,6 +102,7 @@ type stubSafetyClient struct {
 	snapshots   []string
 	resp        *pb.PolicyCheckResponse
 	simulateErr error
+	evaluateErr error
 }
 
 func (c *stubSafetyClient) setSnapshots(snapshots []string) {
@@ -120,6 +122,12 @@ func (c *stubSafetyClient) Check(ctx context.Context, req *pb.PolicyCheckRequest
 }
 
 func (c *stubSafetyClient) Evaluate(ctx context.Context, req *pb.PolicyCheckRequest, _ ...grpc.CallOption) (*pb.PolicyCheckResponse, error) {
+	c.mu.Lock()
+	evalErr := c.evaluateErr
+	c.mu.Unlock()
+	if evalErr != nil {
+		return nil, evalErr
+	}
 	return c.response(), nil
 }
 
@@ -238,4 +246,30 @@ func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 	})
 
 	return s, bus, safetyClient
+}
+
+// failingSafetyClient is a test stub whose Evaluate always returns an error,
+// used to exercise the POLICY_CHECK_FAIL_MODE (open/closed) paths.
+type failingSafetyClient struct {
+	pb.SafetyKernelClient
+}
+
+func (c *failingSafetyClient) Evaluate(ctx context.Context, req *pb.PolicyCheckRequest, _ ...grpc.CallOption) (*pb.PolicyCheckResponse, error) {
+	return nil, errors.New("safety kernel unavailable")
+}
+
+func (c *failingSafetyClient) Check(ctx context.Context, req *pb.PolicyCheckRequest, _ ...grpc.CallOption) (*pb.PolicyCheckResponse, error) {
+	return nil, errors.New("safety kernel unavailable")
+}
+
+func (c *failingSafetyClient) Explain(ctx context.Context, req *pb.PolicyCheckRequest, _ ...grpc.CallOption) (*pb.PolicyCheckResponse, error) {
+	return nil, errors.New("safety kernel unavailable")
+}
+
+func (c *failingSafetyClient) Simulate(ctx context.Context, req *pb.PolicyCheckRequest, _ ...grpc.CallOption) (*pb.PolicyCheckResponse, error) {
+	return nil, errors.New("safety kernel unavailable")
+}
+
+func (c *failingSafetyClient) ListSnapshots(ctx context.Context, req *pb.ListSnapshotsRequest, _ ...grpc.CallOption) (*pb.ListSnapshotsResponse, error) {
+	return nil, errors.New("safety kernel unavailable")
 }

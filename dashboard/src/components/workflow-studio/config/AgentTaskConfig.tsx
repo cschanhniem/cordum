@@ -9,17 +9,14 @@ import { Select } from "../../ui/Select";
 import { Button } from "../../ui/Button";
 import { ComboboxInput } from "../../ui/ComboboxInput";
 import { useTopics } from "../../../hooks/useSettings";
-import { agentTaskSchema, type AgentTaskConfig } from "./schemas";
+import { agentTaskSchema, type AgentTaskConfig as AgentTaskFormValues } from "../../workflow/job/schemas";
+import type { UnifiedNodeData } from "../types";
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function nodeToDefaults(node: Node): AgentTaskConfig {
-  const config = (node.data?.config ?? {}) as Record<string, unknown>;
+function nodeToDefaults(d: UnifiedNodeData): AgentTaskFormValues {
+  const config = (d.config ?? {}) as Record<string, unknown>;
   return {
-    label: (node.data?.label as string) ?? "",
-    topic: (config.topic as string) ?? "",
+    label: d.label ?? "",
+    topic: d.topic ?? (config.topic as string) ?? "",
     prompt: (config.prompt as string) ?? "",
     adapterId: (config.adapterId as string) ?? "",
     priority: (config.priority as string) ?? "",
@@ -31,12 +28,12 @@ function nodeToDefaults(node: Node): AgentTaskConfig {
     allowRetrieval: (config.allowRetrieval as boolean) ?? false,
     memoryId: (config.memoryId as string) ?? "",
     contextMode: (config.contextMode as string) ?? "",
-    timeout: (config.timeout as string) ?? "",
-    retryMax: config.retryMax as number | undefined,
+    timeout: d.timeout_sec ? `${d.timeout_sec}s` : (config.timeout as string) ?? "",
+    retryMax: d.retry?.max_retries ?? (config.retryMax as number | undefined),
   };
 }
 
-function formToNodeData(values: AgentTaskConfig) {
+function formToNodeData(values: AgentTaskFormValues) {
   const { label, ...rest } = values;
   const config: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(rest)) {
@@ -60,20 +57,17 @@ function Field({ label, error, hint, children }: {
   );
 }
 
-// ---------------------------------------------------------------------------
-// AgentTaskPanel
-// ---------------------------------------------------------------------------
-
-export interface AgentTaskPanelProps {
-  node: Node;
+export interface AgentTaskConfigProps {
+  node: Node<UnifiedNodeData>;
   onSave: (nodeId: string, data: { label: string; config: Record<string, unknown> }) => void;
   onClose: () => void;
   onDelete?: (nodeId: string) => void;
 }
 
-export function AgentTaskPanel({ node, onSave, onClose, onDelete }: AgentTaskPanelProps) {
+export function AgentTaskConfig({ node, onSave, onClose, onDelete }: AgentTaskConfigProps) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const topicSuggestions = useTopics();
+  const isStartNode = node.id === "start" || node.data.stepType === "start";
 
   const {
     register,
@@ -82,16 +76,16 @@ export function AgentTaskPanel({ node, onSave, onClose, onDelete }: AgentTaskPan
     watch,
     setValue,
     formState: { errors, isDirty },
-  } = useForm<AgentTaskConfig>({
+  } = useForm<AgentTaskFormValues>({
     resolver: zodResolver(agentTaskSchema),
-    defaultValues: nodeToDefaults(node),
+    defaultValues: nodeToDefaults(node.data),
   });
 
   useEffect(() => {
-    reset(nodeToDefaults(node));
-  }, [node.id, reset, node]);
+    reset(nodeToDefaults(node.data));
+  }, [node.id, reset, node.data]);
 
-  const onSubmit = (values: AgentTaskConfig) => {
+  const onSubmit = (values: AgentTaskFormValues) => {
     onSave(node.id, formToNodeData(values));
   };
 
@@ -126,7 +120,6 @@ export function AgentTaskPanel({ node, onSave, onClose, onDelete }: AgentTaskPan
           <Input {...register("adapterId")} placeholder="default" />
         </Field>
 
-        {/* Advanced section */}
         <button
           type="button"
           onClick={() => setAdvancedOpen(!advancedOpen)}
@@ -147,7 +140,6 @@ export function AgentTaskPanel({ node, onSave, onClose, onDelete }: AgentTaskPan
                 <option value="critical">Critical</option>
               </Select>
             </Field>
-
             <Field label="Max Input Tokens">
               <Input type="number" {...register("maxInputTokens")} placeholder="0" />
             </Field>
@@ -157,14 +149,12 @@ export function AgentTaskPanel({ node, onSave, onClose, onDelete }: AgentTaskPan
             <Field label="Max Total Tokens">
               <Input type="number" {...register("maxTotalTokens")} placeholder="0" />
             </Field>
-
             <Field label="Allow Summarization">
               <input type="checkbox" {...register("allowSummarization")} className="accent-accent" />
             </Field>
             <Field label="Allow Retrieval">
               <input type="checkbox" {...register("allowRetrieval")} className="accent-accent" />
             </Field>
-
             <Field label="Memory ID">
               <Input {...register("memoryId")} placeholder="optional" />
             </Field>
@@ -185,7 +175,7 @@ export function AgentTaskPanel({ node, onSave, onClose, onDelete }: AgentTaskPan
 
         <div className="mt-auto space-y-2 pt-4">
           <Button type="submit" disabled={!isDirty} className="w-full">Save</Button>
-          {onDelete && node.id !== "start" && node.type !== "start" && (
+          {onDelete && !isStartNode && (
             <Button type="button" variant="danger" size="sm" className="w-full" onClick={() => onDelete(node.id)}>
               <Trash2 className="h-3.5 w-3.5" />
               Delete Node

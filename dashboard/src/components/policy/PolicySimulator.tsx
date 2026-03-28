@@ -237,7 +237,7 @@ function DenySuggestionCard({
 
         {result.matchedRule && (
           <Link
-            to={`/policies/rules?highlight=${encodeURIComponent(result.matchedRule)}`}
+            to={`/govern/input-rules?highlight=${encodeURIComponent(result.matchedRule)}`}
             className="inline-flex items-center gap-1.5 text-xs font-semibold text-accent hover:underline"
           >
             <Pencil className="h-3.5 w-3.5" />

@@ -16,6 +16,7 @@ interface Notification {
 }
 
 function eventTypeToNotifType(eventType: string): Notification["type"] {
+  if (eventType.includes("denied") || eventType.includes("quarantine")) return "warning";
   if (eventType.includes("failed") || eventType.includes("error") || eventType.includes("cancel")) return "error";
   if (eventType.includes("safety") || eventType.includes("approval") || eventType.includes("alert")) return "warning";
   if (eventType.includes("succeeded") || eventType.includes("completed")) return "success";
@@ -23,6 +24,8 @@ function eventTypeToNotifType(eventType: string): Notification["type"] {
 }
 
 function eventTypeToTitle(eventType: string): string {
+  if (eventType.startsWith("job.result.denied")) return "Job Denied";
+  if (eventType.startsWith("job.result.quarantined") || eventType.includes("quarantine")) return "Job Quarantined";
   if (eventType.startsWith("job.result.failed")) return "Job Failed";
   if (eventType.startsWith("job.result.succeeded")) return "Job Succeeded";
   if (eventType.startsWith("job.result")) return "Job Result";

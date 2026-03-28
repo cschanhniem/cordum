@@ -14,7 +14,7 @@ import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
 import { Textarea } from "../ui/Textarea";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
-import { cn } from "../../lib/utils";
+import { cn, formatDuration } from "../../lib/utils";
 import { useGeneralConfig, useSetGeneralConfig } from "../../hooks/useSettings";
 import type {
   GeneralConfig,
@@ -37,13 +37,6 @@ function formatElapsed(startIso: string): string {
   return `${days}d ${hrs % 24}h`;
 }
 
-function formatDuration(ms: number): string {
-  const mins = Math.round(ms / 60_000);
-  if (mins < 60) return `${mins}m`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ${mins % 60}m`;
-  return `${Math.floor(hrs / 24)}d ${hrs % 24}h`;
-}
 
 function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {

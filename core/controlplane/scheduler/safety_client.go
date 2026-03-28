@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -150,11 +151,14 @@ func (c *SafetyClient) Check(ctx context.Context, req *pb.JobRequest) (SafetyDec
 	}
 
 	// Dereference context_ptr and attach input content for content-level policy scanning.
-	// Failure is non-fatal: metadata-only check proceeds.
+	// Failure is non-fatal for metadata-only rules. For scope rules that require
+	// structured content, the kernel will enforce on_missing_input behavior.
 	if ptr := req.GetContextPtr(); ptr != "" {
 		content, originalSize, loadErr := c.loadInputContent(ctx, ptr)
 		if loadErr != nil {
-			// Log but do not fail. Content inspection is additive, not blocking.
+			slog.Warn("scheduler: input content load failed — scope rules may deny if content required",
+				"component", "scheduler", "job_id", req.GetJobId(), "topic", req.GetTopic(),
+				"context_ptr", ptr, "error", loadErr)
 		} else if len(content) > 0 {
 			checkReq.InputContent = content
 			checkReq.InputSizeBytes = originalSize

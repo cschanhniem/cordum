@@ -42,6 +42,7 @@ const (
 	RunStatusWaiting   RunStatus = "waiting"
 	RunStatusSucceeded RunStatus = "succeeded"
 	RunStatusFailed    RunStatus = "failed"
+	RunStatusDenied    RunStatus = "denied"
 	RunStatusCancelled RunStatus = "cancelled"
 	RunStatusTimedOut  RunStatus = "timed_out"
 )

@@ -77,7 +77,7 @@ describe("api/transform mappings", () => {
     expect(workflow.steps).toHaveLength(1);
     expect(workflow.steps[0].id).toBe("stepA");
     expect(workflow.steps[0].type).toBe("pack-action");
-    expect((workflow.steps[0].config as Record<string, unknown>).retryMax).toBe(2);
+    expect(workflow.steps[0].retry?.max_retries).toBe(2);
 
     const run = mapWorkflowRun({
       id: "run-1",

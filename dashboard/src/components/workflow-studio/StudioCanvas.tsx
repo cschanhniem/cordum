@@ -27,7 +27,7 @@ import { Info, X, Maximize2, Minimize2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { logger } from "@/lib/logger";
 import { toast } from "sonner";
-import type { UnifiedNodeData, StudioMode, StudioGraphData } from "./types";
+import type { UnifiedNodeData, StudioMode, StudioGraphData, CanvasHandle } from "./types";
 import { UnifiedNode } from "./nodes/UnifiedNode";
 
 // ---------------------------------------------------------------------------
@@ -144,6 +144,8 @@ export interface StudioCanvasProps {
   onNodeSelect?: (node: Node<UnifiedNodeData> | null) => void;
   /** Expose live graph for parent to read (save operations) */
   graphRef?: React.MutableRefObject<{ nodes: Node<UnifiedNodeData>[]; edges: Edge[] } | null>;
+  /** Expose imperative setNodes/setEdges so parent can push updates without re-mounting */
+  onGraphUpdate?: (handle: CanvasHandle) => void;
   className?: string;
 }
 
@@ -164,6 +166,7 @@ function StudioCanvasInner({
   mode,
   onNodeSelect,
   graphRef,
+  onGraphUpdate,
   className,
 }: StudioCanvasProps) {
   const [nodes, setNodes, handleNodesChange] = useNodesState(initialGraph.nodes);
@@ -184,6 +187,11 @@ function StudioCanvasInner({
       graphRef.current = { nodes, edges };
     }
   }, [graphRef, nodes, edges]);
+
+  // Expose imperative handle to parent on mount
+  useEffect(() => {
+    onGraphUpdate?.({ setNodes, setEdges });
+  }, [onGraphUpdate, setNodes, setEdges]);
 
   // Apply highlighting in view mode
   const { nodes: displayNodes, edges: displayEdges } = useMemo(
@@ -343,17 +351,39 @@ function StudioCanvasInner({
         nodesConnectable={isEdit}
         elementsSelectable
         deleteKeyCode={isEdit ? ["Delete", "Backspace"] : []}
-        defaultEdgeOptions={{ type: "smoothstep", animated: false }}
+        defaultEdgeOptions={{
+          type: "smoothstep",
+          animated: false,
+          style: { stroke: "var(--border)", strokeWidth: 1.5 },
+        }}
         fitView
         snapToGrid={isEdit}
         snapGrid={[20, 20]}
       >
-        <Background gap={20} size={1} />
-        <Controls showInteractive={isEdit} />
+        <Background gap={20} size={1} color="var(--muted-foreground)" style={{ opacity: 0.15 }} />
+        {/* Atmospheric vignette overlay */}
+        <div
+          className="pointer-events-none absolute inset-0 z-[1]"
+          style={{
+            background: "radial-gradient(ellipse at center, transparent 50%, var(--surface-0) 100%)",
+            opacity: 0.4,
+          }}
+        />
+        <Controls showInteractive={isEdit} className="!rounded-2xl !border-border !bg-surface-1 !shadow-soft [&>button]:!border-border [&>button]:!bg-surface-1 [&>button:hover]:!bg-surface-2 [&>button]:!rounded-lg" />
         <MiniMap
           nodeStrokeWidth={3}
-          className="!bg-surface-1 !border-border"
+          className="!bg-surface-1/90 !backdrop-blur-sm !border-border !rounded-2xl !shadow-soft"
         />
+
+        {/* Empty state for new workflows */}
+        {isEdit && nodes.length === 0 && (
+          <Panel position="top-center" className="mt-32">
+            <div className="text-center text-muted-foreground">
+              <p className="text-sm font-display font-semibold">No steps yet</p>
+              <p className="text-xs mt-1">Drag steps from the sidebar to build your workflow</p>
+            </div>
+          </Panel>
+        )}
 
         {/* Top-right panel buttons */}
         <Panel position="top-right" className="flex gap-1">

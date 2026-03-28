@@ -281,7 +281,7 @@ func (e *Engine) HandleJobResult(ctx context.Context, res *pb.JobResult) error {
 		return fmt.Errorf("get run %s: %w", runID, err)
 	}
 	switch run.Status {
-	case RunStatusSucceeded, RunStatusFailed, RunStatusCancelled, RunStatusTimedOut:
+	case RunStatusSucceeded, RunStatusFailed, RunStatusDenied, RunStatusCancelled, RunStatusTimedOut:
 		e.markRunTerminal(run.ID)
 		return nil
 	}
@@ -520,7 +520,7 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 	if wfDef == nil || run == nil {
 		return fmt.Errorf("workflow/run required")
 	}
-	if run.Status == RunStatusCancelled || run.Status == RunStatusFailed || run.Status == RunStatusSucceeded || run.Status == RunStatusTimedOut {
+	if run.Status == RunStatusCancelled || run.Status == RunStatusFailed || run.Status == RunStatusDenied || run.Status == RunStatusSucceeded || run.Status == RunStatusTimedOut {
 		e.markRunTerminal(run.ID)
 		return nil
 	}
@@ -1262,7 +1262,7 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 						e.OnStepFinished(run.ID, stepID, parentSR.Status)
 					}
 					continue
-				case RunStatusFailed, RunStatusCancelled, RunStatusTimedOut:
+				case RunStatusFailed, RunStatusDenied, RunStatusCancelled, RunStatusTimedOut:
 					msg := fmt.Sprintf("child run %s ended with status %s", childRunID, childRun.Status)
 					if childRun.Error != nil {
 						if childMsg, ok := childRun.Error["message"].(string); ok && strings.TrimSpace(childMsg) != "" {

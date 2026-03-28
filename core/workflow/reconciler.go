@@ -122,7 +122,7 @@ func (r *reconciler) tick(ctx context.Context) {
 		}
 	}
 	// Scan cancelled/timed-out runs for orphaned jobs that failed to cancel.
-	terminalStatuses := []RunStatus{RunStatusCancelled, RunStatusTimedOut, RunStatusFailed}
+	terminalStatuses := []RunStatus{RunStatusCancelled, RunStatusTimedOut, RunStatusFailed, RunStatusDenied}
 	for _, status := range terminalStatuses {
 		ids, err := r.workflowStore.ListRunIDsByStatus(ctx, status, r.runScanLimit)
 		if err != nil {
@@ -155,7 +155,7 @@ func (r *reconciler) reconcileRun(ctx context.Context, runID string) {
 		return
 	}
 	switch run.Status {
-	case RunStatusSucceeded, RunStatusFailed, RunStatusCancelled, RunStatusTimedOut:
+	case RunStatusSucceeded, RunStatusFailed, RunStatusDenied, RunStatusCancelled, RunStatusTimedOut:
 		return
 	}
 

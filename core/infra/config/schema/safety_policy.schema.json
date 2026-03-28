@@ -46,6 +46,16 @@
           "enum": ["allow", "permit", "deny", "block", "require_approval", "require-approval", "require_human", "allow_with_constraints", "allow-with-constraints", "throttle"]
         },
         "reason": {"type": "string"},
+        "velocity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["max_requests", "window_seconds", "key"],
+          "properties": {
+            "max_requests": {"type": "integer", "minimum": 1},
+            "window_seconds": {"type": "integer", "minimum": 1, "maximum": 86400},
+            "key": {"type": "string", "minLength": 1}
+          }
+        },
         "constraints": {"$ref": "#/definitions/constraints"},
         "remediations": {
           "type": "array",
@@ -105,17 +115,44 @@
         "content_types": {"type": "array", "items": {"type": "string"}},
         "detectors": {"type": "array", "items": {"type": "string"}},
         "input_size_gt": {"type": "integer", "minimum": 0},
-        "max_input_bytes": {"type": "integer", "minimum": 0}
+        "max_input_bytes": {"type": "integer", "minimum": 0},
+        "scope": {"$ref": "#/definitions/scopeConfig"}
+      }
+    },
+    "scopeConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["instruction_path", "items_path"],
+      "properties": {
+        "instruction_path": {"type": "string", "minLength": 1},
+        "items_path": {"type": "string", "minLength": 1},
+        "category_path": {"type": "string"},
+        "name_path": {"type": "string"},
+        "allowed_categories": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
+        },
+        "aliases": {
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        },
+        "on_missing_input": {"type": "string", "enum": ["deny", "allow"]},
+        "on_ambiguous": {"type": "string", "enum": ["deny", "allow"]}
       }
     },
     "inputPolicy": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "enabled": {"type": "boolean"},
         "fail_mode": {
           "type": "string",
           "enum": ["open", "closed"]
-        }
+        },
+        "max_scan_bytes": {"type": "integer"}
       }
     },
     "outputPolicy": {

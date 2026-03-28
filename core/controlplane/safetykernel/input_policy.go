@@ -23,6 +23,7 @@ type compiledInputRule struct {
 	patterns     []compiledOutputPattern // reuse the same compiled pattern type
 	keywords     []string
 	maxBytes     int64
+	scope        *config.ScopeConfig // structured instruction-vs-cart evaluator
 }
 
 // inputEvaluateRequest is the internal request for input rule evaluation.
@@ -84,6 +85,14 @@ func compileInputRules(policy *config.SafetyPolicy) []compiledInputRule {
 			continue
 		}
 
+		// Validate scope config at compile time.
+		if rule.Match.Scope != nil {
+			if err := validateScopeConfig(rule.Match.Scope); err != nil {
+				slog.Warn("safety-kernel: skipping input rule, invalid scope config", "rule", rule.ID, "err", err)
+				continue
+			}
+		}
+
 		scannerList := mergeScannerLists(rule.Match.Scanners, rule.Match.Detectors)
 		out = append(out, compiledInputRule{
 			id:           strings.TrimSpace(rule.ID),
@@ -99,6 +108,7 @@ func compileInputRules(policy *config.SafetyPolicy) []compiledInputRule {
 			patterns:     patterns,
 			keywords:     normalizeList(rule.Match.Keywords),
 			maxBytes:     maxBytes,
+			scope:        rule.Match.Scope,
 		})
 	}
 	return out
@@ -142,9 +152,22 @@ func evaluateInputRule(rule compiledInputRule, req inputEvaluateRequest, scanner
 	}
 
 	// Content scanning — only if content is available.
+	hasContentCriteria := len(rule.scanners) > 0 || len(rule.patterns) > 0 || len(rule.keywords) > 0 || rule.scope != nil
 	if len(req.content) == 0 {
-		// No content available. If the rule requires content scanning, it cannot match.
-		if len(rule.scanners) > 0 || len(rule.patterns) > 0 || len(rule.keywords) > 0 {
+		// Scope rules that require content should not be silently bypassed.
+		// When content is unavailable and the scope's on_missing_input is "deny"
+		// (the default), the rule matches with a content_required finding.
+		if rule.scope != nil && rule.scope.OnMissingInput != "allow" {
+			slog.Warn("scope rule matched by metadata but content unavailable — denying",
+				"component", "safety", "rule", rule.id, "topic", req.topic)
+			return true, []outputFinding{{
+				Type:     "content_required_but_missing",
+				Severity: rule.severity,
+				Detail:   "scope rule requires structured input content but none was provided",
+				Scanner:  "scope_evaluator",
+			}}
+		}
+		if hasContentCriteria {
 			return false, nil
 		}
 		// Pure metadata rule matched.
@@ -152,6 +175,22 @@ func evaluateInputRule(rule compiledInputRule, req inputEvaluateRequest, scanner
 	}
 
 	findings := make([]outputFinding, 0, 8)
+
+	// Structured scope evaluation (instruction-vs-cart comparison).
+	if rule.scope != nil {
+		violated, scopeFindings := evaluateScope(rule.scope, req.content)
+		for _, sf := range scopeFindings {
+			findings = append(findings, outputFinding{
+				Type:     sf.Type,
+				Severity: rule.severity,
+				Detail:   sf.Detail,
+				Scanner:  "scope_evaluator",
+			})
+		}
+		if !violated && len(findings) == 0 {
+			return false, nil
+		}
+	}
 
 	// Run regex patterns (reuses output_policy scanWithContentPatterns infrastructure).
 	if len(rule.patterns) > 0 {

@@ -91,7 +91,7 @@ function buildRunStepMap(run?: WorkflowRun | null): Map<string, RunStepInfo> {
 
 function extractEdges(step: WorkflowStep, existingEdges: Edge[]): Edge[] {
   const edges: Edge[] = [];
-  const deps = step.depends_on ?? step.dependsOn ?? [];
+  const deps = step.depends_on ?? [];
 
   for (const dep of deps) {
     edges.push({
@@ -126,11 +126,15 @@ function extractEdges(step: WorkflowStep, existingEdges: Edge[]): Edge[] {
           labelStyle: {
             fontSize: 10,
             fontWeight: 600,
-            fill: handleId === "true" ? "var(--success, #1f7a57)" : "var(--danger, #b83a3a)",
+            fill: handleId === "true" ? "var(--success, #1f7a57)"
+              : handleId === "false" ? "var(--danger, #b83a3a)"
+              : "var(--accent, #0f7f7a)",
           },
           style: {
             strokeWidth: 1.5,
-            stroke: handleId === "true" ? "var(--success, #1f7a57)" : "var(--danger, #b83a3a)",
+            stroke: handleId === "true" ? "var(--success, #1f7a57)"
+              : handleId === "false" ? "var(--danger, #b83a3a)"
+              : "var(--accent, #0f7f7a)",
           },
         });
       } else {

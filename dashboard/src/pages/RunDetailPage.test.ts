@@ -70,4 +70,57 @@ describe("Live vs historical indicator", () => {
   it("timed_out is terminal", () => {
     expect(isTerminal("timed_out")).toBe(true);
   });
+
+  it("denied is terminal (governance outcome, distinct from failed)", () => {
+    expect(isTerminal("denied")).toBe(true);
+    expect(isRunning("denied")).toBe(false);
+  });
+
+  it("waiting is active, not terminal", () => {
+    expect(isRunning("waiting")).toBe(true);
+    expect(isTerminal("waiting")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mapStepStatus — waiting must NOT collapse to running
+// ---------------------------------------------------------------------------
+
+function mapStepStatus(status?: string): string {
+  switch (status) {
+    case "succeeded": return "succeeded";
+    case "running": return "running";
+    case "waiting": return "waiting";
+    case "quarantined":
+    case "output_quarantined": return "quarantined";
+    case "failed":
+    case "timed_out": return "failed";
+    case "cancelled": return "skipped";
+    default: return "pending";
+  }
+}
+
+describe("mapStepStatus — approval-waiting preservation", () => {
+  it("preserves waiting as distinct from running", () => {
+    expect(mapStepStatus("waiting")).toBe("waiting");
+    expect(mapStepStatus("running")).toBe("running");
+    expect(mapStepStatus("waiting")).not.toBe("running");
+  });
+
+  it("maps succeeded, failed, cancelled correctly", () => {
+    expect(mapStepStatus("succeeded")).toBe("succeeded");
+    expect(mapStepStatus("failed")).toBe("failed");
+    expect(mapStepStatus("cancelled")).toBe("skipped");
+    expect(mapStepStatus("timed_out")).toBe("failed");
+  });
+
+  it("maps quarantined states", () => {
+    expect(mapStepStatus("quarantined")).toBe("quarantined");
+    expect(mapStepStatus("output_quarantined")).toBe("quarantined");
+  });
+
+  it("defaults to pending for unknown", () => {
+    expect(mapStepStatus(undefined)).toBe("pending");
+    expect(mapStepStatus("")).toBe("pending");
+  });
 });

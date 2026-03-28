@@ -140,7 +140,7 @@ export function ExplainResultPanel({ result }: { result: ExplainResult }) {
               <span>
                 Matched rule:{" "}
                 <Link
-                  to={`/policies/rules?highlight=${encodeURIComponent(result.matchedRule)}`}
+                  to={`/govern/input-rules?highlight=${encodeURIComponent(result.matchedRule)}`}
                   className="font-mono font-semibold text-accent hover:underline"
                 >
                   {result.matchedRule}

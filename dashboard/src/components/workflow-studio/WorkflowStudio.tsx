@@ -17,7 +17,7 @@ import {
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { logger } from "@/lib/logger";
 
-import type { UnifiedNodeData, StudioMode, StudioGraphData } from "./types";
+import type { UnifiedNodeData, StudioMode, StudioGraphData, CanvasHandle } from "./types";
 import { definitionToGraph, graphToDefinition } from "./graphBridge";
 import { StudioToolbar } from "./StudioToolbar";
 import { StudioSidebar } from "./StudioSidebar";
@@ -69,6 +69,12 @@ export function WorkflowStudio() {
   const [name, setName] = useState("");
   const [selectedNode, setSelectedNode] = useState<Node<UnifiedNodeData> | null>(null);
   const graphRef = useRef<{ nodes: Node<UnifiedNodeData>[]; edges: Edge[] } | null>(null);
+  const canvasHandle = useRef<CanvasHandle | null>(null);
+  const isDirty = useRef(false);
+
+  const handleGraphUpdate = useCallback((handle: CanvasHandle) => {
+    canvasHandle.current = handle;
+  }, []);
 
   // Sync name from loaded workflow
   useEffect(() => {
@@ -87,6 +93,17 @@ export function WorkflowStudio() {
     }
   }, [isWorkflowError, workflowError, workflowId]);
 
+  // Warn before leaving with unsaved changes
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (isDirty.current && mode === "edit") {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [mode]);
+
   // --- Graph computation ---
   const graph = useMemo<StudioGraphData>(() => {
     if (isNew) return EMPTY_GRAPH;
@@ -97,6 +114,10 @@ export function WorkflowStudio() {
   // --- Mode change handler ---
   const handleModeChange = useCallback(
     (newMode: StudioMode) => {
+      if (isDirty.current && mode === "edit" && newMode === "view") {
+        if (!window.confirm("You have unsaved changes. Switch to view mode anyway?")) return;
+      }
+      isDirty.current = false;
       setMode(newMode);
       setSelectedNode(null);
       setSearchParams((prev) => {
@@ -162,6 +183,7 @@ export function WorkflowStudio() {
       return;
     }
 
+    isDirty.current = false;
     if (isNew) {
       createWorkflow.mutate(payload as Partial<Workflow> & { id?: string }, {
         onSuccess: (data) => {
@@ -225,32 +247,32 @@ export function WorkflowStudio() {
   // --- Node config save handler (edit mode) ---
   const handleNodeConfigSave = useCallback(
     (nodeId: string, data: { label: string; config: Record<string, unknown> }) => {
-      if (!graphRef.current) return;
+      if (!canvasHandle.current) return;
 
-      const updatedNodes = graphRef.current.nodes.map((n) => {
-        if (n.id !== nodeId) return n;
-        return {
-          ...n,
-          data: {
-            ...n.data,
-            label: data.label,
-            // Merge config fields back into node data
-            topic: data.config.topic as string | undefined ?? n.data.topic,
-            condition: data.config.condition as string | undefined ?? n.data.condition,
-            worker_id: data.config.worker_id as string | undefined ?? n.data.worker_id,
-            for_each: data.config.for_each as string | undefined ?? n.data.for_each,
-            max_parallel: data.config.max_parallel as number | undefined ?? n.data.max_parallel,
-            input: data.config.input as Record<string, unknown> | undefined ?? n.data.input,
-            timeout_sec: data.config.timeout_sec as number | undefined ?? n.data.timeout_sec,
-            delay_sec: data.config.delay_sec as number | undefined ?? n.data.delay_sec,
-            delay_until: data.config.delay_until as string | undefined ?? n.data.delay_until,
-            on_error: data.config.on_error as string | undefined ?? n.data.on_error,
-            config: data.config,
-          },
-        };
-      });
-
-      graphRef.current = { ...graphRef.current, nodes: updatedNodes };
+      canvasHandle.current.setNodes((prev) =>
+        prev.map((n) => {
+          if (n.id !== nodeId) return n;
+          return {
+            ...n,
+            data: {
+              ...n.data,
+              label: data.label,
+              topic: data.config.topic as string | undefined ?? n.data.topic,
+              condition: data.config.condition as string | undefined ?? n.data.condition,
+              worker_id: data.config.worker_id as string | undefined ?? n.data.worker_id,
+              for_each: data.config.for_each as string | undefined ?? n.data.for_each,
+              max_parallel: data.config.max_parallel as number | undefined ?? n.data.max_parallel,
+              input: data.config.input as Record<string, unknown> | undefined ?? n.data.input,
+              timeout_sec: data.config.timeout_sec as number | undefined ?? n.data.timeout_sec,
+              delay_sec: data.config.delay_sec as number | undefined ?? n.data.delay_sec,
+              delay_until: data.config.delay_until as string | undefined ?? n.data.delay_until,
+              on_error: data.config.on_error as string | undefined ?? n.data.on_error,
+              config: data.config,
+            },
+          };
+        }),
+      );
+      isDirty.current = true;
       toast.success("Node updated");
     },
     [],
@@ -259,11 +281,10 @@ export function WorkflowStudio() {
   // --- Node delete handler (edit mode) ---
   const handleNodeDelete = useCallback(
     (nodeId: string) => {
-      if (!graphRef.current) return;
-      graphRef.current = {
-        nodes: graphRef.current.nodes.filter((n) => n.id !== nodeId),
-        edges: graphRef.current.edges.filter((e) => e.source !== nodeId && e.target !== nodeId),
-      };
+      if (!canvasHandle.current) return;
+      canvasHandle.current.setNodes((prev) => prev.filter((n) => n.id !== nodeId));
+      canvasHandle.current.setEdges((prev) => prev.filter((e) => e.source !== nodeId && e.target !== nodeId));
+      isDirty.current = true;
       setSelectedNode(null);
       toast.success("Node removed");
     },
@@ -332,10 +353,11 @@ export function WorkflowStudio() {
         {/* Canvas */}
         <StudioCanvas
           key={`${workflowId}-${mode}-${selectedRunId}`}
-          initialGraph={graph}
+          initialGraph={graphRef.current ?? graph}
           mode={mode}
           onNodeSelect={handleNodeSelect}
           graphRef={graphRef}
+          onGraphUpdate={handleGraphUpdate}
           className="flex-1"
         />
 

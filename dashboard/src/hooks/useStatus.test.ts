@@ -150,7 +150,8 @@ describe("useStatus hooks", () => {
       dispatched: 0,
       running: 1,
       succeeded: 1,
-      failed: 2,
+      failed: 1,
+      denied: 1,
     });
     hook.unmount();
   });
@@ -333,16 +334,18 @@ describe("useStatus hooks", () => {
     hook.unmount();
   });
 
-  it("pipelineFromJobs maps denied and quarantined states into failed bucket", () => {
+  it("pipelineFromJobs separates denied from failed bucket", () => {
     const pipeline = __statusInternal.pipelineFromJobs([
       { id: "a", state: "DENIED" },
       { id: "b", state: "OUTPUT_QUARANTINED" },
       { id: "c", state: "CANCELLED" },
+      { id: "d", state: "FAILED" },
     ]);
+    expect(pipeline.denied).toBe(1);
     expect(pipeline.failed).toBe(3);
   });
 
-  it("pipelineTotal sums all pipeline counters", () => {
+  it("pipelineTotal sums all pipeline counters including denied", () => {
     expect(
       __statusInternal.pipelineTotal({
         pending: 1,
@@ -350,7 +353,8 @@ describe("useStatus hooks", () => {
         running: 3,
         succeeded: 4,
         failed: 5,
+        denied: 6,
       }),
-    ).toBe(15);
+    ).toBe(21);
   });
 });

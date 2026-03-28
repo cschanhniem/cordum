@@ -23,31 +23,40 @@ import { useEventStore } from "@/state/events";
 import { useCancelJob, useRetryJob } from "@/hooks/useJobs";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
+import { JobActions } from "@/components/jobs/JobActions";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 
 function jobStatusVariant(status: string) {
   switch (status) {
     case "running": return "healthy" as const;
-    case "completed": return "cordum" as const;
-    case "failed": return "danger" as const;
-    case "denied": return "governance" as const;
+    case "succeeded": case "completed": return "cordum" as const;
+    case "failed": case "timeout": case "timed_out": return "danger" as const;
+    case "denied": case "output_quarantined": return "governance" as const;
+    case "approval_required": return "warning" as const;
     case "pending": case "scheduled": return "warning" as const;
     case "dispatched": return "info" as const;
+    case "cancelled": return "muted" as const;
     default: return "muted" as const;
   }
 }
 
-const JOB_STATES = ["pending", "scheduled", "dispatched", "running", "completed"];
+const JOB_STATES = ["pending", "scheduled", "dispatched", "running", "succeeded"];
+
+const TERMINAL_ERROR_STATES = new Set(["failed", "timeout", "timed_out"]);
+const TERMINAL_GOVERNANCE_STATES = new Set(["denied", "output_quarantined", "approval_required"]);
 
 function StateMachine({ currentState }: { currentState: string }) {
-  const currentIdx = JOB_STATES.indexOf(currentState);
-  const isFailed = currentState === "failed";
+  const normalized = currentState === "completed" ? "succeeded" : currentState;
+  const currentIdx = JOB_STATES.indexOf(normalized);
+  const isFailed = TERMINAL_ERROR_STATES.has(normalized);
+  const isGovernance = TERMINAL_GOVERNANCE_STATES.has(normalized);
+  const isTerminalSpecial = isFailed || isGovernance;
 
   return (
     <div className="flex items-center gap-1">
       {JOB_STATES.map((state, i) => {
         const isPast = i < currentIdx;
-        const isCurrent = state === currentState;
+        const isCurrent = state === normalized;
         const isActive = isPast || isCurrent;
 
         return (
@@ -55,9 +64,9 @@ function StateMachine({ currentState }: { currentState: string }) {
             <div
               className={cn(
                 "flex items-center justify-center w-7 h-7 rounded-full text-xs font-mono uppercase transition-all",
-                isCurrent && !isFailed && "bg-cordum text-[#0f1518] ring-2 ring-cordum/30",
+                isCurrent && !isTerminalSpecial && "bg-cordum text-[#0f1518] ring-2 ring-cordum/30",
                 isPast && "bg-cordum/20 text-cordum",
-                !isActive && "bg-surface-2 text-muted-foreground",
+                !isActive && !isCurrent && "bg-surface-2 text-muted-foreground",
               )}
             >
               {isPast ? "✓" : (i + 1)}
@@ -73,6 +82,14 @@ function StateMachine({ currentState }: { currentState: string }) {
           <div className="w-6 h-[2px] rounded bg-destructive/40" />
           <div className="flex items-center justify-center w-7 h-7 rounded-full bg-destructive text-destructive-foreground text-xs ring-2 ring-destructive/30">
             ✕
+          </div>
+        </>
+      )}
+      {isGovernance && (
+        <>
+          <div className="w-6 h-[2px] rounded bg-[color:rgba(139,92,186,0.4)]" />
+          <div className="flex items-center justify-center w-7 h-7 rounded-full bg-[color:rgba(139,92,186,0.18)] text-[color:rgba(139,92,186,1)] text-xs ring-2 ring-[color:rgba(139,92,186,0.3)]">
+            ⊘
           </div>
         </>
       )}
@@ -335,9 +352,7 @@ function JobTimeline({ job }: { job: Job }) {
 export default function JobDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
-  const cancelMut = useCancelJob();
-  const retryMut = useRetryJob();
+  // Cancel/retry handled by JobActions component
 
   const { data: job, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["job", id],
@@ -348,7 +363,7 @@ export default function JobDetailPage() {
     enabled: !!id,
     refetchInterval: (query) => {
       const status = query.state.data?.status;
-      if (status && ["succeeded", "failed", "cancelled"].includes(status)) return false;
+      if (status && ["succeeded", "failed", "cancelled", "denied", "timeout", "output_quarantined"].includes(status)) return false;
       return 5_000;
     },
   });
@@ -401,33 +416,14 @@ export default function JobDetailPage() {
         title={`Job ${id?.slice(0, 12)}…`}
         subtitle={id || ""}
         actions={
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
             <StatusBadge variant={jobStatusVariant(job.status)} dot pulse={job.status === "running"}>
-              {job.status}
+              {job.status === "output_quarantined" ? "quarantined" : job.status}
             </StatusBadge>
             <button type="button" onClick={copyId} className="p-2 rounded-full hover:bg-surface-2 text-muted-foreground hover:text-foreground transition-colors" title="Copy Job ID">
               <Copy className="w-3.5 h-3.5" />
             </button>
-            {job.status === "failed" && (
-              <Button
-                variant="primary"
-                size="sm"
-                loading={retryMut.isPending}
-                onClick={() => retryMut.mutate({ id: job.id, topic: job.topic }, {
-                  onSuccess: () => toast.success("Job resubmitted for retry"),
-                  onError: () => toast.error("Failed to retry job"),
-                })}
-              >
-                <Play className="w-3 h-3 mr-1" />
-                Retry
-              </Button>
-            )}
-            {(job.status === "running" || job.status === "pending") && (
-              <Button variant="danger" size="sm" disabled={cancelMut.isPending} onClick={() => setShowCancelConfirm(true)}>
-                <XCircle className="w-3 h-3 mr-1" />
-                Cancel
-              </Button>
-            )}
+            <JobActions job={job} />
           </div>
         }
       />
@@ -500,11 +496,19 @@ export default function JobDetailPage() {
                   <div key={label} className="contents">
                     <dt className="text-xs font-mono text-muted-foreground uppercase tracking-wider">{label}</dt>
                     <dd className="text-sm text-foreground font-mono truncate">
-                      {(label === "Workflow" || label === "Run") ? (
+                      {label === "Workflow" ? (
                         <button
                           type="button"
                           className="text-cordum hover:underline"
                           onClick={() => navigate(`/workflows/${job.workflowId}/studio`)}
+                        >
+                          {value}
+                        </button>
+                      ) : label === "Run" && job.workflowId && job.workflowRunId ? (
+                        <button
+                          type="button"
+                          className="text-cordum hover:underline"
+                          onClick={() => navigate(`/workflows/${job.workflowId}/runs/${job.workflowRunId}`)}
                         >
                           {value}
                         </button>
@@ -758,27 +762,7 @@ export default function JobDetailPage() {
         </CollapsibleSection>
       </motion.div>
 
-      <ConfirmDialog
-        open={showCancelConfirm}
-        onClose={() => setShowCancelConfirm(false)}
-        onConfirm={() => {
-          cancelMut.mutate(job.id, {
-            onSuccess: () => {
-              toast.success("Job cancelled");
-              setShowCancelConfirm(false);
-            },
-            onError: () => {
-              toast.error("Failed to cancel job");
-              setShowCancelConfirm(false);
-            },
-          });
-        }}
-        title="Cancel Job"
-        description={`Cancel job ${job.id.slice(0, 12)}…? This will stop the job if it is currently running.`}
-        confirmLabel="Cancel Job"
-        variant="destructive"
-        loading={cancelMut.isPending}
-      />
+      {/* Cancel/retry/remediate dialogs are handled by JobActions */}
     </div>
   );
 }

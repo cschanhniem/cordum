@@ -1,10 +1,8 @@
 import { useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { Node } from "reactflow";
-import { X } from "lucide-react";
-import { cn } from "@/lib/utils";
 import type { Workflow, WorkflowRun, WorkflowStep } from "@/api/types";
-import { NodeConfigPanel } from "@/components/workflow/NodeConfigPanel";
+import { StudioConfigPanel } from "./StudioConfigPanel";
 import { NodeDetailPanel } from "@/components/workflows/dag/NodeDetailPanel";
 import type { UnifiedNodeData, StudioMode } from "./types";
 import { getStepMeta } from "./nodeRegistry";
@@ -78,42 +76,6 @@ function resolveStep(
 }
 
 // ---------------------------------------------------------------------------
-// Adapt UnifiedNode → legacy Node for NodeConfigPanel
-// ---------------------------------------------------------------------------
-
-function adaptNodeForConfigPanel(node: Node<UnifiedNodeData>): Node {
-  const d = node.data;
-  return {
-    ...node,
-    type: d.stepType,
-    data: {
-      label: d.label,
-      stepId: d.stepId,
-      stepType: d.stepType,
-      topic: d.topic,
-      condition: d.condition,
-      worker_id: d.worker_id,
-      for_each: d.for_each,
-      max_parallel: d.max_parallel,
-      input: d.input,
-      input_schema: d.input_schema,
-      input_schema_id: d.input_schema_id,
-      output_path: d.output_path,
-      output_schema: d.output_schema,
-      output_schema_id: d.output_schema_id,
-      meta: d.meta,
-      on_error: d.on_error,
-      retry: d.retry,
-      timeout_sec: d.timeout_sec,
-      delay_sec: d.delay_sec,
-      delay_until: d.delay_until,
-      route_labels: d.route_labels,
-      config: d.config ?? {},
-    },
-  };
-}
-
-// ---------------------------------------------------------------------------
 // StudioNodePanel
 // ---------------------------------------------------------------------------
 
@@ -133,17 +95,6 @@ export function StudioNodePanel({
   const step = useMemo(
     () => (selectedNode ? resolveStep(selectedNode, workflow, run) : null),
     [selectedNode, workflow, run],
-  );
-
-  // Adapt node for config panel
-  const adaptedNode = useMemo(
-    () => (selectedNode ? adaptNodeForConfigPanel(selectedNode) : null),
-    [selectedNode],
-  );
-
-  const adaptedAllNodes = useMemo(
-    () => allNodes.map(adaptNodeForConfigPanel),
-    [allNodes],
   );
 
   const handleConfigSave = useCallback(
@@ -171,19 +122,20 @@ export function StudioNodePanel({
           transition={{ type: "spring", stiffness: 300, damping: 30 }}
           className="w-80 border-l border-border bg-surface-0 overflow-y-auto shrink-0 flex flex-col"
         >
-          {isEdit && adaptedNode ? (
-            <NodeConfigPanel
-              node={adaptedNode}
+          {isEdit && selectedNode ? (
+            <StudioConfigPanel
+              node={selectedNode}
               onSave={handleConfigSave}
               onClose={onClose}
               onDelete={handleDelete}
-              allNodes={adaptedAllNodes}
+              allNodes={allNodes}
             />
           ) : (
             <NodeDetailPanel
               step={step}
               run={run}
               onClose={onClose}
+              inline
             />
           )}
         </motion.div>

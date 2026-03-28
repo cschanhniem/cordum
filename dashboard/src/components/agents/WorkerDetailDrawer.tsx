@@ -3,6 +3,7 @@ import { Drawer } from "../ui/Drawer";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { useWorker, useWorkerJobs } from "../../hooks/useWorkers";
+import { formatDuration } from "@/lib/utils";
 import type { Job } from "../../api/types";
 
 // ---------------------------------------------------------------------------
@@ -42,14 +43,6 @@ function jobStatusVariant(status: string): "success" | "warning" | "danger" | "i
   }
 }
 
-function formatDuration(ms?: number): string {
-  if (ms == null) return "--";
-  if (ms < 1_000) return `${ms}ms`;
-  const secs = Math.floor(ms / 1_000);
-  if (secs < 60) return `${secs}s`;
-  const mins = Math.floor(secs / 60);
-  return `${mins}m ${secs % 60}s`;
-}
 
 function formatUptime(seconds?: number): string {
   if (seconds == null) return "--";

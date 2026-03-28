@@ -643,7 +643,7 @@ func (s *RedisStore) CleanStaleDelays(ctx context.Context, cutoff time.Time) (in
 
 func isActiveRunStatus(status RunStatus) bool {
 	switch status {
-	case RunStatusSucceeded, RunStatusFailed, RunStatusCancelled, RunStatusTimedOut:
+	case RunStatusSucceeded, RunStatusFailed, RunStatusDenied, RunStatusCancelled, RunStatusTimedOut:
 		return false
 	default:
 		return status != ""

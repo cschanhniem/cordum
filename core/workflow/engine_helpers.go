@@ -384,7 +384,7 @@ func parseAttempt(jobID string) int {
 
 func isTerminalRunStatus(status RunStatus) bool {
 	switch status {
-	case RunStatusSucceeded, RunStatusFailed, RunStatusCancelled, RunStatusTimedOut:
+	case RunStatusSucceeded, RunStatusFailed, RunStatusDenied, RunStatusCancelled, RunStatusTimedOut:
 		return true
 	default:
 		return false

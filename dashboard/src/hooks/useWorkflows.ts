@@ -234,198 +234,51 @@ function parseMappingValue(value: unknown): Record<string, unknown> | string | u
 }
 
 function buildStepPayload(step: Workflow["steps"][number]): Record<string, unknown> {
-  const config = (step.config ?? {}) as Record<string, unknown>;
   const JOB_SUBTYPES = new Set(["agent-task", "pack-action", "tool-call", "job"]);
   const frontendType = step.type || "job";
-  const backendType = typeof config.backendType === "string" && config.backendType.trim()
-    ? config.backendType.trim()
-    : JOB_SUBTYPES.has(frontendType)
-      ? "job"
-      : frontendType === "sub-workflow"
-        ? "subworkflow"
-        : frontendType;
+  const backendType = JOB_SUBTYPES.has(frontendType)
+    ? "job"
+    : frontendType === "sub-workflow"
+      ? "subworkflow"
+      : frontendType;
   const payload: Record<string, unknown> = {
     id: step.id,
     name: step.name,
     type: backendType,
   };
 
-  // Prefer direct backend fields, fall back to legacy config bag
-  const deps = step.depends_on ?? step.dependsOn;
-  if (Array.isArray(deps) && deps.length > 0) {
-    payload.depends_on = deps;
+  if (Array.isArray(step.depends_on) && step.depends_on.length > 0) {
+    payload.depends_on = step.depends_on;
+  }
+  if (step.topic?.trim()) payload.topic = step.topic.trim();
+  if (step.worker_id?.trim()) payload.worker_id = step.worker_id.trim();
+  if (step.condition?.trim()) payload.condition = step.condition.trim();
+  if (step.for_each?.trim()) payload.for_each = step.for_each.trim();
+  if (typeof step.max_parallel === "number" && step.max_parallel > 0) payload.max_parallel = Math.floor(step.max_parallel);
+  if (typeof step.timeout_sec === "number") payload.timeout_sec = step.timeout_sec;
+  if (typeof step.delay_sec === "number") {
+    payload.delay_sec = step.delay_sec;
+  } else if (step.delay_until) {
+    payload.delay_until = step.delay_until;
+  }
+  if (step.retry?.max_retries) payload.retry = step.retry;
+  if (step.input_schema && typeof step.input_schema === "object") payload.input_schema = step.input_schema;
+  if (step.input_schema_id?.trim()) payload.input_schema_id = step.input_schema_id.trim();
+  if (step.output_schema && typeof step.output_schema === "object") payload.output_schema = step.output_schema;
+  if (step.output_schema_id?.trim()) payload.output_schema_id = step.output_schema_id.trim();
+  if (step.output_path?.trim()) payload.output_path = step.output_path.trim();
+  if (step.route_labels && typeof step.route_labels === "object") payload.route_labels = step.route_labels;
+  if (step.on_error?.trim()) payload.on_error = step.on_error.trim();
+
+  // Input
+  if (step.input && typeof step.input === "object" && Object.keys(step.input).length > 0) {
+    payload.input = step.input;
   }
 
-  const topic = step.topic ?? (typeof config.topic === "string" ? config.topic : undefined);
-  if (topic?.trim()) payload.topic = topic.trim();
-
-  const workerId = step.worker_id ?? (typeof config.workerId === "string" ? config.workerId : undefined);
-  if (workerId?.trim()) payload.worker_id = workerId.trim();
-
-  const condition = step.condition ?? (typeof config.expression === "string" ? config.expression : undefined);
-  if (condition?.trim()) payload.condition = condition.trim();
-
-  const forEach = step.for_each ?? (typeof config.forEach === "string" ? config.forEach : undefined);
-  if (forEach?.trim()) payload.for_each = forEach.trim();
-
-  const maxParallel = step.max_parallel ?? (typeof config.parallelism === "number" ? config.parallelism : undefined);
-  if (typeof maxParallel === "number" && maxParallel > 0) payload.max_parallel = Math.floor(maxParallel);
-
-  // Timeout: prefer direct field, fall back to config duration parsing
-  const timeoutSec = step.timeout_sec ?? parseDurationSeconds(config.timeout);
-  if (timeoutSec !== undefined) payload.timeout_sec = timeoutSec;
-
-  // Delay
-  const delaySec = step.delay_sec ?? parseDurationSeconds(config.duration);
-  if (delaySec !== undefined) {
-    payload.delay_sec = delaySec;
-  } else {
-    const delayUntil = step.delay_until ?? (typeof config.duration === "string" ? parseDateToISO(config.duration) : undefined);
-    if (delayUntil) payload.delay_until = delayUntil;
+  // Meta
+  if (step.meta && typeof step.meta === "object" && Object.keys(step.meta).length > 0) {
+    payload.meta = step.meta;
   }
-
-  // Retry
-  if (step.retry?.max_retries) {
-    payload.retry = step.retry;
-  } else if (typeof config.retryMax === "number" && config.retryMax > 0) {
-    const retry: Record<string, unknown> = { max_retries: Math.floor(config.retryMax) };
-    if (typeof config.backoffSec === "number" && config.backoffSec > 0) {
-      retry.initial_backoff_sec = config.backoffSec;
-    }
-    if (typeof config.maxBackoffSec === "number" && config.maxBackoffSec > 0) {
-      retry.max_backoff_sec = config.maxBackoffSec;
-    }
-    if (typeof config.backoffMultiplier === "number" && config.backoffMultiplier > 0) {
-      retry.multiplier = config.backoffMultiplier;
-    }
-    payload.retry = retry;
-  }
-
-  // Schemas
-  const inputSchema = step.input_schema ?? (config.inputSchema as Record<string, unknown> | undefined);
-  if (inputSchema && typeof inputSchema === "object") payload.input_schema = inputSchema;
-  const inputSchemaId = step.input_schema_id ?? (typeof config.inputSchemaId === "string" ? config.inputSchemaId : undefined);
-  if (inputSchemaId?.trim()) payload.input_schema_id = inputSchemaId.trim();
-  const outputSchema = step.output_schema ?? (config.outputSchema as Record<string, unknown> | undefined);
-  if (outputSchema && typeof outputSchema === "object") payload.output_schema = outputSchema;
-  const outputSchemaId = step.output_schema_id ?? (typeof config.outputSchemaId === "string" ? config.outputSchemaId : undefined);
-  if (outputSchemaId?.trim()) payload.output_schema_id = outputSchemaId.trim();
-  const outputPath = step.output_path ?? (typeof config.outputPath === "string" ? config.outputPath : undefined);
-  if (outputPath?.trim()) payload.output_path = outputPath.trim();
-
-  // Route labels
-  const routeLabels = step.route_labels ?? (config.routeLabels as Record<string, string> | undefined);
-  if (routeLabels && typeof routeLabels === "object") payload.route_labels = routeLabels;
-
-  // On-error handler
-  const onError = step.on_error ?? (typeof config.onError === "string" ? config.onError : undefined);
-  if (onError?.trim()) payload.on_error = onError.trim();
-
-  // Input: prefer direct field, merge with legacy config fields
-  const input: Record<string, unknown> = {};
-  const stepInput = step.input ?? (config.input as Record<string, unknown> | undefined);
-  if (stepInput && typeof stepInput === "object") Object.assign(input, stepInput);
-  if (frontendType === "parallel" || payload.type === "parallel") {
-    const parallelSteps = toStringArray(
-      (stepInput as Record<string, unknown> | undefined)?.steps ?? config.parallelSteps ?? config.steps,
-    );
-    if (parallelSteps.length > 0) {
-      input.steps = parallelSteps;
-    }
-    const strategy =
-      typeof (stepInput as Record<string, unknown> | undefined)?.strategy === "string"
-        ? ((stepInput as Record<string, unknown>).strategy as string).trim()
-        : typeof config.completionStrategy === "string"
-          ? config.completionStrategy.trim()
-          : "";
-    if (strategy) {
-      input.strategy = strategy;
-    }
-    const required = toPositiveInt(
-      (stepInput as Record<string, unknown> | undefined)?.required ?? config.requiredCount,
-    );
-    if ((strategy || input.strategy) === "n_of_m" && required !== undefined) {
-      input.required = required;
-    }
-  }
-  if (frontendType === "sub-workflow" || payload.type === "subworkflow") {
-    const workflowId =
-      typeof (stepInput as Record<string, unknown> | undefined)?.workflow_id === "string"
-        ? ((stepInput as Record<string, unknown>).workflow_id as string).trim()
-        : typeof config.workflowId === "string"
-          ? config.workflowId.trim()
-          : "";
-    if (workflowId) input.workflow_id = workflowId;
-
-    const inputMapping = parseMappingValue(
-      (stepInput as Record<string, unknown> | undefined)?.input_mapping ?? config.inputMapping,
-    );
-    if (inputMapping !== undefined) input.input_mapping = inputMapping;
-
-    const outputMapping = parseMappingValue(
-      (stepInput as Record<string, unknown> | undefined)?.output_mapping ?? config.outputMapping,
-    );
-    if (outputMapping !== undefined) input.output_mapping = outputMapping;
-  }
-  if (frontendType === "switch" || payload.type === "switch") {
-    const switchCases = parseSwitchCasesInput(
-      (stepInput as Record<string, unknown> | undefined)?.cases ??
-        config.switchCases ??
-        config.cases,
-    );
-    if (switchCases.length > 0) {
-      input.cases = switchCases;
-    }
-    const defaultBranch =
-      (typeof (stepInput as Record<string, unknown> | undefined)?.default === "string"
-        ? ((stepInput as Record<string, unknown>).default as string).trim()
-        : typeof (stepInput as Record<string, unknown> | undefined)?.default_step === "string"
-          ? ((stepInput as Record<string, unknown>).default_step as string).trim()
-          : typeof config.defaultBranch === "string"
-            ? config.defaultBranch.trim()
-            : "");
-    if (defaultBranch) {
-      input.default = defaultBranch;
-    }
-  }
-  if (typeof config.messageTemplate === "string" && config.messageTemplate.trim()) input.message = config.messageTemplate.trim();
-  if (typeof config.channel === "string" && config.channel.trim()) input.component = config.channel.trim();
-  if (typeof config.prompt === "string" && config.prompt.trim()) input.prompt = config.prompt.trim();
-  const budgetInput: Record<string, number> = {};
-  if (typeof config.maxInputTokens === "number" && config.maxInputTokens > 0) budgetInput.input_tokens = config.maxInputTokens;
-  if (typeof config.maxOutputTokens === "number" && config.maxOutputTokens > 0) budgetInput.output_tokens = config.maxOutputTokens;
-  if (typeof config.maxTotalTokens === "number" && config.maxTotalTokens > 0) budgetInput.total_tokens = config.maxTotalTokens;
-  if (Object.keys(budgetInput).length > 0) input.budget = budgetInput;
-  if (Object.keys(input).length > 0) payload.input = input;
-
-  // Meta: prefer direct field, merge with legacy config fields
-  let meta: Record<string, unknown> = {};
-  const stepMeta = step.meta ?? (config.meta as Record<string, unknown> | undefined);
-  if (stepMeta && typeof stepMeta === "object") meta = { ...stepMeta };
-  const caps = toStringArray(config.capabilities ?? config.capability);
-  const requires = toStringArray(config.requires);
-  const riskTags = toStringArray(config.riskTags ?? config.risk_tags);
-  if (caps.length > 0) {
-    meta.capability = caps[0];
-    const combined = [...caps.slice(1), ...requires].filter(Boolean);
-    if (combined.length > 0) meta.requires = combined;
-  } else if (requires.length > 0) {
-    meta.requires = requires;
-  }
-  if (riskTags.length > 0) meta.risk_tags = riskTags;
-  if (config.labels && typeof config.labels === "object") meta.labels = config.labels as Record<string, string>;
-  if (typeof config.packId === "string") meta.pack_id = config.packId;
-  if (typeof config.actorId === "string") meta.actor_id = config.actorId;
-  if (typeof config.actorType === "string") meta.actor_type = config.actorType;
-  if (typeof config.adapterId === "string" && config.adapterId) meta.adapter_id = config.adapterId;
-  if (typeof config.memoryId === "string" && config.memoryId) meta.memory_id = config.memoryId;
-  if (typeof config.contextMode === "string" && config.contextMode) meta.context_mode = config.contextMode;
-  if (typeof config.allowSummarization === "boolean") meta.allow_summarization = config.allowSummarization;
-  if (typeof config.allowRetrieval === "boolean") meta.allow_retrieval = config.allowRetrieval;
-  if (typeof config.deadlineMs === "number" && config.deadlineMs > 0) meta.deadline_ms = config.deadlineMs;
-  if (typeof config.priority === "string" && config.priority) meta.priority = config.priority;
-  if (Object.keys(budgetInput).length > 0 && !meta.budget) meta.budget = budgetInput;
-  if (Object.keys(meta).length > 0) payload.meta = meta;
 
   return payload;
 }

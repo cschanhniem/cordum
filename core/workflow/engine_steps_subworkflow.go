@@ -177,6 +177,8 @@ func subWorkflowTerminalStatus(status RunStatus) StepStatus {
 		return StepStatusCancelled
 	case RunStatusTimedOut:
 		return StepStatusTimedOut
+	case RunStatusDenied:
+		return StepStatusDenied
 	default:
 		return StepStatusFailed
 	}

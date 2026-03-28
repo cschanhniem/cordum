@@ -227,10 +227,10 @@ export function getGroupedStepTypes(): { category: string; label: string; types:
 
 /**
  * Palette types — the subset of types users can drag onto the canvas.
- * Excludes `job` (legacy alias for agent-task) and `storage`.
+ * Excludes `job` (legacy alias for agent-task).
  */
 export const PALETTE_TYPES = Object.keys(REGISTRY).filter(
-  (t) => t !== "job" && t !== "storage",
+  (t) => t !== "job",
 );
 
 // ---------------------------------------------------------------------------
@@ -248,24 +248,24 @@ export interface StatusVisual {
 
 const STATUS_VISUALS: Record<string, StatusVisual> = {
   succeeded: {
-    bg: "bg-[var(--color-success)]/5",
-    border: "border-[var(--color-success)]/40",
+    bg: "bg-[var(--color-success)]/8",
+    border: "border-[var(--color-success)]/50",
     pulse: false,
     dimmed: false,
     strikethrough: false,
     label: "Succeeded",
   },
   running: {
-    bg: "bg-[var(--color-info)]/5",
-    border: "border-[var(--color-info)]/40",
+    bg: "bg-[var(--color-info)]/8",
+    border: "border-[var(--color-info)]/50 ring-2 ring-[var(--color-info)]/15",
     pulse: true,
     dimmed: false,
     strikethrough: false,
     label: "Running",
   },
   failed: {
-    bg: "bg-destructive/5",
-    border: "border-destructive/40",
+    bg: "bg-destructive/8",
+    border: "border-destructive/50",
     pulse: false,
     dimmed: false,
     strikethrough: false,
@@ -280,8 +280,8 @@ const STATUS_VISUALS: Record<string, StatusVisual> = {
     label: "Pending",
   },
   waiting: {
-    bg: "bg-[var(--color-warning)]/5",
-    border: "border-[var(--color-warning)]/40",
+    bg: "bg-[var(--color-warning)]/8",
+    border: "border-[var(--color-warning)]/50 ring-2 ring-[var(--color-warning)]/15",
     pulse: true,
     dimmed: false,
     strikethrough: false,
@@ -296,20 +296,36 @@ const STATUS_VISUALS: Record<string, StatusVisual> = {
     label: "Cancelled",
   },
   denied: {
-    bg: "bg-[var(--color-governance)]/5",
-    border: "border-[var(--color-governance)]/40",
+    bg: "bg-[var(--color-governance)]/8",
+    border: "border-[var(--color-governance)]/50",
     pulse: false,
     dimmed: false,
     strikethrough: false,
     label: "Denied",
   },
   timed_out: {
-    bg: "bg-destructive/5",
-    border: "border-destructive/30",
+    bg: "bg-destructive/8",
+    border: "border-destructive/40",
     pulse: false,
     dimmed: false,
     strikethrough: false,
     label: "Timed Out",
+  },
+  quarantined: {
+    bg: "bg-[var(--color-governance)]/8",
+    border: "border-[var(--color-governance)]/50",
+    pulse: false,
+    dimmed: false,
+    strikethrough: false,
+    label: "Quarantined",
+  },
+  output_quarantined: {
+    bg: "bg-[var(--color-governance)]/8",
+    border: "border-[var(--color-governance)]/50",
+    pulse: false,
+    dimmed: false,
+    strikethrough: false,
+    label: "Quarantined",
   },
 };
 
@@ -350,14 +366,6 @@ export function getSafetyBadge(decisionType?: string): SafetyBadgeConfig | null 
 }
 
 // ---------------------------------------------------------------------------
-// Text helpers
-// ---------------------------------------------------------------------------
-
-export function truncate(str: string, max: number): string {
-  return str.length > max ? str.slice(0, max) + "\u2026" : str;
-}
-
-// ---------------------------------------------------------------------------
 // Job-type check (shared predicate)
 // ---------------------------------------------------------------------------
 
@@ -376,6 +384,8 @@ const STATUS_TO_BADGE: Record<string, BadgeVariant> = {
   running: "info",
   failed: "danger",
   denied: "governance",
+  quarantined: "governance",
+  output_quarantined: "governance",
   pending: "muted",
   waiting: "warning",
   cancelled: "muted",

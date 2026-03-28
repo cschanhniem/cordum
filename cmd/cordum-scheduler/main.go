@@ -247,7 +247,9 @@ func main() {
 		os.Exit(1)
 	}
 	defer safetyClient.Close()
-	safetyClient.WithRedis(sagaRedis)
+	// Enable both the distributed circuit breaker and input context dereferencing
+	// so native input-policy rules can inspect workflow step payloads pre-dispatch.
+	safetyClient.WithRedis(sagaRedis).WithContextClient(jobStore.Client())
 	sagaManager.WithSafety(safetyClient)
 
 	// Populate health check dependencies now that all critical deps are created.

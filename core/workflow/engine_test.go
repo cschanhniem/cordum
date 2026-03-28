@@ -1690,3 +1690,153 @@ func TestSetContextPathErrorLogged(t *testing.T) {
 		t.Fatalf("expected no error for nil ctx, got: %v", err)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Denied job result → RunStatusDenied regression tests
+// ---------------------------------------------------------------------------
+
+func TestEngineDeniedJobResult_ProducesRunDenied(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer store.Close()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+
+	wf := &Workflow{
+		ID:    "wf-denied-e2e",
+		OrgID: "org-1",
+		Steps: map[string]*Step{
+			"step": {
+				ID:    "step",
+				Type:  StepTypeWorker,
+				Topic: "job.denied",
+			},
+		},
+	}
+	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	run := &WorkflowRun{
+		ID:         "run-denied-e2e",
+		WorkflowID: wf.ID,
+		OrgID:      "org-1",
+		Steps:      map[string]*StepRun{},
+		Status:     RunStatusPending,
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}
+	if err := store.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	if bus.Count() != 1 {
+		t.Fatalf("expected 1 publish, got %d", bus.Count())
+	}
+
+	// Deliver a DENIED result for the step job.
+	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
+		JobId:        "run-denied-e2e:step@1",
+		Status:       pb.JobStatus_JOB_STATUS_DENIED,
+		ErrorMessage: "denied by safety policy",
+	}); err != nil {
+		t.Fatalf("handle job result: %v", err)
+	}
+
+	final, err := store.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if final.Status != RunStatusDenied {
+		t.Fatalf("expected run status denied, got %s", final.Status)
+	}
+	if final.Steps["step"].Status != StepStatusDenied {
+		t.Fatalf("expected step status denied, got %s", final.Steps["step"].Status)
+	}
+	errMsg, _ := final.Steps["step"].Error["message"].(string)
+	if errMsg != "denied by safety policy" {
+		t.Fatalf("expected error message 'denied by safety policy', got %q", errMsg)
+	}
+}
+
+func TestEngineDeniedJobResult_WithOnError_Recovers(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer store.Close()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+
+	wf := &Workflow{
+		ID:    "wf-denied-recover-e2e",
+		OrgID: "org-1",
+		Steps: map[string]*Step{
+			"main":    {ID: "main", Type: StepTypeWorker, Topic: "job.main", OnError: "fallback"},
+			"fallback": {ID: "fallback", Type: StepTypeWorker, Topic: "job.fallback"},
+		},
+	}
+	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	run := &WorkflowRun{
+		ID:         "run-denied-recover-e2e",
+		WorkflowID: wf.ID,
+		OrgID:      "org-1",
+		Steps:      map[string]*StepRun{},
+		Status:     RunStatusPending,
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}
+	if err := store.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	if err := engine.StartRun(context.Background(), wf.ID, run.ID); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	if bus.Count() != 1 {
+		t.Fatalf("expected 1 publish for main step, got %d", bus.Count())
+	}
+
+	// Deliver DENIED for the main step.
+	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
+		JobId:        "run-denied-recover-e2e:main@1",
+		Status:       pb.JobStatus_JOB_STATUS_DENIED,
+		ErrorMessage: "denied by policy",
+	}); err != nil {
+		t.Fatalf("handle denied result: %v", err)
+	}
+
+	// The on_error handler (fallback) should now be dispatched.
+	// Give a brief window for async dispatch if needed.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if bus.Count() >= 2 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if bus.Count() < 2 {
+		t.Fatalf("expected fallback step dispatch, got %d publishes", bus.Count())
+	}
+
+	// Let the fallback handler succeed.
+	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
+		JobId:  "run-denied-recover-e2e:fallback@1",
+		Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
+	}); err != nil {
+		t.Fatalf("handle fallback result: %v", err)
+	}
+
+	final, err := store.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	// The on_error handler recovered — run should succeed.
+	if final.Status != RunStatusSucceeded {
+		t.Fatalf("expected run status succeeded after on_error recovery, got %s", final.Status)
+	}
+}

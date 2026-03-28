@@ -33,9 +33,11 @@ function PaletteItem({ type, label, iconColor }: { type: string; label: string; 
     <div
       draggable
       onDragStart={(e) => handleDragStart(e, type)}
-      className="flex cursor-grab items-center gap-2.5 rounded-xl border border-border bg-card/60 px-3 py-2 text-xs font-medium text-ink shadow-sm transition-all hover:border-accent hover:shadow-soft active:cursor-grabbing"
+      className="flex cursor-grab items-center gap-2.5 rounded-xl border border-transparent bg-card/60 px-3 py-2 text-xs font-medium text-ink transition-all duration-150 hover:border-accent/20 hover:shadow-sm hover:-translate-y-px active:cursor-grabbing active:scale-[0.98] active:opacity-80"
     >
-      <div className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-lg", meta.accent)}>
+      <div className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-black/[0.04] dark:border-white/[0.06]", meta.accent)}
+        style={{ boxShadow: "inset 0 1px 2px rgba(0,0,0,0.05)" }}
+      >
         <Icon className={cn("h-3.5 w-3.5", iconColor)} />
       </div>
       <div className="min-w-0">
@@ -50,6 +52,17 @@ function PaletteItem({ type, label, iconColor }: { type: string; label: string; 
 // Run list item (view mode)
 // ---------------------------------------------------------------------------
 
+const RUN_STATUS_BORDER: Record<string, string> = {
+  succeeded: "border-l-[var(--color-success)]",
+  running: "border-l-[var(--color-info)]",
+  failed: "border-l-destructive",
+  denied: "border-l-[var(--color-governance)]",
+  waiting: "border-l-[var(--color-warning)]",
+  cancelled: "border-l-muted-foreground",
+  timed_out: "border-l-destructive",
+  pending: "border-l-muted",
+};
+
 function RunListItem({
   run,
   isSelected,
@@ -59,12 +72,15 @@ function RunListItem({
   isSelected: boolean;
   onSelect: () => void;
 }) {
+  const statusBorder = RUN_STATUS_BORDER[run.status] ?? "border-l-muted";
+
   return (
     <button
       type="button"
       onClick={onSelect}
       className={cn(
-        "w-full text-left px-3 py-2 rounded-xl transition-colors",
+        "w-full text-left px-3 py-2 rounded-xl transition-all duration-150 border-l-[3px]",
+        statusBorder,
         isSelected
           ? "bg-accent/10 border border-accent/30"
           : "hover:bg-surface-2 border border-transparent",
@@ -136,16 +152,33 @@ export function StudioSidebar({
     : groups;
 
   if (collapsed) {
+    const categoryIcons = isEdit
+      ? groups.map((g) => {
+          const firstType = g.types[0];
+          const FirstIcon = firstType?.icon;
+          return FirstIcon ? (
+            <div
+              key={g.category}
+              className="p-1.5 rounded-lg hover:bg-surface-2 transition-colors"
+              title={g.label}
+            >
+              <FirstIcon className="w-4 h-4 text-muted-foreground" />
+            </div>
+          ) : null;
+        })
+      : null;
+
     return (
-      <div className="w-10 border-r border-border bg-surface-0 flex flex-col items-center pt-3 shrink-0">
+      <div className="w-10 border-r border-border bg-surface-0 flex flex-col items-center pt-3 gap-1 shrink-0">
         <button
           type="button"
           onClick={toggleCollapsed}
-          className="p-1.5 rounded-full hover:bg-surface-2 transition-colors"
+          className="p-1.5 rounded-full hover:bg-surface-2 transition-colors mb-2"
           title="Expand sidebar"
         >
           <ChevronRight className="w-4 h-4 text-muted-foreground" />
         </button>
+        {categoryIcons}
       </div>
     );
   }
@@ -186,7 +219,7 @@ export function StudioSidebar({
             {/* Node palette groups */}
             {filteredGroups.map((group) => (
               <section key={group.category}>
-                <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/60 mb-2">
+                <h4 className="text-[10px] font-display font-semibold uppercase tracking-widest text-muted-foreground/50 mb-2">
                   {group.label}
                 </h4>
                 <div className="space-y-1.5">

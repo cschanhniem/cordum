@@ -9,6 +9,7 @@ const toneStyles: Record<string, string> = {
   info: "bg-[color:rgba(15,127,122,0.14)] text-accent",
   muted: "bg-[color:rgba(90,106,112,0.15)] text-muted-foreground",
   accent: "bg-[color:rgba(15,127,122,0.18)] text-accent",
+  governance: "bg-[color:rgba(139,92,186,0.18)] text-[color:rgba(139,92,186,1)]",
 };
 
 const shapeStyles: Record<string, string> = {

@@ -62,6 +62,12 @@ export interface StudioGraphData {
   edges: Edge[];
 }
 
+/** Imperative handle exposed by StudioCanvas for parent-driven graph updates */
+export interface CanvasHandle {
+  setNodes: React.Dispatch<React.SetStateAction<Node<UnifiedNodeData>[]>>;
+  setEdges: React.Dispatch<React.SetStateAction<Edge[]>>;
+}
+
 // ---------------------------------------------------------------------------
 // Studio context — passed down from orchestrator
 // ---------------------------------------------------------------------------

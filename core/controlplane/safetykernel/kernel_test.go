@@ -17,6 +17,7 @@ import (
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/redis/go-redis/v9"
 )
 
 func TestCheckMCPPolicyDenies(t *testing.T) {
@@ -79,6 +80,60 @@ func TestCheckMCPPolicyRequiresFieldWhenAllowlistSet(t *testing.T) {
 	}
 	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY {
 		t.Fatalf("expected deny when mcp.server missing, got %v", resp.GetDecision())
+	}
+}
+
+func TestCheckInputScopeRuleDeniesWhenContentMissing(t *testing.T) {
+	policy := &config.SafetyPolicy{
+		DefaultTenant:   "default",
+		DefaultDecision: "allow",
+		InputRules: []config.InputPolicyRule{
+			{
+				ID:       "visa-tx2-scope-native",
+				Severity: "high",
+				Decision: "deny",
+				Reason:   "scope violation requires structured content",
+				Match: config.InputPolicyMatch{
+					Topics: []string{"job.visa-governance.evaluate"},
+					Scope: &config.ScopeConfig{
+						InstructionPath: "instruction",
+						ItemsPath:       "items",
+						CategoryPath:    "category",
+						NamePath:        "name",
+						AllowedCategories: map[string][]string{
+							"headphones": {"headphones"},
+						},
+						OnMissingInput: "deny",
+						OnAmbiguous:    "deny",
+					},
+				},
+			},
+		},
+	}
+
+	srv := &server{
+		policy:     policy,
+		inputRules: compileInputRules(policy),
+		scanners:   loadOutputScanners(),
+		snapshot:   "test",
+	}
+
+	resp, err := srv.Check(context.Background(), &pb.PolicyCheckRequest{
+		JobId:  "job-1",
+		Topic:  "job.visa-governance.evaluate",
+		Tenant: "default",
+	})
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
+	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY {
+		t.Fatalf("expected deny, got %v", resp.GetDecision())
+	}
+	if !strings.Contains(resp.GetReason(), "structured content") {
+		t.Fatalf("expected missing-content reason, got %q", resp.GetReason())
+	}
+	if got := resp.GetRuleId(); got != "visa-tx2-scope-native" {
+		t.Fatalf("expected rule id visa-tx2-scope-native, got %q", got)
 	}
 }
 
@@ -1219,6 +1274,321 @@ func TestMergePolicies_DuplicateInputRuleID(t *testing.T) {
 				t.Errorf("expected ir1 replaced by extra (critical/extra), got %s/%s", r.Severity, r.Reason)
 			}
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Velocity — bundle-loaded rules regression tests
+// ---------------------------------------------------------------------------
+
+// newTestServerWithVelocity creates a server with a Redis-backed velocity checker
+// and optionally sets a policy. The returned server can evaluate velocity rules.
+func newTestServerWithVelocity(t *testing.T, policy *config.SafetyPolicy, snapshot string) (*server, *miniredis.Miniredis) {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { client.Close() })
+	srv := &server{
+		resultClient:    client,
+		velocityChecker: newVelocityChecker(client),
+		cache:           map[string]cacheEntry{},
+		cacheMaxSize:    100,
+	}
+	if policy != nil {
+		srv.setPolicy(policy, snapshot)
+	}
+	return srv, mr
+}
+
+// bundleVelocityPolicy returns a policy that mimics the Visa demo bundle:
+// a velocity deny rule (max_requests=3, window=60s, key=labels.session_id)
+// followed by a fallthrough allow rule on the same topic.
+func bundleVelocityPolicy() *config.SafetyPolicy {
+	return &config.SafetyPolicy{
+		DefaultTenant:   "default",
+		DefaultDecision: "deny",
+		Rules: []config.PolicyRule{
+			{
+				ID: "visa-velocity-control",
+				Match: config.PolicyMatch{
+					Topics: []string{"job.visa-governance.velocity-check"},
+				},
+				Velocity: &config.VelocityConfig{
+					MaxRequests:   3,
+					WindowSeconds: 60,
+					Key:           "labels.session_id",
+				},
+				Decision: "deny",
+				Reason:   "Velocity limit exceeded",
+			},
+			{
+				ID: "visa-allow-fallback",
+				Match: config.PolicyMatch{
+					Topics: []string{"job.visa-governance.*"},
+				},
+				Decision: "allow",
+				Reason:   "Allowed by fallback rule",
+			},
+		},
+	}
+}
+
+func TestVelocityBundleRule_First3AllowThen4thDenies(t *testing.T) {
+	policy := bundleVelocityPolicy()
+	srv, _ := newTestServerWithVelocity(t, policy, "snap-velocity-1")
+
+	sessionID := "sess-visa-demo-001"
+	for i := 1; i <= 3; i++ {
+		req := &pb.PolicyCheckRequest{
+			JobId:  fmt.Sprintf("job-%d", i),
+			Topic:  "job.visa-governance.velocity-check",
+			Tenant: "default",
+			Labels: map[string]string{"session_id": sessionID},
+		}
+		resp, err := srv.Check(context.Background(), req)
+		if err != nil {
+			t.Fatalf("request %d: unexpected error: %v", i, err)
+		}
+		if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_ALLOW {
+			t.Fatalf("request %d: expected ALLOW (within velocity limit), got %v reason=%q ruleId=%q",
+				i, resp.GetDecision(), resp.GetReason(), resp.GetRuleId())
+		}
+		if resp.GetRuleId() != "visa-allow-fallback" {
+			t.Fatalf("request %d: expected fallthrough to visa-allow-fallback, got ruleId=%q", i, resp.GetRuleId())
+		}
+	}
+
+	// 4th request — should exceed velocity limit and be denied.
+	req := &pb.PolicyCheckRequest{
+		JobId:  "job-4",
+		Topic:  "job.visa-governance.velocity-check",
+		Tenant: "default",
+		Labels: map[string]string{"session_id": sessionID},
+	}
+	resp, err := srv.Check(context.Background(), req)
+	if err != nil {
+		t.Fatalf("request 4: unexpected error: %v", err)
+	}
+	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY {
+		t.Fatalf("request 4: expected DENY (velocity exceeded), got %v reason=%q", resp.GetDecision(), resp.GetReason())
+	}
+	if resp.GetRuleId() != "visa-velocity-control" {
+		t.Fatalf("request 4: expected ruleId=visa-velocity-control, got %q", resp.GetRuleId())
+	}
+}
+
+func TestVelocityBundleRule_RedisKeysCreated(t *testing.T) {
+	policy := bundleVelocityPolicy()
+	srv, mr := newTestServerWithVelocity(t, policy, "snap-velocity-2")
+
+	req := &pb.PolicyCheckRequest{
+		JobId:  "job-redis-key-check",
+		Topic:  "job.visa-governance.velocity-check",
+		Tenant: "default",
+		Labels: map[string]string{"session_id": "sess-key-check"},
+	}
+	_, err := srv.Check(context.Background(), req)
+	if err != nil {
+		t.Fatalf("check error: %v", err)
+	}
+
+	// Verify that a cordum:velocity:* Redis key was created.
+	keys := mr.Keys()
+	found := false
+	for _, k := range keys {
+		if strings.HasPrefix(k, "cordum:velocity:") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected cordum:velocity:* Redis key, got keys: %v", keys)
+	}
+}
+
+func TestVelocityBundleRule_NoJobID_StillEnforces(t *testing.T) {
+	policy := bundleVelocityPolicy()
+	srv, _ := newTestServerWithVelocity(t, policy, "snap-velocity-3")
+
+	sessionID := "sess-no-jobid"
+	for i := 1; i <= 3; i++ {
+		req := &pb.PolicyCheckRequest{
+			// No JobId — direct gRPC callers may omit this.
+			Topic:  "job.visa-governance.velocity-check",
+			Tenant: "default",
+			Labels: map[string]string{"session_id": sessionID},
+		}
+		resp, err := srv.Check(context.Background(), req)
+		if err != nil {
+			t.Fatalf("request %d: unexpected error: %v", i, err)
+		}
+		if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_ALLOW {
+			t.Fatalf("request %d (no job_id): expected ALLOW within limit, got %v", i, resp.GetDecision())
+		}
+	}
+
+	// 4th call without job_id should still exceed velocity.
+	req := &pb.PolicyCheckRequest{
+		Topic:  "job.visa-governance.velocity-check",
+		Tenant: "default",
+		Labels: map[string]string{"session_id": sessionID},
+	}
+	resp, err := srv.Check(context.Background(), req)
+	if err != nil {
+		t.Fatalf("request 4 (no job_id): unexpected error: %v", err)
+	}
+	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY {
+		t.Fatalf("request 4 (no job_id): expected DENY, got %v — empty job_id must not collapse sliding window members",
+			resp.GetDecision())
+	}
+}
+
+func TestVelocityBundleRule_RedisUnavailable_FailOpen(t *testing.T) {
+	policy := bundleVelocityPolicy()
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { client.Close() })
+	srv := &server{
+		resultClient:    client,
+		velocityChecker: newVelocityChecker(client),
+		cache:           map[string]cacheEntry{},
+		cacheMaxSize:    100,
+	}
+	srv.setPolicy(policy, "snap-velocity-failopen")
+
+	// Close Redis to simulate unavailability.
+	mr.Close()
+
+	req := &pb.PolicyCheckRequest{
+		JobId:  "job-failopen",
+		Topic:  "job.visa-governance.velocity-check",
+		Tenant: "default",
+		Labels: map[string]string{"session_id": "sess-failopen"},
+	}
+	resp, err := srv.Check(context.Background(), req)
+	if err != nil {
+		t.Fatalf("check error: %v", err)
+	}
+	// Fail-open: velocity rule skipped, fallthrough allow should fire.
+	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_ALLOW {
+		t.Fatalf("expected ALLOW (fail-open when Redis unavailable), got %v reason=%q", resp.GetDecision(), resp.GetReason())
+	}
+}
+
+func TestVelocityBundleRule_NilChecker_FailOpen(t *testing.T) {
+	policy := bundleVelocityPolicy()
+	// Server without a velocity checker (no Redis at all).
+	srv := &server{
+		cache:        map[string]cacheEntry{},
+		cacheMaxSize: 100,
+	}
+	srv.setPolicy(policy, "snap-velocity-nilchecker")
+
+	req := &pb.PolicyCheckRequest{
+		JobId:  "job-nilchecker",
+		Topic:  "job.visa-governance.velocity-check",
+		Tenant: "default",
+		Labels: map[string]string{"session_id": "sess-nilchecker"},
+	}
+	resp, err := srv.Check(context.Background(), req)
+	if err != nil {
+		t.Fatalf("check error: %v", err)
+	}
+	// Fail-open: nil velocity checker should skip velocity rule, fallthrough to allow.
+	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_ALLOW {
+		t.Fatalf("expected ALLOW (fail-open with nil checker), got %v reason=%q ruleId=%q",
+			resp.GetDecision(), resp.GetReason(), resp.GetRuleId())
+	}
+	if resp.GetRuleId() != "visa-allow-fallback" {
+		t.Fatalf("expected fallthrough to visa-allow-fallback with nil checker, got ruleId=%q", resp.GetRuleId())
+	}
+}
+
+func TestVelocityBundleRule_CacheDoesNotBypassVelocity(t *testing.T) {
+	policy := bundleVelocityPolicy()
+	srv, _ := newTestServerWithVelocity(t, policy, "snap-velocity-cache")
+	srv.cacheTTL = 5 * time.Minute // Enable caching.
+
+	sessionID := "sess-cache-test"
+	for i := 1; i <= 4; i++ {
+		req := &pb.PolicyCheckRequest{
+			JobId:  fmt.Sprintf("job-cache-%d", i),
+			Topic:  "job.visa-governance.velocity-check",
+			Tenant: "default",
+			Labels: map[string]string{"session_id": sessionID},
+		}
+		resp, err := srv.Check(context.Background(), req)
+		if err != nil {
+			t.Fatalf("request %d: unexpected error: %v", i, err)
+		}
+		if i <= 3 {
+			if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_ALLOW {
+				t.Fatalf("request %d (cache enabled): expected ALLOW, got %v", i, resp.GetDecision())
+			}
+		} else {
+			if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY {
+				t.Fatalf("request %d (cache enabled): expected DENY (velocity exceeded despite cache), got %v",
+					i, resp.GetDecision())
+			}
+		}
+	}
+}
+
+func TestVelocityBundleRule_PolicyReloadActivatesVelocity(t *testing.T) {
+	// Start with a policy that has NO velocity rules.
+	noVelocityPolicy := &config.SafetyPolicy{
+		DefaultTenant:   "default",
+		DefaultDecision: "allow",
+	}
+	srv, _ := newTestServerWithVelocity(t, noVelocityPolicy, "snap-no-velocity")
+
+	// All requests should be allowed.
+	req := &pb.PolicyCheckRequest{
+		JobId:  "job-pre-reload",
+		Topic:  "job.visa-governance.velocity-check",
+		Tenant: "default",
+		Labels: map[string]string{"session_id": "sess-reload"},
+	}
+	resp, err := srv.Check(context.Background(), req)
+	if err != nil {
+		t.Fatalf("pre-reload check error: %v", err)
+	}
+	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_ALLOW {
+		t.Fatalf("pre-reload: expected ALLOW, got %v", resp.GetDecision())
+	}
+
+	// Simulate bundle reload that introduces velocity rules.
+	srv.setPolicy(bundleVelocityPolicy(), "snap-with-velocity")
+
+	// Now velocity should be active: 3 allows, 4th denied.
+	sessionID := "sess-post-reload"
+	for i := 1; i <= 3; i++ {
+		req := &pb.PolicyCheckRequest{
+			JobId:  fmt.Sprintf("job-post-reload-%d", i),
+			Topic:  "job.visa-governance.velocity-check",
+			Tenant: "default",
+			Labels: map[string]string{"session_id": sessionID},
+		}
+		resp, err := srv.Check(context.Background(), req)
+		if err != nil {
+			t.Fatalf("post-reload request %d: error: %v", i, err)
+		}
+		if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_ALLOW {
+			t.Fatalf("post-reload request %d: expected ALLOW, got %v", i, resp.GetDecision())
+		}
+	}
+	req = &pb.PolicyCheckRequest{
+		JobId:  "job-post-reload-4",
+		Topic:  "job.visa-governance.velocity-check",
+		Tenant: "default",
+		Labels: map[string]string{"session_id": sessionID},
+	}
+	resp, err = srv.Check(context.Background(), req)
+	if err != nil {
+		t.Fatalf("post-reload request 4: error: %v", err)
+	}
+	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY {
+		t.Fatalf("post-reload request 4: expected DENY after velocity reload, got %v", resp.GetDecision())
 	}
 }
 

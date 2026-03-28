@@ -599,3 +599,65 @@
 .dark .glass-panel {
   border-color: rgba(229, 239, 236, 0.08);
 }
+
+/* ---------------------------------------------------------------------------
+   Workflow Studio — ReactFlow overrides
+   Match the dashboard instrument-panel aesthetic.
+   --------------------------------------------------------------------------- */
+
+/* Remove generic ReactFlow node styling */
+.react-flow__node {
+  box-shadow: none !important;
+  border: none !important;
+  background: transparent !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+}
+.react-flow__node.selected {
+  box-shadow: none !important;
+}
+
+/* Edge stroke uses dashboard border color */
+.react-flow__edge-path {
+  stroke: var(--border) !important;
+  stroke-width: 1.5 !important;
+}
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: var(--primary) !important;
+  stroke-width: 2 !important;
+}
+.react-flow__edge:hover .react-flow__edge-path {
+  stroke: var(--primary) !important;
+}
+
+/* Animated edges for run overlay */
+.react-flow__edge.animated .react-flow__edge-path {
+  stroke-dasharray: 5;
+  animation: react-flow-dash 0.5s linear infinite;
+}
+@keyframes react-flow-dash {
+  to {
+    stroke-dashoffset: -10;
+  }
+}
+
+/* Connection line */
+.react-flow__connection-path {
+  stroke: var(--primary) !important;
+  stroke-width: 2 !important;
+  stroke-dasharray: 5 3;
+}
+
+/* Canvas background */
+.react-flow__background {
+  opacity: 1;
+}
+
+/* Dark mode overrides */
+.dark .react-flow__edge-path {
+  stroke: var(--border) !important;
+}
+.dark .react-flow__edge.selected .react-flow__edge-path,
+.dark .react-flow__edge:hover .react-flow__edge-path {
+  stroke: var(--primary) !important;
+}

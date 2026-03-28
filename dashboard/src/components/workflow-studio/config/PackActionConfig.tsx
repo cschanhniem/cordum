@@ -8,28 +8,25 @@ import { Textarea } from "../../ui/Textarea";
 import { Select } from "../../ui/Select";
 import { Button } from "../../ui/Button";
 import { usePacks } from "../../../hooks/usePacks";
-import { packActionSchema, type PackActionConfig } from "./schemas";
+import { packActionSchema, type PackActionConfig as PackActionFormValues } from "../../workflow/job/schemas";
+import type { UnifiedNodeData } from "../types";
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function nodeToDefaults(node: Node): PackActionConfig {
-  const config = (node.data?.config ?? {}) as Record<string, unknown>;
+function nodeToDefaults(d: UnifiedNodeData): PackActionFormValues {
+  const config = (d.config ?? {}) as Record<string, unknown>;
   return {
-    label: (node.data?.label as string) ?? "",
+    label: d.label ?? "",
     packId: (config.packId as string) ?? "",
-    topic: (config.topic as string) ?? "",
+    topic: d.topic ?? (config.topic as string) ?? "",
     capability: (config.capability as string) ?? "",
     input: (config.input as string) ?? "",
     riskTags: Array.isArray(config.riskTags) ? (config.riskTags as string[]) : undefined,
     requires: Array.isArray(config.requires) ? (config.requires as string[]) : undefined,
-    timeout: (config.timeout as string) ?? "",
-    retryMax: config.retryMax as number | undefined,
+    timeout: d.timeout_sec ? `${d.timeout_sec}s` : (config.timeout as string) ?? "",
+    retryMax: d.retry?.max_retries ?? (config.retryMax as number | undefined),
   };
 }
 
-function formToNodeData(values: PackActionConfig) {
+function formToNodeData(values: PackActionFormValues) {
   const { label, ...rest } = values;
   const config: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(rest)) {
@@ -55,51 +52,35 @@ function Field({ label, error, hint, children }: {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Inline TagInput (comma-separated)
-// ---------------------------------------------------------------------------
-
 function TagInput({ value, onChange, placeholder }: {
   value: string[]; onChange: (tags: string[]) => void; placeholder?: string;
 }) {
   const [text, setText] = useState(value.join(", "));
-
-  useEffect(() => {
-    setText(value.join(", "));
-  }, [value]);
-
+  useEffect(() => { setText(value.join(", ")); }, [value]);
   return (
     <Input
       value={text}
       onChange={(e) => {
         setText(e.target.value);
-        onChange(
-          e.target.value
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean),
-        );
+        onChange(e.target.value.split(",").map((s) => s.trim()).filter(Boolean));
       }}
       placeholder={placeholder}
     />
   );
 }
 
-// ---------------------------------------------------------------------------
-// PackActionPanel
-// ---------------------------------------------------------------------------
-
-export interface PackActionPanelProps {
-  node: Node;
+export interface PackActionConfigProps {
+  node: Node<UnifiedNodeData>;
   onSave: (nodeId: string, data: { label: string; config: Record<string, unknown> }) => void;
   onClose: () => void;
   onDelete?: (nodeId: string) => void;
 }
 
-export function PackActionPanel({ node, onSave, onClose, onDelete }: PackActionPanelProps) {
+export function PackActionConfig({ node, onSave, onClose, onDelete }: PackActionConfigProps) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const { data: packsData } = usePacks();
   const packs = packsData?.items ?? [];
+  const isStartNode = node.id === "start" || node.data.stepType === "start";
 
   const {
     register,
@@ -108,18 +89,16 @@ export function PackActionPanel({ node, onSave, onClose, onDelete }: PackActionP
     watch,
     setValue,
     formState: { errors, isDirty },
-  } = useForm<PackActionConfig>({
+  } = useForm<PackActionFormValues>({
     resolver: zodResolver(packActionSchema),
-    defaultValues: nodeToDefaults(node),
+    defaultValues: nodeToDefaults(node.data),
   });
 
   useEffect(() => {
-    reset(nodeToDefaults(node));
-  }, [node.id, reset, node]);
+    reset(nodeToDefaults(node.data));
+  }, [node.id, reset, node.data]);
 
   const selectedPackId = watch("packId");
-
-  // Derive capabilities from selected pack
   const selectedPack = useMemo(
     () => packs.find((p) => p.id === selectedPackId || p.name === selectedPackId),
     [packs, selectedPackId],
@@ -130,14 +109,13 @@ export function PackActionPanel({ node, onSave, onClose, onDelete }: PackActionP
     ? String((selectedPack.manifest as Record<string, unknown>).type ?? "").toLowerCase() === "mcp"
     : false;
 
-  // Auto-fill topic when pack changes
   useEffect(() => {
     if (selectedPack?.poolAssignment) {
       setValue("topic", `job.${selectedPack.poolAssignment}`, { shouldDirty: true });
     }
   }, [selectedPack, setValue]);
 
-  const onSubmit = (values: PackActionConfig) => {
+  const onSubmit = (values: PackActionFormValues) => {
     onSave(node.id, formToNodeData(values));
   };
 
@@ -159,9 +137,7 @@ export function PackActionPanel({ node, onSave, onClose, onDelete }: PackActionP
           <Select {...register("packId")}>
             <option value="">Select a pack...</option>
             {packs.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} ({p.version})
-              </option>
+              <option key={p.id} value={p.id}>{p.name} ({p.version})</option>
             ))}
           </Select>
         </Field>
@@ -192,7 +168,6 @@ export function PackActionPanel({ node, onSave, onClose, onDelete }: PackActionP
           )}
         </Field>
 
-        {/* Show topic inline when no capabilities (user needs manual control) */}
         {selectedPackId && !hasCapabilities && (
           <Field label="Topic" hint="required for dispatch">
             <Input {...register("topic")} placeholder="job.pack-pool" />
@@ -203,7 +178,6 @@ export function PackActionPanel({ node, onSave, onClose, onDelete }: PackActionP
           <Textarea {...register("input")} placeholder='{"key": "value"}' rows={4} />
         </Field>
 
-        {/* Advanced section */}
         <button
           type="button"
           onClick={() => setAdvancedOpen(!advancedOpen)}
@@ -243,7 +217,7 @@ export function PackActionPanel({ node, onSave, onClose, onDelete }: PackActionP
 
         <div className="mt-auto space-y-2 pt-4">
           <Button type="submit" disabled={!isDirty} className="w-full">Save</Button>
-          {onDelete && node.id !== "start" && node.type !== "start" && (
+          {onDelete && !isStartNode && (
             <Button type="button" variant="danger" size="sm" className="w-full" onClick={() => onDelete(node.id)}>
               <Trash2 className="h-3.5 w-3.5" />
               Delete Node

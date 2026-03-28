@@ -153,10 +153,84 @@ input_policy:
   fail_mode: closed  # "closed" = requeue when kernel down, "open" = allow through
 
 input_rules:
-  # Visa governance — scope enforcement via Safety Kernel content scanning.
-  # Called by the governance-evaluator worker via direct gRPC with synthetic topic.
+  # =========================================================================
+  # Native TX2 scope enforcement on the REAL workflow topic.
+  # Evaluated by the scheduler before dispatching the governance worker.
+  # Uses structured instruction-vs-cart comparison, not a keyword blocklist.
+  # =========================================================================
+  - id: visa-tx2-scope-native
+    description: "Deny Visa payment workflows where cart items violate the original purchase instruction (TX2 scope enforcement)."
+    severity: critical
+    match:
+      topics:
+        - "job.visa-governance.evaluate"
+      scope:
+        instruction_path: "instruction"
+        items_path: "items"
+        category_path: "category"
+        name_path: "name"
+        allowed_categories:
+          grocery:
+            - "produce"
+            - "dairy"
+            - "meat"
+            - "bakery"
+            - "beverages"
+            - "snacks"
+            - "frozen"
+            - "pantry"
+            - "household"
+            - "personal_care"
+          electronics:
+            - "phones"
+            - "computers"
+            - "accessories"
+            - "audio"
+            - "gaming"
+            - "headphones"
+          headphones:
+            - "headphones"
+            - "audio"
+            - "accessories"
+            - "electronics"
+        aliases:
+          gift-card: "gift_card"
+          giftcard: "gift_card"
+          gift card: "gift_card"
+          crypto: "cryptocurrency"
+          financial-instrument: "financial_instrument"
+        on_missing_input: "deny"
+        on_ambiguous: "deny"
+    decision: deny
+    reason: "Scope violation — cart items do not match the declared purchase intent. Possible prompt-injection attack."
+
+  # Optional: prompt-injection phrase scanning when raw untrusted text is present.
+  # Only fires when the payload includes an untrusted_prompt_text field.
+  # Without this field, Cordum does not claim prompt-text detection.
+  - id: visa-tx2-injection-scanner
+    description: "Scan for prompt-injection phrases in raw untrusted merchant/page text when available."
+    severity: high
+    match:
+      topics:
+        - "job.visa-governance.evaluate"
+      scanners:
+        - "injection"
+      keywords:
+        - "ignore previous instructions"
+        - "disregard all prior"
+        - "override your instructions"
+        - "you are now"
+        - "forget your rules"
+    decision: deny
+    reason: "Prompt-injection phrases detected in untrusted input text."
+
+  # =========================================================================
+  # Legacy synthetic scope-check (temporary compatibility shim).
+  # Still used by the governance worker until native mode is fully rolled out.
+  # Will be removed once worker scope-check path is decommissioned.
+  # =========================================================================
   - id: visa-scope-blocklist
-    description: "Block Visa payment payloads containing prohibited item categories."
+    description: "[LEGACY SHIM] Block Visa payment payloads containing prohibited item categories via synthetic topic."
     severity: high
     match:
       topics:

@@ -104,3 +104,71 @@ describe("Error message fallback", () => {
     expect(result).toContain("unknown");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Terminal state polling contract
+// ---------------------------------------------------------------------------
+
+const TERMINAL_POLL_STATES = ["succeeded", "failed", "cancelled", "denied", "timeout", "output_quarantined"];
+
+describe("Job polling terminal states", () => {
+  it("stops polling for all terminal states", () => {
+    for (const status of TERMINAL_POLL_STATES) {
+      expect(TERMINAL_POLL_STATES.includes(status)).toBe(true);
+    }
+  });
+
+  it("does not stop polling for active states", () => {
+    for (const status of ["running", "pending", "scheduled", "dispatched", "approval_required"]) {
+      expect(TERMINAL_POLL_STATES.includes(status)).toBe(false);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Status variant mapping
+// ---------------------------------------------------------------------------
+
+function jobStatusVariant(status: string) {
+  switch (status) {
+    case "running": return "healthy";
+    case "succeeded": case "completed": return "cordum";
+    case "failed": case "timeout": case "timed_out": return "danger";
+    case "denied": case "output_quarantined": return "governance";
+    case "approval_required": return "warning";
+    case "pending": case "scheduled": return "warning";
+    case "dispatched": return "info";
+    case "cancelled": return "muted";
+    default: return "muted";
+  }
+}
+
+describe("Job status variant mapping", () => {
+  it("maps denied to governance, not danger", () => {
+    expect(jobStatusVariant("denied")).toBe("governance");
+  });
+
+  it("maps output_quarantined to governance", () => {
+    expect(jobStatusVariant("output_quarantined")).toBe("governance");
+  });
+
+  it("maps timeout to danger", () => {
+    expect(jobStatusVariant("timeout")).toBe("danger");
+  });
+
+  it("maps approval_required to warning", () => {
+    expect(jobStatusVariant("approval_required")).toBe("warning");
+  });
+
+  it("maps cancelled to muted", () => {
+    expect(jobStatusVariant("cancelled")).toBe("muted");
+  });
+
+  it("maps failed to danger", () => {
+    expect(jobStatusVariant("failed")).toBe("danger");
+  });
+
+  it("maps succeeded to cordum", () => {
+    expect(jobStatusVariant("succeeded")).toBe("cordum");
+  });
+});

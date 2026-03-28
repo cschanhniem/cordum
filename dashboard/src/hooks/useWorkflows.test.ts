@@ -51,20 +51,21 @@ describe("useWorkflows internals", () => {
     expect(__workflowsInternal.parseDateToISO("not-a-date")).toBeUndefined();
   });
 
-  it("builds step payloads from legacy config and direct fields", () => {
+  it("builds step payloads from direct fields", () => {
     const payload = __workflowsInternal.buildStepPayload({
       id: "step-parallel",
       name: "Parallel Step",
       type: "parallel",
-      config: {
-        timeout: "30s",
-        duration: "10m",
-        parallelSteps: ["step-a", "step-b"],
-        completionStrategy: "n_of_m",
-        requiredCount: 1,
-        capabilities: ["cap.read", "cap.write"],
-        requires: ["cap.audit"],
-        riskTags: ["pii"],
+      timeout_sec: 30,
+      delay_sec: 600,
+      input: {
+        steps: ["step-a", "step-b"],
+        strategy: "n_of_m",
+        required: 1,
+      },
+      meta: {
+        capability: "cap.read",
+        requires: ["cap.write", "cap.audit"],
       },
     });
 

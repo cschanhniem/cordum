@@ -116,7 +116,7 @@ export function VisualRuleBuilder({ bundleId, onEditYaml }: VisualRuleBuilderPro
       const params = new URLSearchParams();
       if (caps.length) params.set("caps", caps.join(","));
       if (tags.length) params.set("tags", tags.join(","));
-      navigate(`/policies/simulator?${params.toString()}`);
+      navigate(`/govern/simulator?${params.toString()}`);
     },
     [navigate],
   );

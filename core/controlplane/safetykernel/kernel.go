@@ -29,8 +29,8 @@ import (
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
-	"github.com/cordum/cordum/core/infra/tlsreload"
 	"github.com/cordum/cordum/core/infra/redisutil"
+	"github.com/cordum/cordum/core/infra/tlsreload"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
@@ -46,19 +46,20 @@ import (
 type server struct {
 	pb.UnimplementedSafetyKernelServer
 	pb.UnimplementedOutputPolicyServiceServer
-	mu            sync.RWMutex
-	policy        *config.SafetyPolicy
-	outputRules   []compiledOutputRule
-	inputRules    []compiledInputRule
-	scanners      map[string]OutputScanner
-	snapshot      string
-	snapshots     []string
-	resultClient  redis.UniversalClient
-	policyVersion atomic.Uint64
-	cacheMu       sync.Mutex
-	cacheTTL      time.Duration
-	cache         map[string]cacheEntry
-	cacheMaxSize  int
+	mu              sync.RWMutex
+	policy          *config.SafetyPolicy
+	outputRules     []compiledOutputRule
+	inputRules      []compiledInputRule
+	scanners        map[string]OutputScanner
+	snapshot        string
+	snapshots       []string
+	resultClient    redis.UniversalClient
+	velocityChecker *velocityChecker
+	policyVersion   atomic.Uint64
+	cacheMu         sync.Mutex
+	cacheTTL        time.Duration
+	cache           map[string]cacheEntry
+	cacheMaxSize    int
 }
 
 const (
@@ -148,11 +149,12 @@ func Run(cfg *config.Config) error {
 		slog.Warn("safety-kernel: output result redis client disabled", "err", err)
 	}
 	srv := &server{
-		cacheTTL:     parseDurationEnv(envDecisionCacheTTL),
-		cache:        map[string]cacheEntry{},
-		cacheMaxSize: cacheMax,
-		scanners:     loadOutputScanners(),
-		resultClient: resultClient,
+		cacheTTL:        parseDurationEnv(envDecisionCacheTTL),
+		cache:           map[string]cacheEntry{},
+		cacheMaxSize:    cacheMax,
+		scanners:        loadOutputScanners(),
+		resultClient:    resultClient,
+		velocityChecker: newVelocityChecker(resultClient),
 	}
 	srv.setPolicy(policy, snapshot)
 
@@ -249,7 +251,7 @@ func (s *server) ListSnapshots(ctx context.Context, _ *pb.ListSnapshotsRequest) 
 	return &pb.ListSnapshotsResponse{Snapshots: snapshots}, nil
 }
 
-func (s *server) evaluate(_ context.Context, req *pb.PolicyCheckRequest, _ string) (*pb.PolicyCheckResponse, error) {
+func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, method string) (*pb.PolicyCheckResponse, error) {
 	decision := pb.DecisionType_DECISION_TYPE_DENY
 	reason := ""
 
@@ -269,8 +271,13 @@ func (s *server) evaluate(_ context.Context, req *pb.PolicyCheckRequest, _ strin
 	}
 	s.mu.RUnlock()
 
+	// Bypass decision cache when the active policy has velocity rules.
+	// Velocity decisions depend on sliding-window state that changes with every
+	// request, so caching any result (even a fallthrough ALLOW) would prevent
+	// the window from advancing correctly.
+	policyHasVelocity := policy != nil && hasVelocityRules(policy.EffectiveRules())
 	cacheKey := ""
-	if s.cacheTTL > 0 {
+	if s.cacheTTL > 0 && !policyHasVelocity {
 		cacheKey = cacheKeyForRequest(req, snapshot)
 		if cacheKey != "" {
 			if cached := s.getCachedDecision(cacheKey); cached != nil {
@@ -333,7 +340,11 @@ func (s *server) evaluate(_ context.Context, req *pb.PolicyCheckRequest, _ strin
 		if policyEvalTestHook != nil {
 			policyEvalTestHook()
 		}
-		policyDecision = policy.Evaluate(input)
+		if policyHasVelocity {
+			policyDecision = s.evaluateRulesWithVelocity(ctx, policy, input, req.GetJobId(), method)
+		} else {
+			policyDecision = policy.Evaluate(input)
+		}
 		if tp, ok := policy.Tenants[tenant]; ok {
 			if ok, mcpReason := config.MCPAllowed(tp.MCP, input.MCP); !ok {
 				policyDecision.Decision = "deny"
@@ -382,11 +393,17 @@ func (s *server) evaluate(_ context.Context, req *pb.PolicyCheckRequest, _ strin
 		}
 	}
 
-	// Input content rule evaluation — runs scanners/patterns against job input payload.
-	// Always active when input_rules are configured and content is present.
+	// Input rule evaluation — runs scanners/patterns/structured scope checks
+	// against job input payload.
+	//
+	// Important: evaluate even when InputContent is empty. Some rules (especially
+	// structured scope rules with on_missing_input=deny) must fail closed when the
+	// scheduler cannot provide the content, and pure metadata rules do not require
+	// content at all.
+	//
 	// Input rules can only escalate (allow→deny or allow→require_approval), never downgrade.
 	ruleID := policyDecision.RuleID
-	if len(s.inputRules) > 0 && len(req.GetInputContent()) > 0 {
+	if len(s.inputRules) > 0 {
 		if decision == pb.DecisionType_DECISION_TYPE_ALLOW || decision == pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS {
 			evalReq := inputEvaluateRequest{
 				tenant:      tenant,

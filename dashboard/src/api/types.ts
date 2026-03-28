@@ -28,7 +28,8 @@ export type JobStatus =
   | "approval_required"
   | "denied"
   | "timeout"
-  | "output_quarantined";
+  | "output_quarantined"
+  | "quarantined";
 
 export type OutputDecision = "ALLOW" | "QUARANTINE" | "REDACT";
 
@@ -376,8 +377,6 @@ export interface WorkflowStep {
   delay_sec?: number;
   delay_until?: string;
   route_labels?: Record<string, string>;
-  /** @deprecated Use depends_on */
-  dependsOn?: string[];
   /** Legacy config bag — kept for backward compat during migration */
   config?: Record<string, unknown>;
   // Run-time fields (present when viewing runs)

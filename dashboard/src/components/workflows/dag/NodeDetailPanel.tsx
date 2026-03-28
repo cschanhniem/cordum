@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { logger } from "../../../lib/logger";
+import { formatDuration, truncate } from "@/lib/utils";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Briefcase,
@@ -40,23 +41,14 @@ export interface NodeDetailPanelProps {
   step: WorkflowStep | null;
   run?: WorkflowRun | null;
   onClose: () => void;
+  /** When true, render content directly without the Drawer overlay wrapper. */
+  inline?: boolean;
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function truncate(str: string, max: number): string {
-  return str.length > max ? str.slice(0, max) + "\u2026" : str;
-}
-
-function formatDuration(ms: number): string {
-  const secs = Math.round(ms / 1000);
-  if (secs < 60) return `${secs}s`;
-  const mins = Math.floor(secs / 60);
-  const rem = secs % 60;
-  return rem > 0 ? `${mins}m ${rem}s` : `${mins}m`;
-}
 
 function formatDate(iso?: string): string {
   if (!iso) return "\u2014";
@@ -613,7 +605,7 @@ function FanOutDetail({
 
   // Find child steps (steps that depend on this fan-out)
   const childSteps = (run?.steps ?? []).filter((rs) =>
-    (rs.depends_on ?? rs.dependsOn)?.includes(step.id),
+    rs.depends_on?.includes(step.id),
   );
 
   return (
@@ -1432,6 +1424,7 @@ export function NodeDetailPanel({
   step,
   run,
   onClose,
+  inline,
 }: NodeDetailPanelProps) {
   // Find matching run step
   const runStep = step && run?.steps
@@ -1440,89 +1433,95 @@ export function NodeDetailPanel({
 
   const stepIcon = step ? (STEP_ICONS[step.type] ?? STEP_ICONS.job) : null;
 
+  const content = step ? (
+    <div className={cn("space-y-6", inline && "p-4")}>
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-surface2 text-muted-foreground">
+            {stepIcon}
+          </div>
+          <div className="min-w-0">
+            <h3
+              className="truncate font-display text-base font-semibold text-ink"
+              title={step.name || step.id}
+            >
+              {truncate(step.name || step.id, 60)}
+            </h3>
+            <Badge variant="info" className="text-xs">
+              {step.type}
+            </Badge>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-full p-1.5 hover:bg-surface2 transition"
+        >
+          <X className="h-4 w-4 text-muted-foreground" />
+        </button>
+      </div>
+
+      {/* Step-type-specific content */}
+      {["job", "worker", "agent-task", "pack-action", "tool-call"].includes(step.type) && (
+        <JobDetail step={step} runStep={runStep} />
+      )}
+      {step.type === "approval" && (
+        <ApprovalDetail
+          step={step}
+          runStep={runStep}
+          run={run}
+        />
+      )}
+      {step.type === "condition" && (
+        <ConditionDetail step={step} runStep={runStep} />
+      )}
+      {step.type === "switch" && (
+        <SwitchDetail step={step} runStep={runStep} run={run} />
+      )}
+      {step.type === "delay" && (
+        <DelayDetail step={step} runStep={runStep} />
+      )}
+      {(step.type === "fan-out" || step.type === "fanout") && (
+        <FanOutDetail step={step} runStep={runStep} run={run} />
+      )}
+      {step.type === "parallel" && (
+        <ParallelDetail step={step} runStep={runStep} run={run} />
+      )}
+      {step.type === "loop" && (
+        <LoopDetail step={step} runStep={runStep} run={run} />
+      )}
+      {(step.type === "sub-workflow" || step.type === "subworkflow") && (
+        <SubWorkflowDetail step={step} runStep={runStep} />
+      )}
+      {step.type === "transform" && (
+        <TransformDetail step={step} runStep={runStep} />
+      )}
+      {step.type === "storage" && (
+        <StorageDetail step={step} runStep={runStep} />
+      )}
+      {step.type === "http" && (
+        <HttpDetail step={step} runStep={runStep} />
+      )}
+      {step.type === "error-trigger" && (
+        <ErrorTriggerDetail step={step} runStep={runStep} />
+      )}
+      {step.type === "notify" && (
+        <GenericDetail runStep={runStep} />
+      )}
+      {!["job", "worker", "agent-task", "pack-action", "tool-call", "approval", "condition", "switch", "delay", "fan-out", "fanout", "parallel", "loop", "sub-workflow", "subworkflow", "transform", "storage", "http", "error-trigger", "notify"].includes(step.type) && (
+        <GenericDetail runStep={runStep} />
+      )}
+    </div>
+  ) : null;
+
+  if (inline) {
+    return content;
+  }
+
   return (
     <Drawer open={step !== null} onClose={onClose} size="sm">
-      {step && (
-        <div className="space-y-6">
-          {/* Header */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-surface2 text-muted-foreground">
-                {stepIcon}
-              </div>
-              <div className="min-w-0">
-                <h3
-                  className="truncate font-display text-base font-semibold text-ink"
-                  title={step.name || step.id}
-                >
-                  {truncate(step.name || step.id, 60)}
-                </h3>
-                <Badge variant="info" className="text-xs">
-                  {step.type}
-                </Badge>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-full p-1.5 hover:bg-surface2 transition"
-            >
-              <X className="h-4 w-4 text-muted-foreground" />
-            </button>
-          </div>
-
-          {/* Step-type-specific content */}
-          {["job", "worker", "agent-task", "pack-action", "tool-call"].includes(step.type) && (
-            <JobDetail step={step} runStep={runStep} />
-          )}
-          {step.type === "approval" && (
-            <ApprovalDetail
-              step={step}
-              runStep={runStep}
-              run={run}
-            />
-          )}
-          {step.type === "condition" && (
-            <ConditionDetail step={step} runStep={runStep} />
-          )}
-          {step.type === "switch" && (
-            <SwitchDetail step={step} runStep={runStep} run={run} />
-          )}
-          {step.type === "delay" && (
-            <DelayDetail step={step} runStep={runStep} />
-          )}
-          {(step.type === "fan-out" || step.type === "fanout") && (
-            <FanOutDetail step={step} runStep={runStep} run={run} />
-          )}
-          {step.type === "parallel" && (
-            <ParallelDetail step={step} runStep={runStep} run={run} />
-          )}
-          {step.type === "loop" && (
-            <LoopDetail step={step} runStep={runStep} run={run} />
-          )}
-          {(step.type === "sub-workflow" || step.type === "subworkflow") && (
-            <SubWorkflowDetail step={step} runStep={runStep} />
-          )}
-          {step.type === "transform" && (
-            <TransformDetail step={step} runStep={runStep} />
-          )}
-          {step.type === "storage" && (
-            <StorageDetail step={step} runStep={runStep} />
-          )}
-          {step.type === "http" && (
-            <HttpDetail step={step} runStep={runStep} />
-          )}
-          {step.type === "error-trigger" && (
-            <ErrorTriggerDetail step={step} runStep={runStep} />
-          )}
-          {step.type === "notify" && (
-            <GenericDetail runStep={runStep} />
-          )}
-          {!["job", "worker", "agent-task", "pack-action", "tool-call", "approval", "condition", "switch", "delay", "fan-out", "fanout", "parallel", "loop", "sub-workflow", "subworkflow", "transform", "storage", "http", "error-trigger", "notify"].includes(step.type) && (
-            <GenericDetail runStep={runStep} />
-          )}
-        </div>
-      )}
+      {content}
     </Drawer>
   );
 }

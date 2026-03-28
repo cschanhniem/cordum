@@ -192,6 +192,133 @@ func buildJobMetadata(metaReq *policyMetaRequest, tenant, principal string) *pb.
 	return meta
 }
 
+// submitPolicyDecision describes the outcome of a submit-time policy check.
+// It carries enough information for the approval flow to persist a safety
+// decision record (snapshot, hash, constraints, remediations) without needing
+// to re-evaluate the policy.
+type submitPolicyDecision struct {
+	Allowed          bool
+	Denied           bool
+	Throttled        bool
+	ApprovalRequired bool
+	Reason           string
+	Constraints      *pb.PolicyConstraints
+	PolicySnapshot   string
+	RuleId           string
+	Remediations     []*pb.PolicyRemediation
+}
+
+// evaluateSubmitPolicy performs a synchronous policy check at job submission
+// time before any state is persisted or the job is published. It reuses
+// buildPolicyCheckRequest to ensure request shape stays aligned with the rest
+// of the gateway. When the safety client is unavailable, behavior is controlled
+// by POLICY_CHECK_FAIL_MODE (shared with the scheduler): "open" allows the job,
+// "closed" (default) rejects it.
+func (s *server) evaluateSubmitPolicy(ctx context.Context, jobID, topic, tenant, principalID, priority string, meta *pb.JobMetadata, labels map[string]string, budget *pb.Budget, memoryID string) submitPolicyDecision {
+	if s == nil || s.safetyClient == nil {
+		return submitPolicyDecision{Allowed: true}
+	}
+
+	// Build the policy check request through the shared builder so HTTP/gRPC
+	// submit requests and explicit /policy/check calls use the same shape.
+	policyMeta := policyMetaFromJobMetadata(meta)
+	checkReq, err := buildPolicyCheckRequest(ctx, &policyCheckRequest{
+		JobId:       jobID,
+		Topic:       topic,
+		Tenant:      tenant,
+		OrgId:       tenant,
+		PrincipalId: principalID,
+		Priority:    priority,
+		Labels:      labels,
+		MemoryId:    memoryID,
+		Budget:      budget,
+		Meta:        policyMeta,
+	}, s.configSvc, s.tenant)
+	if err != nil {
+		slog.Error("submit-time policy request build failed", "job_id", jobID, "topic", topic, "error", err)
+		return submitPolicyDecision{Denied: true, Reason: "policy request build failed: " + err.Error()}
+	}
+
+	evalCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	resp, err := s.safetyClient.Evaluate(evalCtx, checkReq)
+	if err != nil {
+		slog.Error("submit-time policy check failed", "job_id", jobID, "topic", topic, "error", err)
+		if isPolicyFailOpen() {
+			slog.Warn("submit-time policy unavailable — FAIL-OPEN: allowing job",
+				"job_id", jobID, "topic", topic)
+			return submitPolicyDecision{Allowed: true, Reason: "fail-open: safety unavailable"}
+		}
+		return submitPolicyDecision{Denied: true, Reason: "policy check unavailable"}
+	}
+
+	// Capture full response metadata for the approval flow.
+	base := submitPolicyDecision{
+		Reason:         resp.GetReason(),
+		Constraints:    resp.GetConstraints(),
+		PolicySnapshot: resp.GetPolicySnapshot(),
+		RuleId:         resp.GetRuleId(),
+		Remediations:   resp.GetRemediations(),
+	}
+
+	if resp.GetApprovalRequired() || resp.GetDecision() == pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN {
+		base.ApprovalRequired = true
+		return base
+	}
+
+	switch resp.GetDecision() {
+	case pb.DecisionType_DECISION_TYPE_ALLOW, pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS:
+		base.Allowed = true
+		return base
+	case pb.DecisionType_DECISION_TYPE_DENY:
+		slog.Info("submit-time policy denied", "job_id", jobID, "topic", topic, "reason", resp.GetReason())
+		base.Denied = true
+		return base
+	case pb.DecisionType_DECISION_TYPE_THROTTLE:
+		slog.Info("submit-time policy throttled", "job_id", jobID, "topic", topic, "reason", resp.GetReason())
+		base.Throttled = true
+		return base
+	default:
+		slog.Warn("submit-time policy unknown decision", "job_id", jobID, "decision", resp.GetDecision().String())
+		base.Denied = true
+		base.Reason = "unknown policy decision"
+		return base
+	}
+}
+
+// policyMetaFromJobMetadata converts pb.JobMetadata to policyMetaRequest
+// for the shared policy check request builder.
+func policyMetaFromJobMetadata(m *pb.JobMetadata) *policyMetaRequest {
+	if m == nil {
+		return nil
+	}
+	return &policyMetaRequest{
+		TenantId:       m.GetTenantId(),
+		ActorId:        m.GetActorId(),
+		ActorType:      m.GetActorType().String(),
+		IdempotencyKey: m.GetIdempotencyKey(),
+		Capability:     m.GetCapability(),
+		RiskTags:       m.GetRiskTags(),
+		Requires:       m.GetRequires(),
+		PackId:         m.GetPackId(),
+		Labels:         m.GetLabels(),
+	}
+}
+
+// isPolicyFailOpen returns true if POLICY_CHECK_FAIL_MODE is "open".
+// This uses the same env var as the scheduler for consistent behavior.
+// Default is "closed" (deny on safety unavailability).
+// Also supports the legacy GATEWAY_POLICY_FAIL_MODE for backward compatibility.
+func isPolicyFailOpen() bool {
+	// Prefer the shared env var used by scheduler and docs.
+	if mode := strings.TrimSpace(os.Getenv("POLICY_CHECK_FAIL_MODE")); mode != "" {
+		return strings.EqualFold(mode, "open")
+	}
+	// Fallback to legacy gateway-specific env var.
+	mode := strings.TrimSpace(os.Getenv("GATEWAY_POLICY_FAIL_MODE"))
+	return strings.EqualFold(mode, "open")
+}
+
 func buildPolicyCheckRequest(ctx context.Context, req *policyCheckRequest, cfgSvc *configsvc.Service, defaultTenant string) (*pb.PolicyCheckRequest, error) {
 	if req == nil {
 		return nil, errors.New("request required")

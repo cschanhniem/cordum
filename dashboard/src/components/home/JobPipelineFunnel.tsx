@@ -54,7 +54,8 @@ export function JobPipelineFunnel() {
               (pipeline.dispatched ?? 0) +
               (pipeline.running ?? 0) +
               (pipeline.succeeded ?? 0) +
-              (pipeline.failed ?? 0);
+              (pipeline.failed ?? 0) +
+              ((pipeline as Record<string, number>).denied ?? 0);
             break;
           case "safety":
             count = safetyCount + (pipeline.dispatched ?? 0) + (pipeline.running ?? 0);

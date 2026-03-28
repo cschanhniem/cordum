@@ -144,17 +144,18 @@ export default function HomePage() {
   }, [jobs]);
 
   const activityData = useMemo(() => {
-    const buckets = new Map<string, { allowed: number; denied: number; approval: number }>();
+    const buckets = new Map<string, { allowed: number; denied: number; approval: number; failed: number }>();
     for (let i = 0; i < 12; i++) {
       const label = String(i * 2).padStart(2, "0") + ":00";
-      buckets.set(label, { allowed: 0, denied: 0, approval: 0 });
+      buckets.set(label, { allowed: 0, denied: 0, approval: 0, failed: 0 });
     }
     for (const j of jobs) {
       const hour = new Date(j.createdAt).getHours();
       const bucket = String(Math.floor(hour / 2) * 2).padStart(2, "0") + ":00";
       const b = buckets.get(bucket);
       if (b) {
-        if (j.safetyDecision?.type === "deny") b.denied++;
+        if (j.status === "failed") b.failed++;
+        else if (j.safetyDecision?.type === "deny") b.denied++;
         else if (j.safetyDecision?.type === "require_approval") b.approval++;
         else b.allowed++;
       }
@@ -165,7 +166,7 @@ export default function HomePage() {
   // Decision Distribution donut — 5 safety decisions
   const decisionData = [
     { name: "Allow", value: safetyAllowed, color: "#1f7a57" },
-    { name: "Deny", value: safetyDenied, color: "#b83a3a" },
+    { name: "Deny", value: safetyDenied, color: "#7c3aed" },
     { name: "Require Approval", value: safetyApproval, color: "#c58a1c" },
     { name: "Constrained", value: safetyConstrained, color: "#0f7f7a" },
     { name: "Throttle", value: safetyThrottled, color: "#d4833a" },
@@ -248,7 +249,7 @@ export default function HomePage() {
               >
                 <div className="flex gap-3 mt-3 text-xs font-mono">
                   <span className="text-[var(--color-success)]">{safetyAllowed} allow</span>
-                  <span className="text-destructive">{safetyDenied} deny</span>
+                  <span className="text-[var(--color-governance)]">{safetyDenied} deny</span>
                   <span className="text-[var(--color-warning)]">{safetyApproval} review</span>
                 </div>
               </MetricValue>
@@ -289,8 +290,9 @@ export default function HomePage() {
             </div>
             <div className="flex items-center gap-4 text-xs font-mono shrink-0">
               <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[var(--color-success)]" />Allowed</span>
-              <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-destructive" />Denied</span>
+              <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[var(--color-governance)]" />Denied</span>
               <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[var(--color-warning)]" />Approval</span>
+              <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-destructive" />Failed</span>
             </div>
           </div>
           <ResponsiveContainer width="100%" height={260}>
@@ -301,12 +303,16 @@ export default function HomePage() {
                   <stop offset="95%" stopColor="#1f7a57" stopOpacity={0} />
                 </linearGradient>
                 <linearGradient id="gradDenied" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#b83a3a" stopOpacity={0.25} />
-                  <stop offset="95%" stopColor="#b83a3a" stopOpacity={0} />
+                  <stop offset="5%" stopColor="#7c3aed" stopOpacity={0.25} />
+                  <stop offset="95%" stopColor="#7c3aed" stopOpacity={0} />
                 </linearGradient>
                 <linearGradient id="gradApproval" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#c58a1c" stopOpacity={0.25} />
                   <stop offset="95%" stopColor="#c58a1c" stopOpacity={0} />
+                </linearGradient>
+                <linearGradient id="gradFailed" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#b83a3a" stopOpacity={0.25} />
+                  <stop offset="95%" stopColor="#b83a3a" stopOpacity={0} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
@@ -314,8 +320,9 @@ export default function HomePage() {
               <YAxis tick={{ fontSize: 10, fill: "#5a6a70" }} axisLine={false} tickLine={false} />
               <Tooltip content={<ChartTooltip />} />
               <Area type="monotone" dataKey="allowed" stackId="1" stroke="#1f7a57" fill="url(#gradAllowed)" strokeWidth={2} name="Allowed" />
-              <Area type="monotone" dataKey="denied" stackId="1" stroke="#b83a3a" fill="url(#gradDenied)" strokeWidth={2} name="Denied" />
+              <Area type="monotone" dataKey="denied" stackId="1" stroke="#7c3aed" fill="url(#gradDenied)" strokeWidth={2} name="Denied" />
               <Area type="monotone" dataKey="approval" stackId="1" stroke="#c58a1c" fill="url(#gradApproval)" strokeWidth={2} name="Approval" />
+              <Area type="monotone" dataKey="failed" stackId="1" stroke="#b83a3a" fill="url(#gradFailed)" strokeWidth={2} name="Failed" />
             </AreaChart>
           </ResponsiveContainer>
         </motion.div>
@@ -400,13 +407,14 @@ export default function HomePage() {
                     <StatusBadge
                       variant={
                         job.status === "running" ? "healthy" :
-                        job.status === "failed" ? "danger" :
                         job.status === "succeeded" ? "healthy" :
-                        job.status === "pending" || job.status === "scheduled" ? "warning" :
+                        job.status === "failed" || job.status === "timeout" ? "danger" :
+                        job.status === "denied" || job.status === "output_quarantined" ? "governance" :
+                        job.status === "pending" || job.status === "scheduled" || job.status === "approval_required" ? "warning" :
                         "muted"
                       }
                     >
-                      {job.status}
+                      {job.status === "output_quarantined" ? "quarantined" : job.status}
                     </StatusBadge>
                   </td>
                   <td className="px-5 py-3">
