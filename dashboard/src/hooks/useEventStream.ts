@@ -176,7 +176,38 @@ const INVALIDATION_MAP: Record<string, string[][]> = {
 function invalidateForEvent(
   queryClient: ReturnType<typeof useQueryClient>,
   eventType: string,
+  event?: StreamEvent | null,
 ): void {
+  // Extract specific resource ID from the event payload
+  const payload = event?.payload as Record<string, unknown> | undefined;
+  const jobId = payload?.jobId as string | undefined;
+  const workerId = payload?.workerId as string | undefined;
+
+  // Invalidate both detail and list queries so filtered views update in real-time.
+  // Using default refetchType ("active") so visible queries refetch immediately.
+  if (eventType.startsWith("job.") && jobId) {
+    queryClient.invalidateQueries({ queryKey: ["job", jobId] });
+    queryClient.invalidateQueries({ queryKey: ["jobs"] });
+    queryClient.invalidateQueries({ queryKey: ["dlq"] });
+    return;
+  }
+  if (eventType.startsWith("worker.") && workerId) {
+    queryClient.invalidateQueries({ queryKey: ["worker", workerId] });
+    queryClient.invalidateQueries({ queryKey: ["workers"] });
+    return;
+  }
+  if (eventType.startsWith("workflow.run") || eventType.startsWith("workflow.step")) {
+    const eventObj = event as unknown as Record<string, unknown> | null | undefined;
+    const runId = eventObj?.run_id ?? eventObj?.runId;
+    if (typeof runId === "string" && runId) {
+      queryClient.invalidateQueries({ queryKey: ["workflow-run", runId] });
+    }
+    queryClient.invalidateQueries({ queryKey: ["workflows"] });
+    queryClient.invalidateQueries({ queryKey: ["workflow-runs"] });
+    return;
+  }
+
+  // Fallback: broad invalidation for events without extractable IDs
   for (const [prefix, keys] of Object.entries(INVALIDATION_MAP)) {
     if (eventType.startsWith(prefix)) {
       for (const key of keys) {
@@ -237,9 +268,33 @@ export function useEventStream(): void {
           ws.close();
           return;
         }
+        const wasReconnect = backoffRef.current > MIN_BACKOFF_MS;
         backoffRef.current = MIN_BACKOFF_MS;
         setStatus("connected");
         logger.info("ws", "Connected");
+
+        // On reconnect, selectively invalidate caches to recover missed events.
+        // Skip queries that are currently fetching (e.g. in-flight mutations or
+        // active refetches) to prevent desync when a user is mid-save.
+        if (wasReconnect) {
+          const allQueries = queryClient.getQueryCache().getAll();
+          const pendingCount = allQueries.filter(
+            (q) => q.state.fetchStatus === "fetching",
+          ).length;
+          logger.info("ws", "Reconnected — selective cache invalidation", {
+            total: allQueries.length,
+            skipped: pendingCount,
+          });
+          queryClient.invalidateQueries({
+            predicate: (query) => query.state.fetchStatus !== "fetching",
+          });
+          useToastStore.getState().addToast({
+            type: "info",
+            title: "Connection restored",
+            description: "Data refreshed automatically.",
+            duration: 5000,
+          });
+        }
       };
 
       ws.onmessage = (msg) => {
@@ -308,7 +363,7 @@ export function useEventStream(): void {
         }
 
         // Invalidate React Query caches
-        invalidateForEvent(queryClient, event.type);
+        invalidateForEvent(queryClient, event.type, event);
       };
 
       ws.onerror = () => {

@@ -29,7 +29,7 @@ func (e *Engine) StartRun(ctx context.Context, workflowID, runID string) error {
 	if err != nil {
 		return fmt.Errorf("get run: %w", err)
 	}
-	if run.Status == RunStatusCancelled || run.Status == RunStatusFailed || run.Status == RunStatusSucceeded || run.Status == RunStatusTimedOut {
+	if run.Status == RunStatusCancelled || run.Status == RunStatusFailed || run.Status == RunStatusDenied || run.Status == RunStatusSucceeded || run.Status == RunStatusTimedOut {
 		e.markRunTerminal(run.ID)
 		return nil
 	}
@@ -260,7 +260,7 @@ func (e *Engine) enforceWorkflowTimeout(ctx context.Context, wfDef *Workflow, ru
 		return false, nil
 	}
 	switch run.Status {
-	case RunStatusSucceeded, RunStatusFailed, RunStatusCancelled, RunStatusTimedOut:
+	case RunStatusSucceeded, RunStatusFailed, RunStatusDenied, RunStatusCancelled, RunStatusTimedOut:
 		return false, nil
 	}
 	startedAt := run.StartedAt
@@ -348,7 +348,7 @@ func cancelStepRun(sr *StepRun, now time.Time) {
 		return
 	}
 	switch sr.Status {
-	case StepStatusSucceeded, StepStatusFailed, StepStatusCancelled, StepStatusTimedOut:
+	case StepStatusSucceeded, StepStatusFailed, StepStatusDenied, StepStatusCancelled, StepStatusTimedOut:
 		// leave terminal states
 	default:
 		sr.Status = StepStatusCancelled
@@ -367,7 +367,7 @@ func timeoutStepRun(sr *StepRun, now time.Time) {
 		return
 	}
 	switch sr.Status {
-	case StepStatusSucceeded, StepStatusFailed, StepStatusCancelled, StepStatusTimedOut:
+	case StepStatusSucceeded, StepStatusFailed, StepStatusDenied, StepStatusCancelled, StepStatusTimedOut:
 		// leave terminal states
 	default:
 		sr.Status = StepStatusTimedOut
@@ -455,9 +455,12 @@ func applyResult(sr *StepRun, res *pb.JobResult, step *Step) (retry bool, delay 
 			sr.Error = map[string]any{"message": res.ErrorMessage}
 			return true, delay
 		}
-		if res.Status == pb.JobStatus_JOB_STATUS_TIMEOUT {
+		switch res.Status {
+		case pb.JobStatus_JOB_STATUS_TIMEOUT:
 			sr.Status = StepStatusTimedOut
-		} else {
+		case pb.JobStatus_JOB_STATUS_DENIED:
+			sr.Status = StepStatusDenied
+		default:
 			sr.Status = StepStatusFailed
 		}
 		sr.CompletedAt = &now
@@ -517,7 +520,7 @@ func shouldIgnoreProcessedResult(sr *StepRun) bool {
 		return false
 	}
 	switch sr.Status {
-	case StepStatusSucceeded, StepStatusFailed, StepStatusCancelled, StepStatusTimedOut:
+	case StepStatusSucceeded, StepStatusFailed, StepStatusDenied, StepStatusCancelled, StepStatusTimedOut:
 		return true
 	case StepStatusPending:
 		return sr.NextAttemptAt != nil
@@ -532,10 +535,13 @@ func aggregateChildren(parent *StepRun) StepStatus {
 	}
 	allDone := true
 	hasFailed := false
+	hasDenied := false
 	for _, child := range parent.Children {
 		switch child.Status {
 		case StepStatusFailed, StepStatusCancelled, StepStatusTimedOut:
 			hasFailed = true
+		case StepStatusDenied:
+			hasDenied = true
 		case StepStatusSucceeded:
 		default:
 			allDone = false
@@ -543,6 +549,9 @@ func aggregateChildren(parent *StepRun) StepStatus {
 	}
 	if hasFailed {
 		return StepStatusFailed
+	}
+	if hasDenied {
+		return StepStatusDenied
 	}
 	if allDone {
 		return StepStatusSucceeded
@@ -595,6 +604,7 @@ func updateRunStatus(run *WorkflowRun, wfDef *Workflow, now time.Time) {
 		return
 	}
 	hasFailed := false
+	hasDenied := false
 	hasTimedOut := false
 	waiting := false
 	allDone := true
@@ -644,9 +654,27 @@ func updateRunStatus(run *WorkflowRun, wfDef *Workflow, now time.Time) {
 					completed++
 				case chainExhausted:
 					hasFailed = true
+					skipDependentSteps(wfDef, run, stepID)
 				}
 			} else {
 				hasFailed = true
+				skipDependentSteps(wfDef, run, stepID)
+			}
+		case StepStatusDenied:
+			stepDef := wfDef.Steps[stepID]
+			if stepDef != nil && stepDef.OnError != "" {
+				switch walkOnErrorChain(wfDef, run, stepID) {
+				case chainPending:
+					allDone = false
+				case chainRecovered:
+					completed++
+				case chainExhausted:
+					hasDenied = true
+					skipDependentSteps(wfDef, run, stepID)
+				}
+			} else {
+				hasDenied = true
+				skipDependentSteps(wfDef, run, stepID)
 			}
 		case StepStatusCancelled:
 			if isSwitchBranchNotTaken(sr) {
@@ -679,6 +707,11 @@ func updateRunStatus(run *WorkflowRun, wfDef *Workflow, now time.Time) {
 	}
 	if hasFailed {
 		run.Status = RunStatusFailed
+		run.CompletedAt = &now
+		return
+	}
+	if hasDenied {
+		run.Status = RunStatusDenied
 		run.CompletedAt = &now
 		return
 	}

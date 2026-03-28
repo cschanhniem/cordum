@@ -234,7 +234,7 @@ function doesRuleMatchContext(rule: PolicyRule, ctx: ContextInputs): boolean {
 // Page component
 // ---------------------------------------------------------------------------
 
-export default function InputRulesPage() {
+export default function InputRulesPage({ hideHeader }: { hideHeader?: boolean } = {}) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const policyAccess = usePolicyAccess();
@@ -409,7 +409,7 @@ export default function InputRulesPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <PageHeader
+      {!hideHeader && <PageHeader
         label="Govern"
         title="Input Rules"
         subtitle="All input policy rules across every bundle. See what rules affect any tenant, topic, or workflow."
@@ -418,7 +418,7 @@ export default function InputRulesPage() {
             {affordances.canEditRule ? "editor access" : "read-only role"}
           </StatusBadge>
         }
-      />
+      />}
 
       <InfoBanner
         variant="cordum"
@@ -511,7 +511,7 @@ export default function InputRulesPage() {
                     setFilter("q", searchText === t ? "" : t)
                   }
                   className={cn(
-                    "rounded-full px-2 py-0.5 text-[10px] font-mono transition-colors",
+                    "rounded-full px-2 py-0.5 text-xs font-mono transition-colors",
                     searchText === t
                       ? "bg-primary/15 text-primary"
                       : "bg-surface-2 text-muted-foreground hover:bg-surface-3",
@@ -533,7 +533,7 @@ export default function InputRulesPage() {
           <Target className="h-3.5 w-3.5 text-cordum" />
           What rules affect...?
           {contextActive && (
-            <span className="ml-auto rounded bg-cordum/15 px-2 py-0.5 text-[10px] font-mono text-cordum">
+            <span className="ml-auto rounded bg-cordum/15 px-2 py-0.5 text-xs font-mono text-cordum">
               {contextMatchCount} of {enrichedRules.length} match
             </span>
           )}
@@ -548,7 +548,7 @@ export default function InputRulesPage() {
           <div className="border-t border-border px-4 py-3 space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <label className="space-y-1">
-                <span className="text-[10px] font-mono text-muted-foreground uppercase">
+                <span className="text-xs font-mono text-muted-foreground uppercase">
                   Tenant
                 </span>
                 <input
@@ -562,7 +562,7 @@ export default function InputRulesPage() {
                 />
               </label>
               <label className="space-y-1">
-                <span className="text-[10px] font-mono text-muted-foreground uppercase">
+                <span className="text-xs font-mono text-muted-foreground uppercase">
                   Topic
                 </span>
                 <input
@@ -576,7 +576,7 @@ export default function InputRulesPage() {
                 />
               </label>
               <label className="space-y-1">
-                <span className="text-[10px] font-mono text-muted-foreground uppercase">
+                <span className="text-xs font-mono text-muted-foreground uppercase">
                   Capability
                 </span>
                 <input
@@ -626,8 +626,19 @@ export default function InputRulesPage() {
       {/* ── Rule list ── */}
       {enrichedRules.length === 0 && !rulesLoading && (
         <EmptyState
-          title="No rules match filters"
-          description="Try adjusting the scope, decision, or search filters."
+          title={scopeFilter !== "all" || decisionFilter || bundleFilter || searchText ? "No rules match filters" : "No input rules configured"}
+          description={scopeFilter !== "all" || decisionFilter || bundleFilter || searchText ? "Try adjusting the scope, decision, or search filters." : "Input rules are defined in policy bundles. Create or sync a bundle to get started."}
+          action={
+            scopeFilter !== "all" || decisionFilter || bundleFilter || searchText ? (
+              <Button variant="ghost" size="sm" onClick={() => { setFilter("scope", ""); setFilter("decision", ""); setFilter("bundle", ""); setFilter("q", ""); }}>
+                Clear all filters
+              </Button>
+            ) : (
+              <Button variant="outline" size="sm" onClick={() => navigate("/govern/overview?tab=bundles")}>
+                View bundles
+              </Button>
+            )
+          }
         />
       )}
 
@@ -740,7 +751,7 @@ function RuleCard({
             <SafetyDecisionBadge decision={decision} />
             <span
               className={cn(
-                "inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono",
+                "inline-flex items-center px-2 py-0.5 rounded text-xs font-mono",
                 scopeInfo.bg,
                 scopeInfo.text,
               )}
@@ -752,7 +763,7 @@ function RuleCard({
                   : scopeInfo.label}
             </span>
             {!rule.enabled && (
-              <span className="text-[10px] font-mono text-muted-foreground bg-surface-2 px-1.5 py-0.5 rounded">
+              <span className="text-xs font-mono text-muted-foreground bg-surface-2 px-1.5 py-0.5 rounded">
                 DISABLED
               </span>
             )}
@@ -769,7 +780,7 @@ function RuleCard({
         {/* Match chips */}
         {hasMatch && (
           <div className="surface-inset p-3 mb-3">
-            <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest mb-2.5">
+            <p className="text-xs font-mono text-muted-foreground uppercase tracking-widest mb-2.5">
               Match
             </p>
             <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-xs font-mono">
@@ -809,7 +820,7 @@ function RuleCard({
 
         {/* Footer: bundle source + actions */}
         <div className="flex items-center justify-between pt-1">
-          <div className="flex items-center gap-3 text-[10px] font-mono text-muted-foreground">
+          <div className="flex items-center gap-3 text-xs font-mono text-muted-foreground">
             <div className="flex items-center gap-1.5">
               <Package className="h-3 w-3" />
               <span>from {bundleName}</span>

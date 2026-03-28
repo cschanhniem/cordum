@@ -1,4 +1,5 @@
 import { cn } from "../../lib/utils";
+import { CodeBlock } from "../ui/CodeBlock";
 import { ProgressBar } from "../ProgressBar";
 import type { RetryAttempt } from "../../api/types";
 
@@ -70,7 +71,7 @@ export function RetryAttemptsPanel({
                     <div className="flex flex-col items-center">
                       <div
                         className={cn(
-                          "flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-bold",
+                          "flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold",
                           idx === attempts.length - 1
                             ? "bg-danger/20 text-danger"
                             : "bg-surface text-muted-foreground border border-border",
@@ -90,14 +91,12 @@ export function RetryAttemptsPanel({
                           {formatTimestamp(attempt.attemptedAt)}
                         </span>
                         {duration && (
-                          <span className="text-[10px] text-muted-foreground">
+                          <span className="text-xs text-muted-foreground">
                             +{duration}
                           </span>
                         )}
                       </div>
-                      <pre className="whitespace-pre-wrap break-all rounded-lg bg-surface p-2.5 font-mono text-xs text-danger">
-                        {attempt.error}
-                      </pre>
+                      <CodeBlock title="Error" language="text" maxHeight={120}>{attempt.error}</CodeBlock>
                     </div>
                   </div>
                 );

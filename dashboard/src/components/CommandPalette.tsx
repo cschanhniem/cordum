@@ -25,11 +25,11 @@ export const COMMAND_PALETTE_COMMANDS: CommandItem[] = [
   { id: "agents", label: "Agent Fleet", section: "Navigate", icon: Cpu, path: "/agents", keywords: ["agents", "workers", "fleet", "pool"] },
   { id: "approvals", label: "Approvals", section: "Navigate", icon: UserCheck, path: "/approvals", keywords: ["approvals", "pending", "approve", "deny"] },
   { id: "security", label: "Security Overview", section: "Navigate", icon: ShieldCheck, path: "/", keywords: ["security", "overview", "safety", "decisions"] },
-  { id: "input-rules", label: "Input Rules", section: "Govern", icon: Shield, path: "/govern/input-rules", keywords: ["input", "rules", "safety", "pii", "injection", "policies", "governance"] },
-  { id: "output-rules", label: "Output Rules", section: "Govern", icon: Shield, path: "/govern/output-rules", keywords: ["output", "rules", "safety", "quarantine", "policies"] },
+  { id: "input-rules", label: "Input Rules", section: "Govern", icon: Shield, path: "/govern/overview?tab=input-rules", keywords: ["input", "rules", "safety", "pii", "injection", "policies", "governance"] },
+  { id: "output-rules", label: "Output Rules", section: "Govern", icon: Shield, path: "/govern/overview?tab=output-rules", keywords: ["output", "rules", "safety", "quarantine", "policies"] },
   { id: "tenants", label: "Tenants", section: "Govern", icon: Users, path: "/govern/tenants", keywords: ["tenants", "hierarchy", "inheritance", "scope", "multi-tenant"] },
-  { id: "bundles", label: "Bundles", section: "Govern", icon: GitBranch, path: "/govern/bundles", keywords: ["bundles", "policy", "publish", "deploy", "history", "changelog", "versions"] },
-  { id: "simulator", label: "Simulator", section: "Govern", icon: Shield, path: "/govern/simulator", keywords: ["simulator", "test", "dry run", "analytics"] },
+  { id: "bundles", label: "Bundles", section: "Govern", icon: GitBranch, path: "/govern/overview?tab=bundles", keywords: ["bundles", "policy", "publish", "deploy", "history", "changelog", "versions"] },
+  { id: "simulator", label: "Simulator", section: "Govern", icon: Shield, path: "/govern/overview?tab=simulator", keywords: ["simulator", "test", "dry run", "analytics"] },
   { id: "quarantine", label: "Quarantine", section: "Govern", icon: ShieldAlert, path: "/govern/quarantine", keywords: ["quarantine", "output", "blocked", "review"] },
   { id: "packs", label: "Packs", section: "Navigate", icon: Boxes, path: "/packs", keywords: ["packs", "marketplace", "plugins"] },
   { id: "schemas", label: "Schemas", section: "Navigate", icon: Monitor, path: "/schemas", keywords: ["schemas", "types", "definitions"] },
@@ -170,7 +170,7 @@ export function CommandPalette() {
                   placeholder="Type a command or search..."
                   className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
                 />
-                <kbd className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-surface-2 border border-border text-muted-foreground">
+                <kbd className="text-xs font-mono px-1.5 py-0.5 rounded bg-surface-2 border border-border text-muted-foreground">
                   ESC
                 </kbd>
               </div>
@@ -184,7 +184,7 @@ export function CommandPalette() {
                 ) : (
                   Object.entries(grouped).map(([section, items]) => (
                     <div key={section}>
-                      <p className="px-4 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/60">
+                      <p className="px-4 pt-2 pb-1 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground/60">
                         {section}
                       </p>
                       {items.map((item) => {
@@ -215,7 +215,7 @@ export function CommandPalette() {
               </div>
 
               {/* Footer */}
-              <div className="flex items-center gap-4 px-4 py-2 border-t border-border text-[10px] text-muted-foreground">
+              <div className="flex items-center gap-4 px-4 py-2 border-t border-border text-xs text-muted-foreground">
                 <span className="flex items-center gap-1">
                   <kbd className="px-1 py-0.5 rounded bg-surface-2 border border-border font-mono">↑↓</kbd>
                   navigate

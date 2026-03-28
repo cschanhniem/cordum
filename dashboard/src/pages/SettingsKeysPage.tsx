@@ -16,6 +16,7 @@ import { DialogOverlay } from "@/components/ui/DialogOverlay";
 import { Key, Plus, Copy, Trash2, X } from "lucide-react";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import { toast } from "sonner";
+import { friendlyError } from "@/lib/friendlyError";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 
 interface ApiKey {
@@ -64,7 +65,8 @@ export function handleCreateKeySuccess(data: { data?: { key?: string } } | undef
 }
 
 export function handleCreateKeyError(err: unknown) {
-  toast.error("Failed to create API key", { description: errorDescription(err) });
+  const f = friendlyError(err, "create API key");
+  toast.error(f.title, { description: f.description });
 }
 
 export function handleDeleteKeySuccess(deps: DeleteKeyMutationDeps) {
@@ -74,7 +76,8 @@ export function handleDeleteKeySuccess(deps: DeleteKeyMutationDeps) {
 }
 
 export function handleDeleteKeyError(err: unknown) {
-  toast.error("Failed to revoke API key", { description: errorDescription(err) });
+  const f = friendlyError(err, "revoke API key");
+  toast.error(f.title, { description: f.description });
 }
 
 export default function SettingsKeysPage() {
@@ -124,29 +127,29 @@ export default function SettingsKeysPage() {
           <table className="w-full text-sm min-w-[600px]">
             <thead>
               <tr className="border-b border-border bg-surface-0">
-                <th className="text-left px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-widest">Name</th>
-                <th className="text-left px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-widest">Key</th>
-                <th className="text-left px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-widest">Scopes</th>
-                <th className="text-left px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-widest">Last Used</th>
-                <th className="text-right px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-widest">Actions</th>
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Name</th>
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Key</th>
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Scopes</th>
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Last Used</th>
+                <th className="text-right px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Actions</th>
               </tr>
             </thead>
             <tbody>
               {keys.map((key, i) => (
                 <motion.tr key={key.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.03 }}
                   className="border-b border-border last:border-0 hover:bg-surface-1 transition-colors">
-                  <td className="px-4 py-3">
+                  <td className="px-5 py-3">
                     <div className="flex items-center gap-2">
                       <Key className="w-3.5 h-3.5 text-cordum" />
                       <span className="text-sm font-medium text-foreground">{key.name}</span>
                     </div>
                   </td>
-                  <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{key.prefix}...****</td>
-                  <td className="px-4 py-3">
+                  <td className="px-5 py-3 font-mono text-xs text-muted-foreground">{key.prefix}...****</td>
+                  <td className="px-5 py-3">
                     <div className="flex gap-1">{key.scopes.map(s => <StatusBadge key={s} variant="info">{s}</StatusBadge>)}</div>
                   </td>
-                  <td className="px-4 py-3 text-xs text-muted-foreground">{key.lastUsed ? formatRelativeTime(key.lastUsed) : "Never"}</td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-5 py-3 text-xs text-muted-foreground">{key.lastUsed ? formatRelativeTime(key.lastUsed) : "Never"}</td>
+                  <td className="px-5 py-3 text-right">
                     <button type="button" onClick={() => setDeleteTarget(key)} className="p-1.5 rounded hover:bg-destructive/10 transition-colors">
                       <Trash2 className="w-3.5 h-3.5 text-destructive" />
                     </button>
@@ -162,7 +165,7 @@ export default function SettingsKeysPage() {
       {/* Create Dialog */}
       <DialogOverlay open={createOpen} onClose={() => setCreateOpen(false)} label={createdKey ? "Key Created" : "Create API key"} className="w-[420px] bg-surface-1 border border-border rounded-xl shadow-2xl p-6">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-display font-semibold text-foreground">{createdKey ? "Key Created" : "Create API Key"}</h3>
+          <h2 className="text-sm font-display font-semibold text-foreground">{createdKey ? "Key Created" : "Create API Key"}</h2>
           <button type="button" onClick={() => setCreateOpen(false)} className="p-1 rounded hover:bg-surface-2"><X className="w-4 h-4 text-muted-foreground" /></button>
         </div>
         {createdKey ? (
@@ -181,12 +184,12 @@ export default function SettingsKeysPage() {
         ) : (
           <div className="space-y-4">
             <div>
-              <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Name</label>
+              <label className="text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider block mb-1.5">Name</label>
               <input type="text" value={newKeyName} onChange={(e) => setNewKeyName(e.target.value)} placeholder="e.g., CI Pipeline"
                 className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum" />
             </div>
             <div>
-              <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Scopes</label>
+              <label className="text-xs font-mono font-medium text-muted-foreground uppercase tracking-wider block mb-1.5">Scopes</label>
               <div className="flex gap-2">
                 {SCOPES.map(s => (
                   <button type="button" key={s} onClick={() => setNewKeyScopes(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s])}

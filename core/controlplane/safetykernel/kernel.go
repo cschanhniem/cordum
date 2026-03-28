@@ -30,6 +30,7 @@ import (
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/redisutil"
+	"github.com/cordum/cordum/core/infra/tlsreload"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
@@ -45,18 +46,20 @@ import (
 type server struct {
 	pb.UnimplementedSafetyKernelServer
 	pb.UnimplementedOutputPolicyServiceServer
-	mu            sync.RWMutex
-	policy        *config.SafetyPolicy
-	outputRules   []compiledOutputRule
-	scanners      map[string]OutputScanner
-	snapshot      string
-	snapshots     []string
-	resultClient  redis.UniversalClient
-	policyVersion atomic.Uint64
-	cacheMu       sync.Mutex
-	cacheTTL      time.Duration
-	cache         map[string]cacheEntry
-	cacheMaxSize  int
+	mu              sync.RWMutex
+	policy          *config.SafetyPolicy
+	outputRules     []compiledOutputRule
+	inputRules      []compiledInputRule
+	scanners        map[string]OutputScanner
+	snapshot        string
+	snapshots       []string
+	resultClient    redis.UniversalClient
+	velocityChecker *velocityChecker
+	policyVersion   atomic.Uint64
+	cacheMu         sync.Mutex
+	cacheTTL        time.Duration
+	cache           map[string]cacheEntry
+	cacheMaxSize    int
 }
 
 const (
@@ -119,18 +122,19 @@ func Run(cfg *config.Config) error {
 		if cert == "" || key == "" {
 			return fmt.Errorf("safety kernel tls requires both SAFETY_KERNEL_TLS_CERT and SAFETY_KERNEL_TLS_KEY")
 		}
-		pair, err := tls.LoadX509KeyPair(cert, key)
+		reloader, err := tlsreload.NewCertReloader(cert, key, "safety-kernel")
 		if err != nil {
 			return fmt.Errorf("safety kernel tls keypair: %w", err)
 		}
-		cfg := &tls.Config{
-			Certificates: []tls.Certificate{pair},
-			MinVersion:   tls.VersionTLS12,
+		go reloader.WatchLoop(context.Background(), 30*time.Second)
+		tlsCfg := &tls.Config{
+			GetCertificate: reloader.GetCertificate,
+			MinVersion:     tls.VersionTLS12,
 		}
 		if env.TLSMinVersion() == tls.VersionTLS13 {
-			cfg.MinVersion = tls.VersionTLS13
+			tlsCfg.MinVersion = tls.VersionTLS13
 		}
-		serverCreds = grpc.Creds(credentials.NewTLS(cfg))
+		serverCreds = grpc.Creds(credentials.NewTLS(tlsCfg))
 	}
 	if env.IsProduction() && cert == "" {
 		return fmt.Errorf("safety kernel tls required in production")
@@ -145,11 +149,12 @@ func Run(cfg *config.Config) error {
 		slog.Warn("safety-kernel: output result redis client disabled", "err", err)
 	}
 	srv := &server{
-		cacheTTL:     parseDurationEnv(envDecisionCacheTTL),
-		cache:        map[string]cacheEntry{},
-		cacheMaxSize: cacheMax,
-		scanners:     loadOutputScanners(),
-		resultClient: resultClient,
+		cacheTTL:        parseDurationEnv(envDecisionCacheTTL),
+		cache:           map[string]cacheEntry{},
+		cacheMaxSize:    cacheMax,
+		scanners:        loadOutputScanners(),
+		resultClient:    resultClient,
+		velocityChecker: newVelocityChecker(resultClient),
 	}
 	srv.setPolicy(policy, snapshot)
 
@@ -246,7 +251,7 @@ func (s *server) ListSnapshots(ctx context.Context, _ *pb.ListSnapshotsRequest) 
 	return &pb.ListSnapshotsResponse{Snapshots: snapshots}, nil
 }
 
-func (s *server) evaluate(_ context.Context, req *pb.PolicyCheckRequest, _ string) (*pb.PolicyCheckResponse, error) {
+func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, method string) (*pb.PolicyCheckResponse, error) {
 	decision := pb.DecisionType_DECISION_TYPE_DENY
 	reason := ""
 
@@ -257,17 +262,27 @@ func (s *server) evaluate(_ context.Context, req *pb.PolicyCheckRequest, _ strin
 		tenant = strings.TrimSpace(meta.GetTenantId())
 	}
 
+	// Snapshot all policy-related pointers under a single RLock to prevent
+	// TOCTOU races with concurrent setPolicy() calls. The RLock is read-only
+	// so concurrent evaluations still run in parallel.
 	s.mu.RLock()
 	policy := s.policy
 	snapshot := s.snapshot
+	inputRules := s.inputRules
+	scanners := s.scanners
 	defaultTenant := ""
 	if policy != nil {
 		defaultTenant = strings.TrimSpace(policy.DefaultTenant)
 	}
 	s.mu.RUnlock()
 
+	// Bypass decision cache when the active policy has velocity rules.
+	// Velocity decisions depend on sliding-window state that changes with every
+	// request, so caching any result (even a fallthrough ALLOW) would prevent
+	// the window from advancing correctly.
+	policyHasVelocity := policy != nil && hasVelocityRules(policy.EffectiveRules())
 	cacheKey := ""
-	if s.cacheTTL > 0 {
+	if s.cacheTTL > 0 && !policyHasVelocity {
 		cacheKey = cacheKeyForRequest(req, snapshot)
 		if cacheKey != "" {
 			if cached := s.getCachedDecision(cacheKey); cached != nil {
@@ -330,7 +345,11 @@ func (s *server) evaluate(_ context.Context, req *pb.PolicyCheckRequest, _ strin
 		if policyEvalTestHook != nil {
 			policyEvalTestHook()
 		}
-		policyDecision = policy.Evaluate(input)
+		if policyHasVelocity {
+			policyDecision = s.evaluateRulesWithVelocity(ctx, policy, input, req.GetJobId(), method)
+		} else {
+			policyDecision = policy.Evaluate(input)
+		}
 		if tp, ok := policy.Tenants[tenant]; ok {
 			if ok, mcpReason := config.MCPAllowed(tp.MCP, input.MCP); !ok {
 				policyDecision.Decision = "deny"
@@ -379,6 +398,50 @@ func (s *server) evaluate(_ context.Context, req *pb.PolicyCheckRequest, _ strin
 		}
 	}
 
+	// Input rule evaluation — runs scanners/patterns/structured scope checks
+	// against job input payload.
+	//
+	// Important: evaluate even when InputContent is empty. Some rules (especially
+	// structured scope rules with on_missing_input=deny) must fail closed when the
+	// scheduler cannot provide the content, and pure metadata rules do not require
+	// content at all.
+	//
+	// Input rules can only escalate (allow→deny or allow→require_approval), never downgrade.
+	ruleID := policyDecision.RuleID
+	if len(inputRules) > 0 {
+		if decision == pb.DecisionType_DECISION_TYPE_ALLOW || decision == pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS {
+			evalReq := inputEvaluateRequest{
+				tenant:      tenant,
+				topic:       topic,
+				contentType: req.GetInputContentType(),
+				content:     req.GetInputContent(),
+				inputSize:   req.GetInputSizeBytes(),
+			}
+			if meta != nil {
+				evalReq.capabilities = append(evalReq.capabilities, meta.GetCapability())
+				evalReq.riskTags = append(evalReq.riskTags, meta.GetRiskTags()...)
+			}
+			for _, rule := range inputRules {
+				matched, findings := evaluateInputRule(rule, evalReq, scanners)
+				if !matched {
+					continue
+				}
+				switch rule.decision {
+				case "deny":
+					decision = pb.DecisionType_DECISION_TYPE_DENY
+					reason = inputRuleReason(rule, findings)
+					ruleID = rule.id
+				case "require_approval", "require-approval", "require_human":
+					decision = pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN
+					reason = inputRuleReason(rule, findings)
+					ruleID = rule.id
+				}
+				slog.Info("input rule matched", "component", "safety", "rule", rule.id, "decision", rule.decision, "findings", len(findings))
+				break // first matching input rule wins
+			}
+		}
+	}
+
 	approvalRequired := policyDecision.ApprovalRequired || decision == pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN
 	approvalRef := ""
 	if approvalRequired {
@@ -389,7 +452,7 @@ func (s *server) evaluate(_ context.Context, req *pb.PolicyCheckRequest, _ strin
 		Decision:         decision,
 		Reason:           reason,
 		PolicySnapshot:   snapshot,
-		RuleId:           policyDecision.RuleID,
+		RuleId:           ruleID,
 		Constraints:      constraints,
 		ApprovalRequired: approvalRequired,
 		ApprovalRef:      approvalRef,
@@ -717,6 +780,7 @@ func (s *server) setPolicy(policy *config.SafetyPolicy, snapshot string) {
 	s.mu.Lock()
 	s.policy = policy
 	s.outputRules = compileOutputRules(policy)
+	s.inputRules = compileInputRules(policy)
 	s.snapshot = snapshot
 	if snapshot != "" {
 		s.snapshots = append([]string{snapshot}, s.snapshots...)
@@ -837,6 +901,7 @@ func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy,
 	sort.Strings(keys)
 	hasher := sha256.New()
 	var merged *config.SafetyPolicy
+	var skippedCount int
 	for _, key := range keys {
 		content, ok := extractPolicyFragment(rawBundles[key])
 		if !ok || strings.TrimSpace(content) == "" {
@@ -844,12 +909,23 @@ func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy,
 		}
 		policy, err := config.ParseSafetyPolicy([]byte(content))
 		if err != nil {
-			return nil, "", fmt.Errorf("parse policy fragment %q: %w", key, err)
+			slog.Error("skipping malformed policy fragment",
+				"key", key,
+				"error", err,
+			)
+			skippedCount++
+			continue
 		}
 		hasher.Write([]byte(key))
 		hasher.Write([]byte{0})
 		hasher.Write([]byte(content))
 		merged = mergePolicies(merged, policy)
+	}
+	if skippedCount > 0 {
+		slog.Warn("policy fragments skipped due to errors",
+			"skipped", skippedCount,
+			"loaded", len(keys)-skippedCount,
+		)
 	}
 	if merged == nil {
 		return nil, "", nil
@@ -930,8 +1006,64 @@ func mergePolicies(base, extra *config.SafetyPolicy) *config.SafetyPolicy {
 	if out.DefaultTenant == "" {
 		out.DefaultTenant = extra.DefaultTenant
 	}
-	out.Rules = append(out.Rules, extra.Rules...)
-	out.OutputRules = append(out.OutputRules, extra.OutputRules...)
+	// Merge input rules with duplicate detection (last-seen wins)
+	seenInput := make(map[string]int, len(out.Rules))
+	for i, r := range out.Rules {
+		if r.ID != "" {
+			seenInput[r.ID] = i
+		}
+	}
+	for _, r := range extra.Rules {
+		if r.ID != "" {
+			if idx, dup := seenInput[r.ID]; dup {
+				slog.Warn("duplicate policy rule ID in merge — replacing with latest",
+					"rule_id", r.ID, "decision", r.Decision)
+				out.Rules[idx] = r
+				continue
+			}
+			seenInput[r.ID] = len(out.Rules)
+		}
+		out.Rules = append(out.Rules, r)
+	}
+
+	// Merge output rules with duplicate detection
+	seenOutput := make(map[string]int, len(out.OutputRules))
+	for i, r := range out.OutputRules {
+		if r.ID != "" {
+			seenOutput[r.ID] = i
+		}
+	}
+	for _, r := range extra.OutputRules {
+		if r.ID != "" {
+			if idx, dup := seenOutput[r.ID]; dup {
+				slog.Warn("duplicate output policy rule ID in merge — replacing with latest",
+					"rule_id", r.ID)
+				out.OutputRules[idx] = r
+				continue
+			}
+			seenOutput[r.ID] = len(out.OutputRules)
+		}
+		out.OutputRules = append(out.OutputRules, r)
+	}
+	// Merge input rules with duplicate detection
+	seenInputRules := make(map[string]int, len(out.InputRules))
+	for i, r := range out.InputRules {
+		if r.ID != "" {
+			seenInputRules[r.ID] = i
+		}
+	}
+	for _, r := range extra.InputRules {
+		if r.ID != "" {
+			if idx, dup := seenInputRules[r.ID]; dup {
+				slog.Warn("duplicate input policy rule ID in merge — replacing with latest",
+					"rule_id", r.ID)
+				out.InputRules[idx] = r
+				continue
+			}
+			seenInputRules[r.ID] = len(out.InputRules)
+		}
+		out.InputRules = append(out.InputRules, r)
+	}
 	out.Tenants = mergeTenantPolicies(out.Tenants, extra.Tenants)
 	return out
 }
@@ -948,6 +1080,7 @@ func clonePolicy(policy *config.SafetyPolicy) *config.SafetyPolicy {
 		OutputPolicy:    policy.OutputPolicy,
 		Rules:           append([]config.PolicyRule{}, policy.Rules...),
 		OutputRules:     append([]config.OutputPolicyRule{}, policy.OutputRules...),
+		InputRules:      append([]config.InputPolicyRule{}, policy.InputRules...),
 		Tenants:         map[string]config.TenantPolicy{},
 	}
 	if policy.Tenants != nil {
@@ -1075,7 +1208,7 @@ func fetchPolicyURL(raw string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("policy fetch status %d", resp.StatusCode)
 	}
@@ -1093,7 +1226,7 @@ func readPolicyFile(source string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	if info, err := file.Stat(); err == nil && info.Size() > limit {
 		return nil, fmt.Errorf("policy exceeds max size of %d bytes", limit)
 	}

@@ -26,12 +26,14 @@ import (
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
+	// env helpers imported above for IntOr/DurationOr
 	"github.com/cordum/cordum/core/infra/locks"
 	infraMetrics "github.com/cordum/cordum/core/infra/metrics"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/cordum/cordum/core/infra/registry"
 	"github.com/cordum/cordum/core/infra/schema"
 	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/infra/tlsreload"
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/gorilla/websocket"
@@ -43,18 +45,19 @@ import (
 	wf "github.com/cordum/cordum/core/workflow"
 )
 
+var maxJobPayloadBytes = int64(env.IntOr("GATEWAY_MAX_JOB_PAYLOAD_BYTES", 2<<20))
+
 const (
 	defaultGrpcAddr             = ":8080"
 	defaultHttpAddr             = ":8081"
 	defaultMetricsAddr          = ":9092"
-	maxJobPayloadBytes          = 2 << 20  // 2 MiB limit for incoming job payloads
 	defaultArtifactMaxBytes     = 10 << 20 // 10 MiB default artifact size limit
 	maxPromptChars              = 100000
 	defaultRateLimitRPS         = 2000
 	defaultRateLimitBurst       = 4000
 	defaultPublicRateLimitRPS   = 20
 	defaultPublicRateLimitBurst = 40
-	defaultMaxHeaderBytes       = 1 << 20
+	defaultMaxHeaderBytes  = 1 << 20
 	maxLabelKeyLen              = 256              // Max length for label keys
 	maxLabelValueLen            = 4096             // Max length for label values (4KB)
 	wsAuthSubprotocol           = "cordum-api-key" // #nosec G101 -- subprotocol identifier, not a credential
@@ -321,13 +324,13 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 	if err != nil {
 		return fmt.Errorf("connect redis: %w", err)
 	}
-	defer memStore.Close()
+	defer func() { _ = memStore.Close() }()
 
 	jobStore, err := store.NewRedisJobStore(cfg.RedisURL)
 	if err != nil {
 		return fmt.Errorf("connect redis job store: %w", err)
 	}
-	defer jobStore.Close()
+	defer func() { _ = jobStore.Close() }()
 
 	natsBus, err := bus.NewNatsBus(cfg.NatsURL)
 	if err != nil {
@@ -345,14 +348,16 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 	if err != nil {
 		return fmt.Errorf("connect redis workflow store: %w", err)
 	}
-	defer workflowStore.Close()
-	workflowEng := wf.NewEngine(workflowStore, natsBus)
+	defer func() { _ = workflowStore.Close() }()
+	wfCtx, wfCancel := context.WithCancel(context.Background())
+	defer wfCancel()
+	workflowEng := wf.NewEngine(workflowStore, natsBus).WithContext(wfCtx)
 
 	configSvc, err := configsvc.New(cfg.RedisURL)
 	if err != nil {
 		return fmt.Errorf("connect redis config service: %w", err)
 	}
-	defer configSvc.Close()
+	defer func() { _ = configSvc.Close() }()
 	if err := seedDefaultPackCatalogs(context.Background(), configSvc); err != nil {
 		slog.Error("seed pack catalogs failed", "error", err)
 	}
@@ -363,7 +368,7 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 	if err != nil {
 		return fmt.Errorf("connect redis schema registry: %w", err)
 	}
-	defer schemaRegistry.Close()
+	defer func() { _ = schemaRegistry.Close() }()
 	workflowEng = workflowEng.WithMemory(memStore).WithConfig(configSvc).WithSchemaRegistry(schemaRegistry)
 	if raw := strings.TrimSpace(os.Getenv("WORKFLOW_FOREACH_MAX_ITEMS")); raw != "" {
 		if limit, err := strconv.Atoi(raw); err == nil && limit > 0 {
@@ -375,7 +380,7 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 	if err != nil {
 		return fmt.Errorf("connect redis dlq store: %w", err)
 	}
-	defer dlqStore.Close()
+	defer func() { _ = dlqStore.Close() }()
 	// Periodic cleanup of stale DLQ index entries whose data keys have expired.
 	dlqCleanupCtx, dlqCleanupCancel := context.WithCancel(context.Background())
 	defer dlqCleanupCancel()
@@ -385,13 +390,13 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 	if err != nil {
 		return fmt.Errorf("connect redis artifact store: %w", err)
 	}
-	defer artifactStore.Close()
+	defer func() { _ = artifactStore.Close() }()
 
 	lockStore, err := locks.NewRedisStore(cfg.RedisURL)
 	if err != nil {
 		return fmt.Errorf("connect redis lock store: %w", err)
 	}
-	defer lockStore.Close()
+	defer func() { _ = lockStore.Close() }()
 
 	var safetyConn *grpc.ClientConn
 	var safetyClient pb.SafetyKernelClient
@@ -508,13 +513,14 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 		if certFile == "" || keyFile == "" {
 			return fmt.Errorf("grpc tls requires both GRPC_TLS_CERT and GRPC_TLS_KEY")
 		}
-		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+		grpcReloader, err := tlsreload.NewCertReloader(certFile, keyFile, "gateway-grpc")
 		if err != nil {
 			return fmt.Errorf("grpc tls keypair: %w", err)
 		}
+		go grpcReloader.WatchLoop(context.Background(), 30*time.Second)
 		cfg := &tls.Config{
-			Certificates: []tls.Certificate{cert},
-			MinVersion:   tls.VersionTLS12,
+			GetCertificate: grpcReloader.GetCertificate,
+			MinVersion:     tls.VersionTLS12,
 		}
 		if env.TLSMinVersion() == tls.VersionTLS13 {
 			cfg.MinVersion = tls.VersionTLS13
@@ -615,6 +621,12 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("GET /api/v1/workers/{id}/jobs", s.instrumented("/api/v1/workers/{id}/jobs", s.handleGetWorkerJobs))
 	mux.HandleFunc("GET /api/v1/pools", s.instrumented("/api/v1/pools", s.handleListPools))
 	mux.HandleFunc("GET /api/v1/pools/{name}", s.instrumented("/api/v1/pools/{name}", s.handleGetPool))
+	mux.HandleFunc("PUT /api/v1/pools/{name}", s.instrumented("/api/v1/pools/{name}", s.handleCreatePool))
+	mux.HandleFunc("PATCH /api/v1/pools/{name}", s.instrumented("/api/v1/pools/{name}", s.handleUpdatePool))
+	mux.HandleFunc("DELETE /api/v1/pools/{name}", s.instrumented("/api/v1/pools/{name}", s.handleDeletePool))
+	mux.HandleFunc("POST /api/v1/pools/{name}/drain", s.instrumented("/api/v1/pools/{name}/drain", s.handleDrainPool))
+	mux.HandleFunc("PUT /api/v1/pools/{name}/topics/{topic}", s.instrumented("/api/v1/pools/{name}/topics/{topic}", s.handleAddTopicToPool))
+	mux.HandleFunc("DELETE /api/v1/pools/{name}/topics/{topic}", s.instrumented("/api/v1/pools/{name}/topics/{topic}", s.handleRemoveTopicFromPool))
 
 	// 2.5 Status snapshot (Redis/NATS/workers/uptime)
 	mux.HandleFunc("GET /api/v1/status", s.instrumented("/api/v1/status", s.handleStatus))
@@ -713,6 +725,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("GET /api/v1/policy/bundles", s.instrumented("/api/v1/policy/bundles", s.handlePolicyBundles))
 	mux.HandleFunc("GET /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handleGetPolicyBundle))
 	mux.HandleFunc("PUT /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handlePutPolicyBundle))
+	mux.HandleFunc("DELETE /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handleDeletePolicyBundle))
 	mux.HandleFunc("POST /api/v1/policy/bundles/{id}/simulate", s.instrumented("/api/v1/policy/bundles/{id}/simulate", s.handleSimulatePolicyBundle))
 	mux.HandleFunc("GET /api/v1/policy/bundles/snapshots", s.instrumented("/api/v1/policy/bundles/snapshots", s.handleListPolicyBundleSnapshots))
 	mux.HandleFunc("POST /api/v1/policy/bundles/snapshots", s.instrumented("/api/v1/policy/bundles/snapshots", s.handleCapturePolicyBundleSnapshot))
@@ -763,8 +776,18 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 		IdleTimeout:       durationFromEnv(envHTTPIdleTimeout, 60*time.Second),
 		MaxHeaderBytes:    defaultMaxHeaderBytes,
 	}
+	var httpReloader *tlsreload.CertReloader
 	if httpTLSCert != "" {
-		srv.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		var err error
+		httpReloader, err = tlsreload.NewCertReloader(httpTLSCert, httpTLSKey, "gateway-http")
+		if err != nil {
+			return fmt.Errorf("http tls keypair: %w", err)
+		}
+		go httpReloader.WatchLoop(context.Background(), 30*time.Second)
+		srv.TLSConfig = &tls.Config{
+			GetCertificate: httpReloader.GetCertificate,
+			MinVersion:     tls.VersionTLS12,
+		}
 		if env.TLSMinVersion() == tls.VersionTLS13 {
 			srv.TLSConfig.MinVersion = tls.VersionTLS13
 		}
@@ -776,6 +799,10 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	if basic := basicAuthProvider(s.auth); basic != nil {
 		basic.SetUsageContext(sigCtx)
 	}
+
+	// Start pool drain lifecycle checker.
+	drainChecker := newPoolDrainChecker(s)
+	go drainChecker.Run(sigCtx)
 
 	shutdownDone := make(chan struct{})
 	go func() {
@@ -824,9 +851,8 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	}()
 
 	if err := func() error {
-		if httpTLSCert != "" {
-			// #nosec G304 -- TLS cert path is configured by the operator.
-			return srv.ListenAndServeTLS(httpTLSCert, httpTLSKey)
+		if httpReloader != nil {
+			return srv.ListenAndServeTLS("", "")
 		}
 		return srv.ListenAndServe()
 	}(); err != nil {

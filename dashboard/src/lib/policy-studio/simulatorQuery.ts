@@ -29,5 +29,6 @@ export function buildSimulatorUrl(params: SimulatorDeepLinkParams): string {
   if (params.riskTags?.length) sp.set("risk_tags", params.riskTags.join(","));
 
   const qs = sp.toString();
-  return qs ? `/govern/simulator?${qs}` : "/govern/simulator";
+  const base = "/govern/overview?tab=simulator";
+  return qs ? `${base}&${qs}` : base;
 }

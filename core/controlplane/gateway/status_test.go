@@ -157,8 +157,11 @@ func TestHandleStatusPipelineAggregationByTenant(t *testing.T) {
 	if got := pipeline["succeeded"].(float64); got != 1 {
 		t.Fatalf("expected succeeded=1 got=%v", got)
 	}
-	if got := pipeline["failed"].(float64); got != 2 {
-		t.Fatalf("expected failed=2 got=%v", got)
+	if got := pipeline["failed"].(float64); got != 1 {
+		t.Fatalf("expected failed=1 got=%v", got)
+	}
+	if got := pipeline["denied"].(float64); got != 1 {
+		t.Fatalf("expected denied=1 got=%v", got)
 	}
 }
 

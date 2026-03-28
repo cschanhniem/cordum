@@ -54,11 +54,20 @@ export default function BundleDetailPage() {
   const publishPolicy = usePublishPolicy();
   const rollbackPolicy = useRollbackPolicy();
 
-  const [activeTab, setActiveTab] = useState<BundleTab>("yaml");
+  // Default to preview for published bundles — YAML for drafts
+  const urlTab = new URLSearchParams(window.location.search).get("tab") as BundleTab | null;
+  const [activeTab, setActiveTab] = useState<BundleTab>(urlTab ?? "preview");
   const [yamlDraft, setYamlDraft] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [publishOpen, setPublishOpen] = useState(false);
   const [rollbackSnapshotId, setRollbackSnapshotId] = useState<string | null>(null);
+
+  // Auto-switch to yaml tab for draft bundles (unless URL specifies a tab)
+  useEffect(() => {
+    if (bundle && !urlTab && bundle.status === "draft") {
+      setActiveTab("yaml");
+    }
+  }, [bundle?.status, urlTab]);
 
   // Track server content to detect when draft matches after refetch
   const serverContent = bundle?.content ?? "";
@@ -142,12 +151,12 @@ export default function BundleDetailPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => navigate("/govern/bundles")}>
+          <Button variant="ghost" size="sm" onClick={() => navigate("/govern/overview?tab=bundles")}>
             <ArrowLeft className="mr-1 h-3.5 w-3.5" />
             Bundles
           </Button>
           {isDirty && (
-            <span className="text-[10px] font-mono text-[var(--color-warning)]">unsaved changes</span>
+            <span className="text-xs font-mono text-[var(--color-warning)]">unsaved changes</span>
           )}
         </div>
 
@@ -270,26 +279,26 @@ export default function BundleDetailPage() {
 
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <div className="instrument-card p-4">
-              <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-2">rules</p>
+              <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-2">rules</p>
               <p className="text-sm font-mono text-foreground">{bundle.rule_count ?? bundle.rules?.length ?? 0}</p>
             </div>
             <div className="instrument-card p-4">
-              <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-2">source</p>
+              <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-2">source</p>
               <p className="text-sm font-mono text-foreground truncate">{bundle.source ?? "—"}</p>
             </div>
             <div className="instrument-card p-4">
-              <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-2">author</p>
+              <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-2">author</p>
               <p className="text-sm font-mono text-foreground truncate">{bundle.author ?? "—"}</p>
             </div>
             <div className="instrument-card p-4">
-              <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-2">sha256</p>
+              <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-2">sha256</p>
               <p className="text-sm font-mono text-foreground truncate">
                 {bundle.sha256 ? `${bundle.sha256.slice(0, 16)}...` : "—"}
               </p>
             </div>
           </div>
 
-          <BundleDetailTabs active={activeTab} onChange={setActiveTab} />
+          <BundleDetailTabs active={activeTab} onChange={setActiveTab} snapshotCount={bundle?.snapshots?.length ?? 0} />
 
           <div className="min-h-[200px]">
             {activeTab === "yaml" && (
@@ -300,7 +309,7 @@ export default function BundleDetailPage() {
               />
             )}
             {activeTab === "preview" && (
-              <BundleVisualPreview yaml={currentYaml} />
+              <BundleVisualPreview yaml={currentYaml} onSwitchToCode={() => setActiveTab("yaml")} />
             )}
             {activeTab === "diff" && (
               <BundleDiffView bundleId={bundleId} draftYaml={currentYaml} />

@@ -6,7 +6,7 @@ import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
 import { Select } from "../ui/Select";
-import { cn } from "../../lib/utils";
+import { cn, formatDuration } from "../../lib/utils";
 import { useConfigStore } from "../../state/config";
 import type { ApprovalHistoryEntry } from "../../api/types";
 
@@ -49,15 +49,6 @@ function formatTimestamp(iso: string): string {
   });
 }
 
-function formatDuration(ms: number | undefined): string {
-  if (ms == null || ms <= 0) return "—";
-  const secs = Math.floor(ms / 1_000);
-  if (secs < 60) return `${secs}s`;
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ${secs % 60}s`;
-  const hrs = Math.floor(mins / 60);
-  return `${hrs}h ${mins % 60}m`;
-}
 
 function actionBadge(action: string) {
   if (action.includes("approve")) return <Badge variant="success">Approved</Badge>;
@@ -392,7 +383,7 @@ export function ApprovalHistory() {
                   <td className="px-4 py-3 text-xs">
                     {item.workflowId ? (
                       <Link
-                        to={`/workflows/${item.workflowId}`}
+                        to={`/workflows/${item.workflowId}/studio`}
                         className="text-accent hover:underline"
                       >
                         {item.workflowId.slice(0, 8)}

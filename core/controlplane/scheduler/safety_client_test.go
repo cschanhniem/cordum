@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordum/cordum/core/infra/store"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -18,9 +19,11 @@ type safetyTestServer struct {
 	pb.UnimplementedSafetyKernelServer
 	decision pb.DecisionType
 	reason   string
+	lastReq  *pb.PolicyCheckRequest
 }
 
 func (s *safetyTestServer) Check(ctx context.Context, req *pb.PolicyCheckRequest) (*pb.PolicyCheckResponse, error) {
+	s.lastReq = req
 	return &pb.PolicyCheckResponse{
 		Decision: s.decision,
 		Reason:   s.reason,
@@ -54,6 +57,36 @@ func startTestSafetyServer(t *testing.T, decision pb.DecisionType, reason string
 		}
 	}
 	return conn, cleanup
+}
+
+func startInstrumentedTestSafetyServer(t *testing.T, decision pb.DecisionType, reason string) (*grpc.ClientConn, *safetyTestServer, func()) {
+	t.Helper()
+	lis := bufconn.Listen(1024 * 1024)
+	srv := grpc.NewServer(grpc.Creds(insecure.NewCredentials()))
+	handler := &safetyTestServer{decision: decision, reason: reason}
+	pb.RegisterSafetyKernelServer(srv, handler)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.Serve(lis)
+	}()
+
+	dialer := func(context.Context, string) (net.Conn, error) {
+		return lis.Dial()
+	}
+	conn, err := grpc.NewClient("passthrough:///bufnet", grpc.WithContextDialer(dialer), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial safety kernel: %v", err)
+	}
+	cleanup := func() {
+		srv.Stop()
+		_ = lis.Close()
+		_ = conn.Close()
+		if err := <-errCh; err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+			t.Fatalf("safety kernel serve error: %v", err)
+		}
+	}
+	return conn, handler, cleanup
 }
 
 func newTestCB() *RedisCircuitBreaker {
@@ -239,5 +272,45 @@ func TestSafetyTransportCredentialsFallback(t *testing.T) {
 	t.Setenv("SAFETY_KERNEL_INSECURE", "")
 	if _, err := safetyTransportCredentials(); err == nil {
 		t.Fatalf("expected error for invalid CA")
+	}
+}
+
+func TestSafetyClientAttachesInputContentFromContextPtr(t *testing.T) {
+	conn, handler, cleanup := startInstrumentedTestSafetyServer(t, pb.DecisionType_DECISION_TYPE_ALLOW, "")
+	defer cleanup()
+
+	_, rdb := newTestRedis(t)
+	ctx := context.Background()
+	payload := []byte(`{"instruction":"buy headphones","items":[{"name":"gift card","category":"gift_card"}]}`)
+	if err := rdb.Set(ctx, store.MakeContextKey("job-ctx"), payload, 0).Err(); err != nil {
+		t.Fatalf("seed redis context: %v", err)
+	}
+
+	client := &SafetyClient{
+		client:        pb.NewSafetyKernelClient(conn),
+		conn:          conn,
+		cb:            newTestCB(),
+		contextClient: rdb,
+	}
+
+	record, err := client.Check(ctx, &pb.JobRequest{
+		JobId:      "job-ctx",
+		Topic:      "job.visa-governance.evaluate",
+		ContextPtr: store.PointerForKey(store.MakeContextKey("job-ctx")),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if record.Decision != SafetyAllow {
+		t.Fatalf("expected allow passthrough, got %v", record.Decision)
+	}
+	if handler.lastReq == nil {
+		t.Fatal("expected safety kernel request to be captured")
+	}
+	if got := string(handler.lastReq.GetInputContent()); got != string(payload) {
+		t.Fatalf("expected input content %q, got %q", string(payload), got)
+	}
+	if got := handler.lastReq.GetInputSizeBytes(); got != int64(len(payload)) {
+		t.Fatalf("expected input size %d, got %d", len(payload), got)
 	}
 }

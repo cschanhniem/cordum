@@ -176,7 +176,7 @@ func TestBuildJobPayloadPartialRunInputReturnsExplicitError(t *testing.T) {
 func TestValidateStepOutputInlineSchema(t *testing.T) {
 	memStore, srv := newMemoryStore(t)
 	defer srv.Close()
-	defer memStore.Close()
+	defer func() { _ = memStore.Close() }()
 
 	engine := (&Engine{}).WithMemory(memStore)
 	step := &Step{OutputSchema: map[string]any{"type": "object", "required": []any{"result"}}}
@@ -224,7 +224,7 @@ func TestValidateStepOutputFailClosedOnFetchError(t *testing.T) {
 func TestValidateStepOutputFailClosedOnMissingResult(t *testing.T) {
 	memStore, srv := newMemoryStore(t)
 	defer srv.Close()
-	defer memStore.Close()
+	defer func() { _ = memStore.Close() }()
 
 	engine := (&Engine{}).WithMemory(memStore)
 	step := &Step{OutputSchema: map[string]any{"type": "object", "required": []any{"result"}}}
@@ -259,7 +259,7 @@ func TestValidateStepOutputNoSchemaSkipsValidation(t *testing.T) {
 func TestValidateStepOutputSchemaRegistryUnavailable(t *testing.T) {
 	memStore, srv := newMemoryStore(t)
 	defer srv.Close()
-	defer memStore.Close()
+	defer func() { _ = memStore.Close() }()
 
 	engine := (&Engine{}).WithMemory(memStore) // no schema registry
 	step := &Step{OutputSchemaID: "schema-123"}
@@ -379,7 +379,7 @@ func TestSetContextPathAndRecordStepOutput(t *testing.T) {
 
 	memStore, srv := newMemoryStore(t)
 	defer srv.Close()
-	defer memStore.Close()
+	defer func() { _ = memStore.Close() }()
 
 	jobID := "job-ctx"
 	key := store.MakeResultKey(jobID)
@@ -409,7 +409,7 @@ func TestSetContextPathAndRecordStepOutput(t *testing.T) {
 func TestInlineResultAndFetchPayload(t *testing.T) {
 	memStore, srv := newMemoryStore(t)
 	defer srv.Close()
-	defer memStore.Close()
+	defer func() { _ = memStore.Close() }()
 
 	jobID := "job-inline"
 	key := store.MakeResultKey(jobID)
@@ -496,7 +496,7 @@ func TestExtractDataPath(t *testing.T) {
 func TestValidateStepOutputWithResultDataPath(t *testing.T) {
 	memStore, srv := newMemoryStore(t)
 	defer srv.Close()
-	defer memStore.Close()
+	defer func() { _ = memStore.Close() }()
 
 	engine := (&Engine{}).WithMemory(memStore)
 
@@ -535,7 +535,7 @@ func TestValidateStepOutputWithResultDataPath(t *testing.T) {
 func TestValidateStepOutputResultDataPathMissing(t *testing.T) {
 	memStore, srv := newMemoryStore(t)
 	defer srv.Close()
-	defer memStore.Close()
+	defer func() { _ = memStore.Close() }()
 
 	engine := (&Engine{}).WithMemory(memStore)
 
@@ -563,7 +563,7 @@ func TestValidateStepOutputResultDataPathMissing(t *testing.T) {
 func TestRecordStepOutputWithResultDataPath(t *testing.T) {
 	memStore, srv := newMemoryStore(t)
 	defer srv.Close()
-	defer memStore.Close()
+	defer func() { _ = memStore.Close() }()
 
 	wrapper := map[string]any{
 		"action": "draft",
@@ -607,5 +607,75 @@ func TestRecordStepOutputWithResultDataPath(t *testing.T) {
 	}
 	if _, hasDrafts := outreachMap["drafts"]; !hasDrafts {
 		t.Fatal("expected ctx.outreach to contain extracted drafts")
+	}
+}
+
+func TestSkipDependentSteps_Direct(t *testing.T) {
+	wfDef := &Workflow{
+		Steps: map[string]*Step{
+			"A": {ID: "A"},
+			"B": {ID: "B", DependsOn: []string{"A"}},
+		},
+	}
+	run := &WorkflowRun{
+		Steps: map[string]*StepRun{
+			"A": {StepID: "A", Status: StepStatusFailed},
+			"B": {StepID: "B", Status: StepStatusPending},
+		},
+	}
+	skipDependentSteps(wfDef, run, "A")
+	if run.Steps["B"].Status != StepStatusSkipped {
+		t.Errorf("expected B skipped, got %s", run.Steps["B"].Status)
+	}
+	if run.Steps["B"].SkipReason != "dependency A failed" {
+		t.Errorf("expected skip reason, got %q", run.Steps["B"].SkipReason)
+	}
+}
+
+func TestSkipDependentSteps_Transitive(t *testing.T) {
+	wfDef := &Workflow{
+		Steps: map[string]*Step{
+			"A": {ID: "A"},
+			"B": {ID: "B", DependsOn: []string{"A"}},
+			"C": {ID: "C", DependsOn: []string{"B"}},
+		},
+	}
+	run := &WorkflowRun{
+		Steps: map[string]*StepRun{
+			"A": {StepID: "A", Status: StepStatusFailed},
+			"B": {StepID: "B", Status: StepStatusPending},
+			"C": {StepID: "C", Status: StepStatusPending},
+		},
+	}
+	skipDependentSteps(wfDef, run, "A")
+	if run.Steps["B"].Status != StepStatusSkipped {
+		t.Errorf("expected B skipped, got %s", run.Steps["B"].Status)
+	}
+	if run.Steps["C"].Status != StepStatusSkipped {
+		t.Errorf("expected C transitively skipped, got %s", run.Steps["C"].Status)
+	}
+}
+
+func TestSkipDependentSteps_IndependentUnaffected(t *testing.T) {
+	wfDef := &Workflow{
+		Steps: map[string]*Step{
+			"A": {ID: "A"},
+			"B": {ID: "B", DependsOn: []string{"A"}},
+			"C": {ID: "C"}, // no deps
+		},
+	}
+	run := &WorkflowRun{
+		Steps: map[string]*StepRun{
+			"A": {StepID: "A", Status: StepStatusFailed},
+			"B": {StepID: "B", Status: StepStatusPending},
+			"C": {StepID: "C", Status: StepStatusPending},
+		},
+	}
+	skipDependentSteps(wfDef, run, "A")
+	if run.Steps["B"].Status != StepStatusSkipped {
+		t.Errorf("expected B skipped, got %s", run.Steps["B"].Status)
+	}
+	if run.Steps["C"].Status != StepStatusPending {
+		t.Errorf("expected C still pending (independent), got %s", run.Steps["C"].Status)
 	}
 }

@@ -46,17 +46,14 @@ describe("AppShell systemStatus derivation", () => {
 });
 
 describe("AppShell GOVERN navigation", () => {
-  it("exposes six explicit GOVERN entries", () => {
+  it("exposes three GOVERN entries (Policy Studio, Tenants, Quarantine)", () => {
     const govern = APP_SHELL_NAV_SECTIONS.find((section) => section.label === "Govern");
     expect(govern).toBeDefined();
 
     const labels = govern?.items.map((item) => item.label);
     expect(labels).toEqual([
-      "Input Rules",
-      "Output Rules",
+      "Policy Studio",
       "Tenants",
-      "Bundles",
-      "Simulator",
       "Quarantine",
     ]);
   });
@@ -72,8 +69,8 @@ describe("AppShell GOVERN navigation", () => {
   });
 
   it("updates g+key navigation to GOVERN policy routes", () => {
-    expect(APP_SHELL_G_KEY_MAP.p).toBe("/govern/input-rules");
-    expect(APP_SHELL_G_KEY_MAP.b).toBe("/govern/bundles");
+    expect(APP_SHELL_G_KEY_MAP.p).toBe("/govern/overview?tab=input-rules");
+    expect(APP_SHELL_G_KEY_MAP.b).toBe("/govern/overview?tab=bundles");
   });
 });
 

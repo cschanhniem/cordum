@@ -27,7 +27,7 @@ func TestSnapshotWriterLock_OnlyOneWriterPerTTL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("job store: %v", err)
 	}
-	defer jobStore.Close()
+	defer func() { _ = jobStore.Close() }()
 
 	const (
 		lockTTL  = 10 * time.Second
@@ -109,7 +109,7 @@ func TestSnapshotWriterLock_SkipsWhenHeld(t *testing.T) {
 	if err != nil {
 		t.Fatalf("job store: %v", err)
 	}
-	defer jobStore.Close()
+	defer func() { _ = jobStore.Close() }()
 
 	ctx := context.Background()
 
@@ -158,7 +158,7 @@ func TestSnapshotWriterLock_TTLExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("job store: %v", err)
 	}
-	defer jobStore.Close()
+	defer func() { _ = jobStore.Close() }()
 
 	ctx := context.Background()
 

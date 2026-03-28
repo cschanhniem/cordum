@@ -1,12 +1,13 @@
 import { ShieldAlert } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { formatRelative } from "../../lib/format";
 import type { ActivityItem } from "../../types/activity";
 
-const decisionVariant: Record<string, "success" | "danger" | "warning" | "info"> = {
+const decisionVariant: Record<string, "success" | "danger" | "warning" | "info" | "governance"> = {
   ALLOW: "success",
-  DENY: "danger",
+  DENY: "governance",
   REQUIRE_APPROVAL: "warning",
   CONSTRAIN: "info",
   PENDING: "info",
@@ -25,7 +26,12 @@ export function SafetyAlertBlock({ activity, onApprove, onReject }: Props) {
   const requiresAction = activity.payload?.requires_action && decision === "REQUIRE_APPROVAL";
 
   return (
-    <div className="rounded-2xl border border-border bg-card/70 p-4">
+    <div className={cn(
+      "rounded-2xl border-l-4 p-4",
+      decision === "DENY" ? "border-l-[var(--color-governance)] bg-[var(--color-governance)]/5" :
+      decision === "REQUIRE_APPROVAL" ? "border-l-[var(--color-warning)] bg-[var(--color-warning)]/5" :
+      "border-l-[var(--color-success)] bg-[var(--color-success)]/5"
+    )}>
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-3">
           <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-warning/10 text-warning">
@@ -41,7 +47,7 @@ export function SafetyAlertBlock({ activity, onApprove, onReject }: Props) {
             <div className="mt-1 text-xs text-muted-foreground">{activity.content}</div>
           </div>
         </div>
-        <span className="text-[10px] text-muted-foreground">{formatRelative(activity.timestamp)}</span>
+        <span className="text-xs text-muted-foreground">{formatRelative(activity.timestamp)}</span>
       </div>
       {requiresAction && jobId ? (
         <div className="mt-3 flex flex-wrap gap-2">

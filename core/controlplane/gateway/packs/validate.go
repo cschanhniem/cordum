@@ -103,7 +103,7 @@ func ValidatePackManifest(manifest *PackManifest) error {
 			return errors.New("workflow id and path required")
 		}
 		if !strings.HasPrefix(res.ID, id+".") {
-			return fmt.Errorf("workflow id %q must be namespaced under %s.", res.ID, id)
+			return fmt.Errorf("workflow id %q must be namespaced under %s", res.ID, id)
 		}
 	}
 	return nil
@@ -295,7 +295,7 @@ func ValidateTimeoutsPatch(patch map[string]any, packID string) error {
 		}
 		for wf := range workflows {
 			if !strings.HasPrefix(wf, packID+".") {
-				return fmt.Errorf("timeout workflow %q must be namespaced under %s.", wf, packID)
+				return fmt.Errorf("timeout workflow %q must be namespaced under %s", wf, packID)
 			}
 		}
 	}
@@ -630,7 +630,7 @@ func ExtractTarGzReader(src io.Reader, dest string) error {
 	if err != nil {
 		return fmt.Errorf("create gzip reader: %w", err)
 	}
-	defer gz.Close()
+	defer func() { _ = gz.Close() }()
 	tr := tar.NewReader(gz)
 	var (
 		files   int

@@ -220,12 +220,17 @@ export default function AgentsPage() {
         <EmptyState
           icon={<Cpu className="w-5 h-5" />}
           title="No agents found"
-          description={search ? "Try adjusting your search" : "No agents have connected yet"}
+          description={search ? "Try adjusting your search" : "Agents connect via the Cordum SDK. Start an agent with your API key to see it here."}
+          action={search ? undefined : (
+            <Button variant="outline" size="sm" onClick={() => navigate("/settings/keys")}>
+              View API keys
+            </Button>
+          )}
         />
       ) : (
         <div className="instrument-card overflow-hidden">
           <div className="flex items-center justify-between px-5 py-3 border-b border-border">
-            <h3 className="font-display font-semibold text-sm text-foreground">Worker Pool</h3>
+            <h2 className="font-display font-semibold text-sm text-foreground">Worker Pool</h2>
             <Button variant="outline" size="sm" onClick={() => refetch()}>
               <RefreshCw className="w-3 h-3 mr-1" />
               Refresh
@@ -235,12 +240,12 @@ export default function AgentsPage() {
           <table className="w-full min-w-[750px]">
             <thead>
               <tr className="border-b border-border bg-surface-0">
-                <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Worker</th>
-                <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Status</th>
-                <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Pool</th>
-                <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Capabilities</th>
-                <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Jobs</th>
-                <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Last Seen</th>
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Worker</th>
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Status</th>
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Pool</th>
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Capabilities</th>
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Jobs</th>
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Last Seen</th>
               </tr>
             </thead>
             <tbody>
@@ -268,12 +273,12 @@ export default function AgentsPage() {
                   <td className="px-5 py-3">
                     <div className="flex flex-wrap gap-1">
                       {(w.capabilities ?? []).slice(0, 3).map((t: string) => (
-                        <span key={t} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-surface-2 text-muted-foreground">
+                        <span key={t} className="text-xs font-mono px-1.5 py-0.5 rounded bg-surface-2 text-muted-foreground">
                           {t}
                         </span>
                       ))}
                       {(w.capabilities?.length ?? 0) > 3 && (
-                        <span className="text-[10px] text-muted-foreground">+{(w.capabilities?.length ?? 0) - 3}</span>
+                        <span className="text-xs text-muted-foreground">+{(w.capabilities?.length ?? 0) - 3}</span>
                       )}
                     </div>
                   </td>
@@ -321,7 +326,7 @@ function AgentRegistryTab() {
 
   if (workers.length === 0) {
     return (
-      <EmptyState icon={<Shield className="w-8 h-8" />} title="No agents registered" description="Agents will appear here after they connect and send heartbeats." />
+      <EmptyState icon={<Shield className="w-8 h-8" />} title="No agents registered" description="Agents will appear here after they connect and send heartbeats." action={<Button variant="outline" size="sm" onClick={() => navigate("/settings/keys")}>View API keys</Button>} />
     );
   }
 
@@ -333,13 +338,13 @@ function AgentRegistryTab() {
         <table className="w-full min-w-[800px]">
           <thead>
             <tr className="border-b border-border bg-surface-0">
-              <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Agent</th>
-              <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Pool</th>
-              <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Status</th>
-              <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Active Jobs</th>
-              <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Capacity</th>
-              <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Capabilities</th>
-              <th className="text-left px-5 py-3 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Last Active</th>
+              <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Agent</th>
+              <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Pool</th>
+              <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Status</th>
+              <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Active Jobs</th>
+              <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Capacity</th>
+              <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Capabilities</th>
+              <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Last Active</th>
             </tr>
           </thead>
           <tbody>
@@ -354,7 +359,7 @@ function AgentRegistryTab() {
                     <Shield className="w-3.5 h-3.5 text-cordum" />
                     <div>
                       <p className="text-sm font-medium text-foreground">{w.name || w.id}</p>
-                      <p className="text-[10px] font-mono text-muted-foreground">{w.id}</p>
+                      <p className="text-xs font-mono text-muted-foreground">{w.id}</p>
                     </div>
                   </div>
                 </td>
@@ -367,10 +372,10 @@ function AgentRegistryTab() {
                 <td className="px-5 py-3">
                   <div className="flex flex-wrap gap-1">
                     {w.capabilities?.slice(0, 3).map((c) => (
-                      <span key={c} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cordum/10 text-cordum">{c}</span>
+                      <span key={c} className="text-xs font-mono px-1.5 py-0.5 rounded bg-cordum/10 text-cordum">{c}</span>
                     ))}
                     {(w.capabilities?.length ?? 0) > 3 && (
-                      <span className="text-[10px] font-mono text-muted-foreground">+{(w.capabilities?.length ?? 0) - 3}</span>
+                      <span className="text-xs font-mono text-muted-foreground">+{(w.capabilities?.length ?? 0) - 3}</span>
                     )}
                   </div>
                 </td>

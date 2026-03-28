@@ -215,6 +215,84 @@ scanners:
 	}
 }
 
+func TestLoadOutputScannersDetectsIsraeliPII(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "output_scanners.yaml")
+	content := `
+version: v1
+scanners:
+  pii:
+    finding_type: pii
+    patterns:
+      - name: email_address
+        regex: "\\b[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}\\b"
+        severity: high
+      - name: israeli_national_id
+        regex: "\\b\\d{9}\\b"
+        severity: high
+        context_required: true
+      - name: israeli_mobile
+        regex: "\\b05\\d-?\\d{3}-?\\d{4}\\b"
+        severity: high
+      - name: israeli_bank_account
+        regex: "\\b\\d{2}-\\d{3}-\\d{5,6}\\b"
+        severity: high
+        context_required: true
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write scanner file: %v", err)
+	}
+
+	t.Setenv(envOutputScannersPath, path)
+	scanners := loadOutputScanners()
+	pii, ok := scanners["pii"]
+	if !ok || pii == nil {
+		t.Fatalf("expected pii scanner to load")
+	}
+
+	// Simulate the vendor_email output with Israeli PII
+	vendorOutput := `
+PRIMARY DELIVERY CONTACT:
+  Name: Yael Cohen
+  Employee ID (Teudat Zehut): 312456789
+  Mobile: 052-345-6789
+  Email: yael.cohen@example.com
+  Home Address: 45 Herzl St, Apt 3, Raanana 4321001
+
+BILLING RECONCILIATION:
+  Account Holder: Yael Cohen
+  Bank Account: Leumi 12-345-678901
+`
+
+	findings := pii.Scan([]byte(vendorOutput))
+	if len(findings) == 0 {
+		t.Fatalf("expected PII findings in vendor_email-style output, got 0")
+	}
+
+	// Verify we detect at least 3 types: email, phone, national ID
+	foundTypes := map[string]bool{}
+	for _, f := range findings {
+		foundTypes[f.Detail] = true
+	}
+
+	for _, expected := range []string{"email_address", "israeli_mobile"} {
+		found := false
+		for _, f := range findings {
+			if f.Detail == expected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected finding with detail %q, found types: %v", expected, findings)
+		}
+	}
+
+	if len(findings) < 3 {
+		t.Errorf("expected at least 3 PII findings (email, phone, ID/bank), got %d", len(findings))
+	}
+}
+
 func TestCheckOutputDereferencesResultPointer(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {
@@ -226,7 +304,7 @@ func TestCheckOutputDereferencesResultPointer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new redis client: %v", err)
 	}
-	defer resultClient.Close()
+	defer func() { _ = resultClient.Close() }()
 
 	if err := resultClient.Set(context.Background(), "res:job-pointer", []byte("leak AKIA1234567890ABCDEF in text"), 0).Err(); err != nil {
 		t.Fatalf("seed result pointer content: %v", err)

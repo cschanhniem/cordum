@@ -47,7 +47,7 @@ export default function SettingsEnvironmentsPage() {
       {isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}</div>
       ) : !envs?.length ? (
-        <EmptyState icon={<Globe className="w-8 h-8" />} title="No environments" description="Add an environment to connect to a Cordum cluster" />
+        <EmptyState icon={<Globe className="w-8 h-8" />} title="No environments" description="Add an environment to connect to a Cordum cluster" action={<Button variant="outline" size="sm" disabled>Coming soon</Button>} />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {envs.map((env, i) => (
@@ -62,7 +62,7 @@ export default function SettingsEnvironmentsPage() {
               </div>
               <div className="space-y-2 mb-4">
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">URL</span>
+                  <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">URL</span>
                   <div className="flex items-center gap-1">
                     <span className="text-xs font-mono text-foreground">{env.url}</span>
                     <button type="button" onClick={() => { navigator.clipboard.writeText(env.url); toast.success("Copied"); }} className="p-0.5 rounded hover:bg-surface-2">
@@ -71,15 +71,15 @@ export default function SettingsEnvironmentsPage() {
                   </div>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Region</span>
+                  <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Region</span>
                   <span className="text-xs text-foreground">{env.region}</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Version</span>
+                  <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Version</span>
                   <span className="text-xs font-mono text-foreground">{env.version}</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Workers</span>
+                  <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Workers</span>
                   <span className="text-xs text-foreground">{env.workers} connected</span>
                 </div>
               </div>

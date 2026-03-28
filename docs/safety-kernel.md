@@ -306,7 +306,21 @@ In `cmd/cordum-scheduler/main.go`:
 
 When the input circuit is open, the scheduler receives `SafetyUnavailable` decisions instead of blocking on RPC. The input fail mode (`POLICY_CHECK_FAIL_MODE`) then determines whether the job is requeued or allowed through.
 
-## 10. Input Policy Fail Mode
+## 10. Submit-Time Policy Evaluation
+
+Both HTTP and gRPC job submission paths evaluate policy synchronously before persisting any state or publishing to the bus. This happens in the API gateway via `evaluateSubmitPolicy` (`core/controlplane/gateway/helpers.go`).
+
+**Unconditional decisions** (always enforced, regardless of configuration):
+- **Deny**: Job is rejected immediately (HTTP 403 / gRPC PermissionDenied). No state is persisted, no bus publish occurs, no idempotency key is reserved.
+- **Throttle**: Job is rejected with HTTP 429 / gRPC ResourceExhausted and a `Retry-After` header.
+- **Approval required**: Job is created in `APPROVAL` state but NOT published to the bus. The caller receives the job ID and can use the approval endpoint to approve/reject.
+
+**Configuration-dependent** (only consulted when Safety Kernel is unreachable):
+- `GATEWAY_POLICY_FAIL_MODE` controls gateway behavior: `closed` (default) rejects with 403, `open` allows with warning log.
+
+**Denied vs Failed**: Denied is a first-class terminal status distinct from failed. In workflow runs, `StepStatusDenied` propagates to `RunStatusDenied` (not `RunStatusFailed`). The status pipeline reports denied in its own bucket. Denied steps support `on_error` recovery chains.
+
+## 11. Scheduler Input Policy Fail Mode
 
 When the safety kernel is unreachable during pre-dispatch policy checks, the scheduler's behavior is controlled by the `POLICY_CHECK_FAIL_MODE` setting:
 
@@ -323,7 +337,7 @@ When the safety kernel is unreachable during pre-dispatch policy checks, the sch
 
 **Prometheus metric**: `cordum_scheduler_input_fail_open_total` (counter, labels: `topic`) — incremented each time a job is allowed through under fail-open mode. Alert on this metric to detect safety kernel outages that are silently bypassing policy checks.
 
-## 11. Environment Variables
+## 12. Environment Variables
 
 | Variable | Component | Default | Purpose |
 | --- | --- | --- | --- |

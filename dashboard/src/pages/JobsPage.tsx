@@ -4,7 +4,7 @@
  * "Every job row tells the full story: who, what, governance decided, execution result, duration."
  */
 import { useState, useMemo, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { get } from "@/api/client";
@@ -16,12 +16,14 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { Pagination } from "@/components/ui/Pagination";
 import { SkeletonTable } from "@/components/ui/Skeleton";
 import {
   Search, RefreshCw, ListChecks, Plus, Eye, Download,
   ArrowUpDown, ArrowUp, ArrowDown, Shield, X,
 } from "lucide-react";
 import { cn, formatRelativeTime, clickableRowProps } from "@/lib/utils";
+import { friendlyError } from "@/lib/friendlyError";
 import { toast } from "sonner";
 import { useSubmitJob } from "@/hooks/useJobs";
 import { SafetyDecisionBadge } from "@/components/ui/SafetyDecisionBadge";
@@ -32,6 +34,7 @@ function jobStatusVariant(status: string) {
     case "running": return "healthy" as const;
     case "succeeded": return "healthy" as const;
     case "failed": case "failed_fatal": return "danger" as const;
+    case "denied": return "governance" as const;
     case "failed_retryable": return "warning" as const;
     case "pending": case "scheduled": return "warning" as const;
     case "dispatched": return "info" as const;
@@ -71,7 +74,10 @@ function SubmitJobDialog({ open, onClose }: { open: boolean; onClose: () => void
           setPriority("normal");
           if (data.job_id) navigate(`/jobs/${data.job_id}`);
         },
-        onError: (err) => toast.error(`Submission failed: ${err.message}`),
+        onError: (err) => {
+          const friendly = friendlyError(err, "submit job");
+          toast.error(friendly.title, { description: friendly.description });
+        },
       },
     );
   };
@@ -88,16 +94,16 @@ function SubmitJobDialog({ open, onClose }: { open: boolean; onClose: () => void
             className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[91] w-[520px] max-w-[90vw] bg-surface-1 border border-border rounded-xl shadow-2xl"
           >
             <div className="px-6 py-4 border-b border-border flex items-center justify-between">
-              <h3 className="font-display font-semibold text-foreground">Submit Job</h3>
+              <h2 className="font-display font-semibold text-foreground">Submit Job</h2>
               <button type="button" onClick={onClose} className="p-1 rounded hover:bg-surface-2 text-muted-foreground"><X className="w-4 h-4" /></button>
             </div>
             <div className="px-6 py-5 space-y-4">
               <div>
-                <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1">Topic *</label>
+                <label className="text-xs font-mono text-muted-foreground uppercase tracking-wider block mb-1">Topic *</label>
                 <Input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="e.g. job.code-review" />
               </div>
               <div>
-                <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1">Prompt *</label>
+                <label className="text-xs font-mono text-muted-foreground uppercase tracking-wider block mb-1">Prompt *</label>
                 <textarea
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
@@ -107,7 +113,7 @@ function SubmitJobDialog({ open, onClose }: { open: boolean; onClose: () => void
                 />
               </div>
               <div>
-                <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1">Priority</label>
+                <label className="text-xs font-mono text-muted-foreground uppercase tracking-wider block mb-1">Priority</label>
                 <Select
                   value={priority}
                   onChange={(e) => setPriority(e.target.value)}
@@ -148,6 +154,11 @@ export default function JobsPage() {
   const [showSubmit, setShowSubmit] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>("updatedAt");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const page = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10));
+  const [pageSize, setPageSize] = useState(() =>
+    parseInt(localStorage.getItem("cordum-jobs-page-size") ?? "50", 10),
+  );
 
   const { data, isLoading, isError, error, refetch, dataUpdatedAt } = useQuery({
     queryKey: ["jobs"],
@@ -194,6 +205,17 @@ export default function JobsPage() {
       setSortDir("desc");
     }
   }, [sortKey]);
+
+  /** Returns aria + keyboard props for a sortable column header. */
+  const sortableThProps = useCallback((col: SortKey) => ({
+    role: "columnheader" as const,
+    tabIndex: 0,
+    "aria-sort": (sortKey === col ? (sortDir === "asc" ? "ascending" : "descending") : "none") as "ascending" | "descending" | "none",
+    onClick: () => toggleSort(col),
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleSort(col); }
+    },
+  }), [sortKey, sortDir, toggleSort]);
 
   const filtered = useMemo(() => {
     let result = enrichedJobs.filter((j) => {
@@ -245,6 +267,49 @@ export default function JobsPage() {
     return result;
   }, [enrichedJobs, activeTab, safetyFilter, search, sortKey, sortDir]);
 
+  // Pagination — clamp page if filtered set shrinks
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const startIdx = (safePage - 1) * pageSize;
+  const paginatedJobs = useMemo(
+    () => filtered.slice(startIdx, startIdx + pageSize),
+    [filtered, startIdx, pageSize],
+  );
+
+  const handlePageChange = useCallback(
+    (p: number) => {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        if (p <= 1) next.delete("page");
+        else next.set("page", String(p));
+        return next;
+      }, { replace: true });
+    },
+    [setSearchParams],
+  );
+
+  const handlePageSizeChange = useCallback(
+    (size: number) => {
+      setPageSize(size);
+      localStorage.setItem("cordum-jobs-page-size", String(size));
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("page");
+        return next;
+      }, { replace: true });
+    },
+    [setSearchParams],
+  );
+
+  // Reset page when filters change
+  const setActiveTabAndResetPage = useCallback(
+    (tab: string) => {
+      setActiveTab(tab);
+      handlePageChange(1);
+    },
+    [handlePageChange],
+  );
+
   const exportCSV = () => {
     const rows = filtered.map((j) =>
       [j.id, j.status, j.topic ?? "", j._safetyDecision ?? "", j._matchedRules.join(";"), j.attempts ?? 0, j.updatedAt ?? ""].join(",")
@@ -280,7 +345,7 @@ export default function JobsPage() {
         actions={
           <div className="flex items-center gap-2">
             {lastUpdated && (
-              <span className="text-[10px] font-mono text-muted-foreground hidden md:inline">
+              <span className="text-xs font-mono text-muted-foreground hidden md:inline">
                 Updated {formatRelativeTime(lastUpdated.toISOString())}
               </span>
             )}
@@ -316,7 +381,7 @@ export default function JobsPage() {
           {tabs.map((tab) => (
             <button type="button"
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => setActiveTabAndResetPage(tab.id)}
               className={cn(
                 "px-3 py-1.5 text-xs font-medium rounded transition-colors",
                 activeTab === tab.id
@@ -326,7 +391,7 @@ export default function JobsPage() {
             >
               {tab.label}
               {tab.count > 0 && (
-                <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-surface-2">{tab.count}</span>
+                <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-xs font-mono bg-surface-2">{tab.count}</span>
               )}
             </button>
           ))}
@@ -336,14 +401,14 @@ export default function JobsPage() {
       {/* Safety Decision Filter */}
       <div className="flex items-center gap-2">
         <Shield className="w-3.5 h-3.5 text-muted-foreground" />
-        <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">Safety:</span>
+        <span className="text-xs font-mono text-muted-foreground uppercase tracking-widest">Safety:</span>
         <div className="flex items-center gap-1">
           {safetyTabs.map((tab) => (
             <button type="button"
               key={tab.id}
               onClick={() => setSafetyFilter(tab.id)}
               className={cn(
-                "px-2.5 py-1 text-[11px] font-medium rounded transition-colors",
+                "px-2.5 py-1 text-xs font-medium rounded transition-colors",
                 safetyFilter === tab.id
                   ? "bg-surface-2 text-foreground border border-border"
                   : "text-muted-foreground hover:text-foreground",
@@ -364,12 +429,19 @@ export default function JobsPage() {
         <EmptyState
           icon={<ListChecks className="w-5 h-5" />}
           title="No jobs found"
-          description={search ? "Try adjusting your search or filters" : "No jobs have been submitted yet"}
+          description={search || activeTab !== "all" || safetyFilter !== "all" ? "Try adjusting your search or filters" : "No jobs have been submitted yet"}
           action={
-            <Button variant="primary" size="sm" onClick={() => setShowSubmit(true)}>
-              <Plus className="w-3 h-3 mr-1" />
-              Submit Job
-            </Button>
+            search || activeTab !== "all" || safetyFilter !== "all" ? (
+              <Button variant="ghost" size="sm" onClick={() => { setSearch(""); setActiveTabAndResetPage("all"); setSafetyFilter("all"); }}>
+                <X className="w-3 h-3 mr-1" />
+                Clear all filters
+              </Button>
+            ) : (
+              <Button variant="primary" size="sm" onClick={() => setShowSubmit(true)}>
+                <Plus className="w-3 h-3 mr-1" />
+                Submit Job
+              </Button>
+            )
           }
         />
       ) : (
@@ -383,67 +455,57 @@ export default function JobsPage() {
           <table className="w-full min-w-[800px]">
             <thead>
               <tr className="border-b border-border bg-surface-0">
-                <th
-                  className="text-left px-5 py-2.5 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors"
-                  onClick={() => toggleSort("status")}
-                >
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors" {...sortableThProps("status")}>
                   <span className="inline-flex items-center">Status <SortIcon col="status" /></span>
                 </th>
-                <th
-                  className="text-left px-5 py-2.5 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors"
-                  onClick={() => toggleSort("id")}
-                >
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors" {...sortableThProps("id")}>
                   <span className="inline-flex items-center">Job ID <SortIcon col="id" /></span>
                 </th>
-                <th
-                  className="text-left px-5 py-2.5 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors"
-                  onClick={() => toggleSort("topic")}
-                >
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors" {...sortableThProps("topic")}>
                   <span className="inline-flex items-center">Topic <SortIcon col="topic" /></span>
                 </th>
-                <th
-                  className="text-left px-5 py-2.5 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors"
-                  onClick={() => toggleSort("safety")}
-                >
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors" {...sortableThProps("safety")}>
                   <span className="inline-flex items-center">Safety Decision <SortIcon col="safety" /></span>
                 </th>
-                <th
-                  className="text-center px-5 py-2.5 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors"
-                  onClick={() => toggleSort("attempts")}
-                >
+                <th className="text-center px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors" {...sortableThProps("attempts")}>
                   <span className="inline-flex items-center justify-center">Attempts <SortIcon col="attempts" /></span>
                 </th>
                 <th
-                  className="text-right px-5 py-2.5 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors"
+                  className="text-right px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors"
                   onClick={() => toggleSort("updatedAt")}
                 >
                   <span className="inline-flex items-center justify-end">Updated <SortIcon col="updatedAt" /></span>
                 </th>
-                <th className="px-5 py-2.5"></th>
+                <th className="px-5 py-3"></th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((job) => (
+              {paginatedJobs.map((job) => (
                 <tr
                   key={job.id}
                   {...clickableRowProps(() => navigate(`/jobs/${job.id}`))}
                   className="border-b border-border hover:bg-surface-1 transition-colors cursor-pointer group"
                 >
-                  <td className="px-5 py-2.5">
+                  <td className="px-5 py-3">
                     <StatusBadge variant={jobStatusVariant(job.status)} dot pulse={job.status === "running"}>
                       {job.status}
                     </StatusBadge>
+                    {job.labels?.safety_bypassed === "true" && (
+                      <span className="ml-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-mono font-medium bg-[var(--color-warning)]/15 text-[var(--color-warning)] border border-[var(--color-warning)]/20" title="Safety bypassed via fail-open">
+                        Bypassed
+                      </span>
+                    )}
                   </td>
-                  <td className="px-5 py-2.5 font-mono text-sm text-cordum group-hover:underline">{job.id.slice(0, 16)}</td>
-                  <td className="px-5 py-2.5 text-sm text-foreground">{job.topic || "—"}</td>
-                  <td className="px-5 py-2.5">
+                  <td className="px-5 py-3 font-mono text-sm text-cordum group-hover:underline">{job.id.slice(0, 16)}</td>
+                  <td className="px-5 py-3 text-sm text-foreground">{job.topic || "—"}</td>
+                  <td className="px-5 py-3">
                     <SafetyDecisionBadge decision={job._safetyDecision} matchedRules={job._matchedRules} />
                   </td>
-                  <td className="px-5 py-2.5 text-center font-mono text-xs text-muted-foreground">{job.attempts ?? 0}</td>
-                  <td className="px-5 py-2.5 text-right text-xs text-muted-foreground font-mono">
+                  <td className="px-5 py-3 text-center font-mono text-xs text-muted-foreground">{job.attempts ?? 0}</td>
+                  <td className="px-5 py-3 text-right text-xs text-muted-foreground font-mono">
                     {job.updatedAt ? formatRelativeTime(new Date(job.updatedAt).toISOString()) : "—"}
                   </td>
-                  <td className="px-5 py-2.5">
+                  <td className="px-5 py-3">
                     <button type="button" className="p-1 rounded hover:bg-surface-2 transition-colors" aria-label="View details">
                       <Eye className="w-3.5 h-3.5 text-muted-foreground" />
                     </button>
@@ -453,12 +515,18 @@ export default function JobsPage() {
             </tbody>
           </table>
           </div>
-          <div className="flex items-center justify-between px-5 py-2.5 border-t border-border bg-surface-0">
-            <span className="text-xs font-mono text-muted-foreground">
-              Showing {filtered.length} of {enrichedJobs.length} jobs
-            </span>
-            <span className="text-[10px] font-mono text-muted-foreground">
-              Sorted by {sortKey} ({sortDir})
+          <div className="px-5 py-2 border-t border-border bg-surface-0">
+            <Pagination
+              page={safePage}
+              pageSize={pageSize}
+              total={filtered.length}
+              onPageChange={handlePageChange}
+              onPageSizeChange={handlePageSizeChange}
+            />
+          </div>
+          <div className="flex items-center justify-between px-5 py-2 text-xs font-mono text-muted-foreground">
+            <span>
+              {filtered.length} of {enrichedJobs.length} jobs (sorted by {sortKey} {sortDir})
             </span>
           </div>
         </motion.div>

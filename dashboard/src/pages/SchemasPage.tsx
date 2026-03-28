@@ -51,15 +51,15 @@ export default function SchemasPage() {
           <p className="text-sm text-destructive">Failed to load schemas</p>
         </div>
       ) : filtered.length === 0 ? (
-        <EmptyState icon={<FileJson className="w-8 h-8" />} title="No schemas found" description="Register a schema to define data contracts" />
+        <EmptyState icon={<FileJson className="w-8 h-8" />} title="No schemas found" description="Register a JSON Schema to define data contracts for job inputs and outputs" action={<Button variant="primary" size="sm" onClick={() => navigate("/schemas/new")}><Plus className="w-3 h-3 mr-1" />Register schema</Button>} />
       ) : (
         <div className="instrument-card overflow-hidden">
           <div className="overflow-x-auto">
           <table className="w-full text-sm min-w-[400px]">
             <thead>
               <tr className="border-b border-border bg-surface-0">
-                <th className="text-left px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Name</th>
-                <th className="text-left px-4 py-3 text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Fields</th>
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Name</th>
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Fields</th>
               </tr>
             </thead>
             <tbody>
@@ -72,13 +72,13 @@ export default function SchemasPage() {
                   onClick={() => navigate(`/schemas/${schema.id}`)}
                   className="border-b border-border last:border-0 hover:bg-surface-1 cursor-pointer transition-colors"
                 >
-                  <td className="px-4 py-3">
+                  <td className="px-5 py-3">
                     <div className="flex items-center gap-2">
                       <FileJson className="w-3.5 h-3.5 text-cordum" />
                       <span className="font-medium text-foreground">{schema.name ?? schema.id}</span>
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-xs text-muted-foreground">{schema.fields?.length ?? 0} fields</td>
+                  <td className="px-5 py-3 text-xs text-muted-foreground">{schema.fields?.length ?? 0} fields</td>
                 </motion.tr>
               ))}
             </tbody>

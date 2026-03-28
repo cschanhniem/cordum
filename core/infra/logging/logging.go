@@ -37,36 +37,6 @@ func Logger(component string) *slog.Logger {
 	return slog.New(newHandler(component, os.Stderr))
 }
 
-// ---------- backward-compat wrappers (task rail: keep until task 3 migration) ----------
-
-// Info logs at INFO level through slog.Default().
-func Info(component, msg string, kv ...any) {
-	logCompat(slog.LevelInfo, component, msg, kv...)
-}
-
-// Warn logs at WARN level through slog.Default().
-func Warn(component, msg string, kv ...any) {
-	logCompat(slog.LevelWarn, component, msg, kv...)
-}
-
-// Error logs at ERROR level through slog.Default().
-func Error(component, msg string, kv ...any) {
-	logCompat(slog.LevelError, component, msg, kv...)
-}
-
-// logCompat routes a legacy-signature call through the current default handler,
-// overriding the component to match the caller's intent without producing
-// duplicate component fields.
-func logCompat(level slog.Level, component, msg string, kv ...any) {
-	h := slog.Default().Handler()
-	if rh, ok := h.(*RedactingHandler); ok {
-		slog.New(rh.withComponent(component)).Log(context.Background(), level, msg, kv...)
-		return
-	}
-	// Fallback for non-RedactingHandler (e.g., default slog before Init is called).
-	slog.Default().With("component", component).Log(context.Background(), level, msg, kv...)
-}
-
 // ---------- handler construction ----------
 
 func newHandler(component string, w io.Writer) *RedactingHandler {
@@ -235,22 +205,6 @@ func (h *RedactingHandler) WithGroup(name string) slog.Handler {
 		writer:    h.writer,
 		preAttrs:  cloneAttrs(h.preAttrs),
 		groups:    append(cloneStrings(h.groups), name),
-		mu:        h.mu,
-	}
-}
-
-// withComponent returns a shallow copy with a different component name.
-// Used by backward-compat wrappers to override component without producing
-// duplicate component fields.
-func (h *RedactingHandler) withComponent(c string) *RedactingHandler {
-	return &RedactingHandler{
-		inner:     h.inner,
-		level:     h.level,
-		component: c,
-		format:    h.format,
-		writer:    h.writer,
-		preAttrs:  cloneAttrs(h.preAttrs),
-		groups:    cloneStrings(h.groups),
 		mu:        h.mu,
 	}
 }

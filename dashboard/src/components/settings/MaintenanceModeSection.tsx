@@ -14,7 +14,7 @@ import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
 import { Textarea } from "../ui/Textarea";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
-import { cn } from "../../lib/utils";
+import { cn, formatDuration } from "../../lib/utils";
 import { useGeneralConfig, useSetGeneralConfig } from "../../hooks/useSettings";
 import type {
   GeneralConfig,
@@ -37,13 +37,6 @@ function formatElapsed(startIso: string): string {
   return `${days}d ${hrs % 24}h`;
 }
 
-function formatDuration(ms: number): string {
-  const mins = Math.round(ms / 60_000);
-  if (mins < 60) return `${mins}m`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ${mins % 60}m`;
-  return `${Math.floor(hrs / 24)}d ${hrs % 24}h`;
-}
 
 function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
@@ -258,7 +251,7 @@ export function MaintenanceModeSection() {
                   </span>
                   {s.message && <span className="ml-2 text-muted-foreground">"{s.message}"</span>}
                   {s.recurring && (
-                    <Badge variant="info" className="ml-2 text-[10px]">
+                    <Badge variant="info" className="ml-2 text-xs">
                       Recurring: {s.recurring.daysOfWeek.map((d) => DAY_LABELS[d]).join(", ")}
                     </Badge>
                   )}
@@ -282,7 +275,7 @@ export function MaintenanceModeSection() {
               <p className="text-xs font-semibold text-ink">Schedule New Window</p>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div className="space-y-1">
-                  <label className="text-[10px] font-semibold text-muted-foreground">Start</label>
+                  <label className="text-xs font-semibold text-muted-foreground">Start</label>
                   <Input
                     type="datetime-local"
                     value={schedStart}
@@ -291,7 +284,7 @@ export function MaintenanceModeSection() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-semibold text-muted-foreground">End</label>
+                  <label className="text-xs font-semibold text-muted-foreground">End</label>
                   <Input
                     type="datetime-local"
                     value={schedEnd}

@@ -16,6 +16,7 @@ interface Notification {
 }
 
 function eventTypeToNotifType(eventType: string): Notification["type"] {
+  if (eventType.includes("denied") || eventType.includes("quarantine")) return "warning";
   if (eventType.includes("failed") || eventType.includes("error") || eventType.includes("cancel")) return "error";
   if (eventType.includes("safety") || eventType.includes("approval") || eventType.includes("alert")) return "warning";
   if (eventType.includes("succeeded") || eventType.includes("completed")) return "success";
@@ -23,6 +24,8 @@ function eventTypeToNotifType(eventType: string): Notification["type"] {
 }
 
 function eventTypeToTitle(eventType: string): string {
+  if (eventType.startsWith("job.result.denied")) return "Job Denied";
+  if (eventType.startsWith("job.result.quarantined") || eventType.includes("quarantine")) return "Job Quarantined";
   if (eventType.startsWith("job.result.failed")) return "Job Failed";
   if (eventType.startsWith("job.result.succeeded")) return "Job Succeeded";
   if (eventType.startsWith("job.result")) return "Job Result";
@@ -148,7 +151,7 @@ export function NotificationPopover() {
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-display font-semibold text-foreground">Notifications</h3>
                 {unreadCount > 0 && (
-                  <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-cordum/20 text-cordum text-[10px] font-mono font-bold">
+                  <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-cordum/20 text-cordum text-xs font-mono font-bold">
                     {unreadCount}
                   </span>
                 )}
@@ -156,7 +159,7 @@ export function NotificationPopover() {
               {unreadCount > 0 && (
                 <button type="button"
                   onClick={markAllRead}
-                  className="flex items-center gap-1 text-[11px] text-cordum hover:text-cordum-bright transition-colors"
+                  className="flex items-center gap-1 text-xs text-cordum hover:text-cordum-bright transition-colors"
                 >
                   <Check className="w-3 h-3" />
                   Mark all read
@@ -199,8 +202,8 @@ export function NotificationPopover() {
                             <X className="w-3 h-3" />
                           </button>
                         </div>
-                        <p className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2">{notif.message}</p>
-                        <p className="text-[10px] text-muted-foreground/60 font-mono mt-1">{formatRelativeTime(notif.timestamp)}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{notif.message}</p>
+                        <p className="text-xs text-muted-foreground/60 font-mono mt-1">{formatRelativeTime(notif.timestamp)}</p>
                       </div>
                     </div>
                   );
@@ -212,7 +215,7 @@ export function NotificationPopover() {
             <div className="px-4 py-2.5 border-t border-border">
               <button type="button"
                 onClick={() => { setOpen(false); navigate("/audit"); }}
-                className="w-full text-center text-[11px] text-cordum hover:text-cordum-bright transition-colors font-medium"
+                className="w-full text-center text-xs text-cordum hover:text-cordum-bright transition-colors font-medium"
               >
                 View all notifications
               </button>

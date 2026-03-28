@@ -1279,13 +1279,17 @@ func (s *RedisJobStore) SetSafetyDecision(ctx context.Context, jobID string, rec
 			remediationsJSON = string(data)
 		}
 	}
+	approvalStr := ""
+	if record.ApprovalRequired {
+		approvalStr = "true"
+	}
 	fields := map[string]any{
 		metaFieldSafetyDecision:   string(record.Decision),
 		metaFieldSafetyReason:     record.Reason,
 		metaFieldSafetyRuleID:     record.RuleID,
 		metaFieldSafetySnapshot:   record.PolicySnapshot,
 		metaFieldSafetyChecked:    record.CheckedAt,
-		metaFieldApprovalRequired: record.ApprovalRequired,
+		metaFieldApprovalRequired: approvalStr,
 		metaFieldApprovalRef:      record.ApprovalRef,
 	}
 	if record.JobHash != "" {

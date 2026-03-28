@@ -5,12 +5,12 @@ import { useConfigStore, registerQueryClient } from "./state/config";
 import { useEventStore } from "./state/events";
 
 describe("App policy route redirects", () => {
-  it("redirects legacy /policies/builder route to govern input rules", () => {
-    expect(LEGACY_POLICY_ROUTE_REDIRECTS.builder).toBe("/govern/input-rules");
+  it("redirects legacy /policies/builder route to govern overview", () => {
+    expect(LEGACY_POLICY_ROUTE_REDIRECTS.builder).toBe("/govern/overview");
   });
 
-  it("uses /govern/input-rules as the default legacy /policies target", () => {
-    expect(LEGACY_POLICY_ROUTE_REDIRECTS.root).toBe("/govern/input-rules");
+  it("uses /govern/overview as the default legacy /policies target", () => {
+    expect(LEGACY_POLICY_ROUTE_REDIRECTS.root).toBe("/govern/overview");
   });
 
   it("keeps all legacy policy redirects on /govern routes to prevent redirect loops", () => {
@@ -42,11 +42,11 @@ describe("Command palette navigation integrity", () => {
     );
     const paths = governCommands.map((c) => c.path).sort();
     expect(paths).toEqual([
-      "/govern/bundles",
-      "/govern/input-rules",
-      "/govern/output-rules",
+      "/govern/overview?tab=bundles",
+      "/govern/overview?tab=input-rules",
+      "/govern/overview?tab=output-rules",
+      "/govern/overview?tab=simulator",
       "/govern/quarantine",
-      "/govern/simulator",
       "/govern/tenants",
     ]);
   });

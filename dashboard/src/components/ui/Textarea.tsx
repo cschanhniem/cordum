@@ -3,9 +3,13 @@ import { cn } from "../../lib/utils";
 
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(
   ({ className, ...props }, ref) => {
+    const effectiveAriaLabel =
+      props["aria-label"] ?? (props.id ? undefined : props.placeholder);
+
     return (
       <textarea
         ref={ref}
+        aria-label={effectiveAriaLabel}
         className={cn(
           "w-full rounded-2xl border border-border bg-card/70 px-4 py-3 text-sm text-ink shadow-sm transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] placeholder:text-muted/60 hover:border-[color:rgba(15,127,122,0.4)] hover:shadow-soft focus:outline-none focus:border-accent focus:ring-2 focus:ring-[color:var(--ring)] resize-y",
           className

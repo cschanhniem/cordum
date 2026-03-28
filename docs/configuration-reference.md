@@ -719,10 +719,13 @@ Invalid values (non-numeric, zero, negative) are silently replaced with defaults
 | `GATEWAY_HTTP_TLS_KEY` | — | HTTP TLS private key path |
 | `GRPC_TLS_CERT` | — | gRPC TLS certificate path |
 | `GRPC_TLS_KEY` | — | gRPC TLS private key path |
+| `GATEWAY_MAX_JOB_PAYLOAD_BYTES` | `2097152` (2 MB) | Max job submission payload size in bytes |
+| `GATEWAY_MAX_BODY_BYTES` | `1048576` (1 MB) | Max HTTP request body size in bytes |
 | `GATEWAY_MAX_JSON_BODY_BYTES` | — | Max JSON request body size |
 | `TENANT_ID` | — | Single-tenant default ID |
 | `ARTIFACT_MAX_BYTES` | — | Max artifact upload/download size |
 | `WORKFLOW_FOREACH_MAX_ITEMS` | — | Max items in workflow for-each expansion |
+| `GATEWAY_POLICY_FAIL_MODE` | `closed` | Behavior when Safety Kernel is unreachable during submit-time policy evaluation. `closed` (default): reject the job with 403/PermissionDenied. `open`: allow the job through with warning log. This controls only the safety-unavailable branch — normal policy deny/throttle/approval decisions are unconditional. |
 
 ### Gateway — API Keys
 

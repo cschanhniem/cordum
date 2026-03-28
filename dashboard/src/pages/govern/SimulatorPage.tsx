@@ -52,7 +52,7 @@ export function parseSimulatorQueryParams(
   return result;
 }
 
-export default function SimulatorPage() {
+export default function SimulatorPage({ hideHeader }: { hideHeader?: boolean } = {}) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const prefill = useMemo(() => parseSimulatorQueryParams(searchParams), [searchParams]);
@@ -123,7 +123,7 @@ export default function SimulatorPage() {
   if (isLoading && bundles.length === 0) {
     return (
       <div className="space-y-6">
-        <PageHeader label="Govern" title="Simulator" subtitle="Loading simulation context..." />
+        {!hideHeader && <PageHeader label="Govern" title="Simulator" subtitle="Loading simulation context..." />}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <SkeletonCard />
           <SkeletonCard />
@@ -135,14 +135,14 @@ export default function SimulatorPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
+      {!hideHeader && <PageHeader
         label="Govern"
         title="Simulator"
         subtitle="Dry-run policy evaluation against bundles and rules. Select a bundle, configure a test payload, and inspect the evaluation chain."
         actions={
           <StatusBadge variant="info">all roles</StatusBadge>
         }
-      />
+      />}
 
       {loadError && (
         <InfoBanner variant="error" title="Unable to load simulation context">
@@ -168,7 +168,7 @@ export default function SimulatorPage() {
           title="No bundles available for simulation"
           description="At least one policy bundle is required before running a simulation."
           action={
-            <Button variant="outline" size="sm" onClick={() => navigate("/govern/bundles")}>
+            <Button variant="outline" size="sm" onClick={() => navigate("/govern/overview?tab=bundles")}>
               Review bundles
             </Button>
           }

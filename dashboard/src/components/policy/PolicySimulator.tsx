@@ -37,9 +37,9 @@ const decisionColor: Record<string, string> = {
   throttle: "border-info bg-[color:rgba(59,130,246,0.08)]",
 };
 
-const decisionBadge: Record<string, "success" | "danger" | "warning" | "info" | "default"> = {
+const decisionBadge: Record<string, "success" | "governance" | "warning" | "info" | "default"> = {
   allow: "success",
-  deny: "danger",
+  deny: "governance",
   require_approval: "warning",
   throttle: "info",
 };
@@ -237,7 +237,7 @@ function DenySuggestionCard({
 
         {result.matchedRule && (
           <Link
-            to={`/policies/rules?highlight=${encodeURIComponent(result.matchedRule)}`}
+            to={`/govern/overview?tab=input-rules&highlight=${encodeURIComponent(result.matchedRule)}`}
             className="inline-flex items-center gap-1.5 text-xs font-semibold text-accent hover:underline"
           >
             <Pencil className="h-3.5 w-3.5" />
@@ -317,7 +317,7 @@ function EvaluationWaterfall({
           >
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <span className="font-mono text-[10px] text-muted-foreground">
+                <span className="font-mono text-xs text-muted-foreground">
                   #{i + 1}
                 </span>
                 <span className={cn("text-sm font-medium", isDisabled ? "text-muted-foreground line-through" : "text-ink")}>

@@ -6,6 +6,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cordum/cordum/core/infra/maputil"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -180,8 +181,8 @@ func depsSatisfied(step *Step, run *WorkflowRun, wfDef *Workflow) bool {
 		if sr.Status == StepStatusSucceeded {
 			continue
 		}
-		// A failed or timed-out dependency is satisfied if its on_error handler succeeded.
-		if (sr.Status == StepStatusFailed || sr.Status == StepStatusTimedOut) && wfDef != nil {
+		// A failed, denied, or timed-out dependency is satisfied if its on_error handler succeeded.
+		if (sr.Status == StepStatusFailed || sr.Status == StepStatusDenied || sr.Status == StepStatusTimedOut) && wfDef != nil {
 			depDef := wfDef.Steps[dep]
 			if depDef != nil && depDef.OnError != "" {
 				handlerSR := run.Steps[depDef.OnError]
@@ -362,7 +363,7 @@ func parsePositiveInt(value any) (int, error) {
 
 func isTerminalStepStatus(status StepStatus) bool {
 	switch status {
-	case StepStatusSucceeded, StepStatusFailed, StepStatusCancelled, StepStatusTimedOut:
+	case StepStatusSucceeded, StepStatusFailed, StepStatusDenied, StepStatusCancelled, StepStatusTimedOut:
 		return true
 	default:
 		return false
@@ -383,7 +384,7 @@ func parseAttempt(jobID string) int {
 
 func isTerminalRunStatus(status RunStatus) bool {
 	switch status {
-	case RunStatusSucceeded, RunStatusFailed, RunStatusCancelled, RunStatusTimedOut:
+	case RunStatusSucceeded, RunStatusFailed, RunStatusDenied, RunStatusCancelled, RunStatusTimedOut:
 		return true
 	default:
 		return false
@@ -393,4 +394,50 @@ func isTerminalRunStatus(status RunStatus) bool {
 // IsTerminalRunStatus reports whether a run status is terminal (exported for gateway use).
 func IsTerminalRunStatus(status RunStatus) bool {
 	return isTerminalRunStatus(status)
+}
+
+// skipDependentSteps cascades StepStatusSkipped to all steps that depend
+// (directly or transitively) on the given failed step. Steps already in a
+// terminal state are not modified. Uses a visited set to prevent cycles.
+func skipDependentSteps(wfDef *Workflow, run *WorkflowRun, failedStepID string) {
+	if wfDef == nil || run == nil {
+		return
+	}
+	visited := map[string]bool{failedStepID: true}
+	var cascade func(depID string)
+	cascade = func(depID string) {
+		now := time.Now()
+		for stepID, stepDef := range wfDef.Steps {
+			if visited[stepID] {
+				continue
+			}
+			if stepDef == nil {
+				continue
+			}
+			dependsOn := false
+			for _, dep := range stepDef.DependsOn {
+				if dep == depID {
+					dependsOn = true
+					break
+				}
+			}
+			if !dependsOn {
+				continue
+			}
+			sr := run.Steps[stepID]
+			if sr == nil {
+				continue
+			}
+			// Only skip pending steps — terminal steps are already resolved
+			if sr.Status != StepStatusPending {
+				continue
+			}
+			sr.Status = StepStatusSkipped
+			sr.SkipReason = fmt.Sprintf("dependency %s failed", failedStepID)
+			sr.CompletedAt = &now
+			visited[stepID] = true
+			cascade(stepID) // transitive
+		}
+	}
+	cascade(failedStepID)
 }

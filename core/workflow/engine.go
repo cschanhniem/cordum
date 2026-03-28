@@ -17,9 +17,22 @@ import (
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+// Prometheus metrics for workflow lock observability.
+var lockFallbackTotal = prometheus.NewCounter(prometheus.CounterOpts{
+	Namespace: "cordum",
+	Subsystem: "workflow",
+	Name:      "lock_fallback_total",
+	Help:      "Number of times distributed lock acquisition failed and fell back to local-only locking.",
+})
+
+func init() {
+	prometheus.MustRegister(lockFallbackTotal)
+}
 
 // Engine coordinates workflow runs, dispatching steps as jobs and updating run state.
 type Engine struct {
@@ -64,6 +77,7 @@ type lockManager struct {
 	mu     sync.Mutex
 	locks  map[string]*runLock
 	locker RunLocker // optional distributed lock; nil = local-only
+	ctx    context.Context // engine lifecycle context; renewal goroutines derive from this
 }
 
 type runLock struct {
@@ -98,12 +112,13 @@ func (lm *lockManager) acquire(runID string) (func(), bool) {
 	var renewDone chan struct{}
 	if lm.locker != nil {
 		key := runLockKey(runID)
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(lm.ctx, 2*time.Second)
 		token, err := lm.locker.TryAcquireLock(ctx, key, runLockTTL)
 		cancel()
 		if err != nil {
-			slog.Warn("distributed run lock acquire failed, using local-only",
-				"run_id", runID, "error", err)
+			lockFallbackTotal.Inc()
+			slog.Error("distributed lock failed — using local-only lock, cross-replica race possible",
+				"component", "workflow", "run_id", runID, "error", err)
 		} else if token == "" {
 			// Another replica holds the lock — skip this run.
 			lock.mu.Unlock()
@@ -119,7 +134,7 @@ func (lm *lockManager) acquire(runID string) (func(), bool) {
 			// Start renewal goroutine if the locker supports it.
 			if renewer, ok := lm.locker.(RunLockRenewer); ok {
 				var renewCtx context.Context
-				renewCtx, renewCancel = context.WithCancel(context.Background()) // #nosec G118 -- renewCancel called in deferred cleanup
+				renewCtx, renewCancel = context.WithCancel(lm.ctx) // derives from engine context; stops renewal on shutdown
 				renewDone = make(chan struct{})
 				go func() {
 					defer close(renewDone)
@@ -130,7 +145,7 @@ func (lm *lockManager) acquire(runID string) (func(), bool) {
 						case <-renewCtx.Done():
 							return
 						case <-ticker.C:
-							rCtx, rCancel := context.WithTimeout(context.Background(), 2*time.Second)
+							rCtx, rCancel := context.WithTimeout(renewCtx, 2*time.Second)
 							if err := renewer.RenewLock(rCtx, key, token, runLockTTL); err != nil {
 								slog.Warn("run lock renewal failed",
 									"run_id", runID, "error", err)
@@ -202,7 +217,7 @@ func NewEngine(store *RedisStore, bus model.Bus) *Engine {
 		store:           store,
 		bus:             bus,
 		maxForEachItems: defaultMaxForEachItems,
-		lockMgr:         lockManager{locks: make(map[string]*runLock)},
+		lockMgr:         lockManager{locks: make(map[string]*runLock), ctx: context.Background()},
 	}
 }
 
@@ -227,6 +242,14 @@ func (e *Engine) WithSchemaRegistry(registry *schemas.Registry) *Engine {
 // WithOutputSafety sets an optional output safety checker for inter-step policy enforcement.
 func (e *Engine) WithOutputSafety(c model.OutputSafetyChecker) *Engine {
 	e.outputSafety = c
+	return e
+}
+
+// WithContext sets the parent context for the lock manager. Cancelling this
+// context stops all lock renewal goroutines, preventing Redis ops after shutdown.
+// If not called, defaults to context.Background().
+func (e *Engine) WithContext(ctx context.Context) *Engine {
+	e.lockMgr.ctx = ctx
 	return e
 }
 
@@ -281,7 +304,7 @@ func (e *Engine) HandleJobResult(ctx context.Context, res *pb.JobResult) error {
 		return fmt.Errorf("get run %s: %w", runID, err)
 	}
 	switch run.Status {
-	case RunStatusSucceeded, RunStatusFailed, RunStatusCancelled, RunStatusTimedOut:
+	case RunStatusSucceeded, RunStatusFailed, RunStatusDenied, RunStatusCancelled, RunStatusTimedOut:
 		e.markRunTerminal(run.ID)
 		return nil
 	}
@@ -340,7 +363,7 @@ func (e *Engine) HandleJobResult(ctx context.Context, res *pb.JobResult) error {
 				e.appendTimeline(ctx, run, "step_output_invalid", stepID, res.JobId, string(child.Status), res.ResultPtr, err.Error(), nil)
 			}
 		}
-		if !retry && (child.Status == StepStatusSucceeded || child.Status == StepStatusFailed || child.Status == StepStatusCancelled || child.Status == StepStatusTimedOut) {
+		if !retry && (child.Status == StepStatusSucceeded || child.Status == StepStatusFailed || child.Status == StepStatusDenied || child.Status == StepStatusCancelled || child.Status == StepStatusTimedOut) {
 			e.appendTimeline(ctx, run, "step_completed", stepID, res.JobId, string(child.Status), res.ResultPtr, res.ErrorMessage, nil)
 		}
 		if !retry && child.Status == StepStatusSucceeded && res.ResultPtr != "" {
@@ -356,22 +379,22 @@ func (e *Engine) HandleJobResult(ctx context.Context, res *pb.JobResult) error {
 			parent.CompletedAt = nil
 		} else {
 			parent.Status = aggregateChildren(parent)
-			if parent.Status == StepStatusSucceeded || parent.Status == StepStatusFailed || parent.Status == StepStatusTimedOut {
+			if parent.Status == StepStatusSucceeded || parent.Status == StepStatusFailed || parent.Status == StepStatusDenied || parent.Status == StepStatusTimedOut {
 				parent.CompletedAt = &now
 			}
 		}
-		// Cancel running/pending forEach siblings when parent fails or times out.
-		if (parent.Status == StepStatusFailed || parent.Status == StepStatusTimedOut) && stepDef != nil && stepDef.ForEach != "" {
+		// Cancel running/pending forEach siblings when parent fails, is denied, or times out.
+		if (parent.Status == StepStatusFailed || parent.Status == StepStatusDenied || parent.Status == StepStatusTimedOut) && stepDef != nil && stepDef.ForEach != "" {
 			e.cancelForEachSiblings(ctx, run, parent, now)
 		}
 		run.Steps[baseStepID] = parent
-		if parent.Status == StepStatusFailed || parent.Status == StepStatusTimedOut {
+		if parent.Status == StepStatusFailed || parent.Status == StepStatusDenied || parent.Status == StepStatusTimedOut {
 			e.activateOnErrorHandler(ctx, run, wfDef, baseStepID, parent, now)
 		}
 		if retry && delay > 0 {
 			e.scheduleAfter(delay, run.WorkflowID, run.ID)
 		}
-		if e.OnStepFinished != nil && !retry && (child.Status == StepStatusSucceeded || child.Status == StepStatusFailed || child.Status == StepStatusCancelled || child.Status == StepStatusTimedOut) {
+		if e.OnStepFinished != nil && !retry && (child.Status == StepStatusSucceeded || child.Status == StepStatusFailed || child.Status == StepStatusDenied || child.Status == StepStatusCancelled || child.Status == StepStatusTimedOut) {
 			e.OnStepFinished(run.ID, stepID, child.Status)
 		}
 	} else {
@@ -400,7 +423,7 @@ func (e *Engine) HandleJobResult(ctx context.Context, res *pb.JobResult) error {
 				e.appendTimeline(ctx, run, "step_output_invalid", stepID, res.JobId, string(stepRun.Status), res.ResultPtr, err.Error(), nil)
 			}
 		}
-		if !retry && (stepRun.Status == StepStatusSucceeded || stepRun.Status == StepStatusFailed || stepRun.Status == StepStatusCancelled || stepRun.Status == StepStatusTimedOut) {
+		if !retry && (stepRun.Status == StepStatusSucceeded || stepRun.Status == StepStatusFailed || stepRun.Status == StepStatusDenied || stepRun.Status == StepStatusCancelled || stepRun.Status == StepStatusTimedOut) {
 			e.appendTimeline(ctx, run, "step_completed", stepID, res.JobId, string(stepRun.Status), res.ResultPtr, res.ErrorMessage, nil)
 		}
 		if !retry && stepRun.Status == StepStatusSucceeded && res.ResultPtr != "" {
@@ -409,13 +432,13 @@ func (e *Engine) HandleJobResult(ctx context.Context, res *pb.JobResult) error {
 			}
 		}
 		run.Steps[stepID] = stepRun
-		if !retry && (stepRun.Status == StepStatusFailed || stepRun.Status == StepStatusTimedOut) {
+		if !retry && (stepRun.Status == StepStatusFailed || stepRun.Status == StepStatusDenied || stepRun.Status == StepStatusTimedOut) {
 			e.activateOnErrorHandler(ctx, run, wfDef, stepID, stepRun, now)
 		}
 		if retry && delay > 0 {
 			e.scheduleAfter(delay, run.WorkflowID, run.ID)
 		}
-		if e.OnStepFinished != nil && !retry && (stepRun.Status == StepStatusSucceeded || stepRun.Status == StepStatusFailed || stepRun.Status == StepStatusCancelled || stepRun.Status == StepStatusTimedOut) {
+		if e.OnStepFinished != nil && !retry && (stepRun.Status == StepStatusSucceeded || stepRun.Status == StepStatusFailed || stepRun.Status == StepStatusDenied || stepRun.Status == StepStatusCancelled || stepRun.Status == StepStatusTimedOut) {
 			e.OnStepFinished(run.ID, stepID, stepRun.Status)
 		}
 	}
@@ -520,7 +543,7 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 	if wfDef == nil || run == nil {
 		return fmt.Errorf("workflow/run required")
 	}
-	if run.Status == RunStatusCancelled || run.Status == RunStatusFailed || run.Status == RunStatusSucceeded || run.Status == RunStatusTimedOut {
+	if run.Status == RunStatusCancelled || run.Status == RunStatusFailed || run.Status == RunStatusDenied || run.Status == RunStatusSucceeded || run.Status == RunStatusTimedOut {
 		e.markRunTerminal(run.ID)
 		return nil
 	}
@@ -668,16 +691,56 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 			// Approval steps dispatch a gate job so they appear in the unified
 			// /approvals list. The scheduler places the job in APPROVAL_REQUIRED
 			// state; once approved, it auto-completes and the result flows back
-			// through HandleJobResult to advance the workflow.
+			// through HandleJobResult to advance the workflow. The approval job
+			// must carry a persisted context_ptr with structured human decision
+			// data; if payload build or context persistence fails we fail the step
+			// before entering WAITING so operators never see a blind approval.
 			if step.Type == StepTypeApproval {
 				if parentSR.Status == "" || parentSR.Status == StepStatusPending {
 					jobID := fmt.Sprintf("%s:%s@1", run.ID, stepID)
-					req := e.buildApprovalGateRequest(wfDef, run, step, stepID, jobID)
+					req := e.buildApprovalGateRequest(ctx, wfDef, run, step, stepID, jobID)
+					payload, err := e.buildApprovalPayload(wfDef, run, step, stepID, now)
+					if err != nil {
+						parentSR.Status = StepStatusFailed
+						parentSR.Error = map[string]any{"message": err.Error()}
+						run.Steps[stepID] = parentSR
+						slog.Error("approval payload build failed", "run_id", run.ID, "step_id", stepID, "error", err)
+						e.appendTimeline(ctx, run, "step_failed", stepID, jobID, string(parentSR.Status), "", err.Error(), nil)
+						if e.OnStepFinished != nil {
+							e.OnStepFinished(run.ID, stepID, parentSR.Status)
+						}
+						continue
+					}
+					ptr, err := e.putJobContext(ctx, jobID, payload)
+					if err != nil || strings.TrimSpace(ptr) == "" {
+						if err == nil {
+							err = errors.New("approval context store unavailable")
+						}
+						parentSR.Status = StepStatusFailed
+						parentSR.Error = map[string]any{"message": err.Error()}
+						parentSR.Input = payload
+						run.Steps[stepID] = parentSR
+						slog.Error("approval context store failed", "run_id", run.ID, "step_id", stepID, "job_id", jobID, "error", err)
+						e.appendTimeline(ctx, run, "step_failed", stepID, jobID, string(parentSR.Status), "", err.Error(), map[string]any{"approval_payload": payload})
+						if e.OnStepFinished != nil {
+							e.OnStepFinished(run.ID, stepID, parentSR.Status)
+						}
+						continue
+					}
+					req.ContextPtr = ptr
 
 					parentSR.Status = StepStatusWaiting
 					parentSR.StartedAt = &now
 					parentSR.JobID = jobID
 					parentSR.Attempts = 1
+					if parentSR.Input != nil {
+						for k, v := range parentSR.Input {
+							if _, exists := payload[k]; !exists {
+								payload[k] = v
+							}
+						}
+					}
+					parentSR.Input = payload
 					run.Status = RunStatusWaiting
 					run.Steps[stepID] = parentSR
 
@@ -704,7 +767,7 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 								"run_id", run.ID, "step_id", stepID, "error", updateErr)
 						}
 					} else {
-						e.appendTimeline(ctx, run, "step_waiting", stepID, jobID, string(parentSR.Status), "", "approval requested", nil)
+						e.appendTimeline(ctx, run, "step_waiting", stepID, jobID, string(parentSR.Status), "", "approval requested", map[string]any{"context_ptr": req.ContextPtr})
 						if e.OnStepDispatched != nil {
 							e.OnStepDispatched(run.ID, stepID, jobID)
 						}
@@ -1262,7 +1325,7 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 						e.OnStepFinished(run.ID, stepID, parentSR.Status)
 					}
 					continue
-				case RunStatusFailed, RunStatusCancelled, RunStatusTimedOut:
+				case RunStatusFailed, RunStatusDenied, RunStatusCancelled, RunStatusTimedOut:
 					msg := fmt.Sprintf("child run %s ended with status %s", childRunID, childRun.Status)
 					if childRun.Error != nil {
 						if childMsg, ok := childRun.Error["message"].(string); ok && strings.TrimSpace(childMsg) != "" {

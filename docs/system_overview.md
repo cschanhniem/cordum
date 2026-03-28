@@ -33,6 +33,7 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
   - HTTP/WS endpoints for jobs, workflows/runs, approvals, config, policy (bundles + publish/rollback/audit), DLQ, schemas, locks, artifacts, workers, traces, packs.
   - Marketplace endpoints for pack discovery/installs (gateway seeds `cfg:system:pack_catalogs` with the official catalog; override via env or config).
   - gRPC service (`CordumApi`) for job submit/status.
+  - Submit-time policy evaluation: both HTTP and gRPC submit paths call the Safety Kernel before persisting state or publishing to the bus. Policy deny returns 403/PermissionDenied, throttle returns 429/ResourceExhausted, and require_human creates the job in APPROVAL state without publishing. When the Safety Kernel is unavailable, `GATEWAY_POLICY_FAIL_MODE` controls behavior: `closed` (default) rejects the job, `open` allows it.
   - Streams `BusPacket` events over `/api/v1/stream` (protojson).
   - Enforces API key + tenant headers and CORS allowlist if configured (HTTP `X-API-Key` + `X-Tenant-ID`, gRPC metadata `x-api-key`, WS `Sec-WebSocket-Protocol: cordum-api-key, <base64url>` + `?tenant_id=<tenant>`).
   - OSS auth uses an API key allowlist (`CORDUM_API_KEYS`, `CORDUM_API_KEY`, or `CORDUM_API_KEYS_PATH`) with optional role/tenant metadata and a single-tenant default (`TENANT_ID`, default `default`). HTTP requests must supply `X-Tenant-ID`.
@@ -45,7 +46,7 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
 
 - Scheduler (`core/controlplane/scheduler`, `cmd/cordum-scheduler`; binary `cordum-scheduler`)
   - Subscribes to `sys.job.submit`, `sys.job.result`, `sys.job.cancel`, `sys.heartbeat`.
-  - Calls Safety Kernel before dispatch (allow/deny/approve/throttle/constraints).
+  - Calls Safety Kernel before dispatch (allow/deny/approve/throttle/constraints). When the Safety Kernel is unreachable, `WithInputFailMode` controls behavior: `closed` (default) denies the job, `open` allows it. This is separate from the gateway's `GATEWAY_POLICY_FAIL_MODE` — the gateway evaluates policy at submit time, while the scheduler evaluates at dispatch time.
   - Routes jobs using pool mapping + least-loaded strategy, labels, and requires-based pool eligibility.
   - Persists job state in Redis and emits DLQ for non-success results.
   - Reconciler marks stale `DISPATCHED`/`RUNNING` jobs as `TIMEOUT`.
@@ -64,7 +65,8 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
   - Dispatches ready steps as jobs (`sys.job.submit`).
   - Supports condition, delay, notify, for_each fan-out, retries/backoff, approvals, run cancel.
   - `depends_on` enables DAG execution: independent steps run in parallel; steps wait for all deps to succeed.
-  - Failed/cancelled/timed-out deps block downstream steps (no implicit continue-on-error).
+  - Failed/cancelled/timed-out/denied deps block downstream steps (no implicit continue-on-error).
+  - Denied is a first-class terminal status: `JOB_STATUS_DENIED` maps to `StepStatusDenied` and propagates to `RunStatusDenied` (not `RunStatusFailed`). Denied steps support `on_error` recovery chains just like failed steps. The status pipeline reports denied in its own bucket, separate from failed.
   - Supports rerun-from-step and dry-run mode.
   - Validates workflow input and step input/output schemas.
   - Subscribes to `sys.job.result` to advance runs; reconciler retries stuck runs.
@@ -82,6 +84,7 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
 ## Job lifecycle (single job)
 
 1) Client or gateway writes input JSON to Redis at `ctx:<job_id>`.
+   - Before persisting, the gateway evaluates submit-time policy via the Safety Kernel. Jobs denied by policy are rejected immediately (HTTP 403 / gRPC PermissionDenied) and never reach the bus or scheduler. Throttled jobs receive 429 / ResourceExhausted. Jobs requiring approval are created in APPROVAL state without publishing.
 2) Publish `BusPacket{JobRequest}` to `sys.job.submit` with `context_ptr`.
 3) Scheduler:
    - Sets job state `PENDING`, resolves effective config, runs safety check.

@@ -3,13 +3,14 @@ import { Link } from "react-router-dom";
 import { useOutputRuleAudit } from "../../hooks/useOutputRules";
 import type { OutputRule } from "../../types/policy";
 import { Badge } from "../ui/Badge";
+import { CodeBlock } from "../ui/CodeBlock";
 import { Drawer } from "../ui/Drawer";
 
-function decisionVariant(decision?: string): "danger" | "warning" | "success" | "default" {
+function decisionVariant(decision?: string): "governance" | "warning" | "success" | "default" {
   switch ((decision || "").toLowerCase()) {
     case "deny":
     case "quarantine":
-      return "danger";
+      return "governance";
     case "redact":
       return "warning";
     case "allow":
@@ -120,15 +121,15 @@ export function OutputRuleDetail({
 
         <div className="grid gap-3 sm:grid-cols-3">
           <div className="rounded-xl border border-border bg-surface2/30 p-3">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Triggers 24h</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Triggers 24h</p>
             <p className="mt-1 text-xl font-semibold text-ink">{stats.count24h}</p>
           </div>
           <div className="rounded-xl border border-border bg-surface2/30 p-3">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Triggers 7d</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Triggers 7d</p>
             <p className="mt-1 text-xl font-semibold text-ink">{stats.count7d}</p>
           </div>
           <div className="rounded-xl border border-border bg-surface2/30 p-3">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Triggers 30d</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Triggers 30d</p>
             <p className="mt-1 text-xl font-semibold text-ink">{stats.count30d}</p>
           </div>
         </div>
@@ -154,7 +155,7 @@ export function OutputRuleDetail({
               {(rule.patterns ?? []).map((pattern, idx) => (
                 <p
                   key={`${pattern}-${idx}`}
-                  className="rounded-md bg-surface2 px-2 py-1 font-mono text-[11px] text-ink"
+                  className="rounded-md bg-surface2 px-2 py-1 font-mono text-xs text-ink"
                 >
                   {pattern}
                 </p>
@@ -162,12 +163,7 @@ export function OutputRuleDetail({
             </div>
           </div>
 
-          <div className="space-y-2 rounded-xl border border-border p-4">
-            <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Rule Configuration</h4>
-            <pre className="max-h-64 overflow-auto rounded-md bg-surface2 p-3 text-[11px] text-ink">
-              {configJson}
-            </pre>
-          </div>
+          <CodeBlock title="Rule Configuration" language="json" maxHeight={256} copyable>{configJson}</CodeBlock>
         </div>
 
         <div className="space-y-3 rounded-xl border border-border p-4">
@@ -226,7 +222,7 @@ export function OutputRuleDetail({
                 )}
 
                 {(entry.originalPtr || entry.redactedPtr) && (
-                  <p className="font-mono text-[11px] text-muted-foreground">
+                  <p className="font-mono text-xs text-muted-foreground">
                     {entry.originalPtr ? `original=${entry.originalPtr}` : ""}
                     {entry.originalPtr && entry.redactedPtr ? " " : ""}
                     {entry.redactedPtr ? `redacted=${entry.redactedPtr}` : ""}

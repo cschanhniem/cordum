@@ -20,23 +20,23 @@ import {
 } from "recharts";
 import {
   Activity, Cpu, UserCheck, ArrowRight,
-  CheckCircle2, XCircle, Zap, ShieldCheck,
+  Zap, ShieldCheck,
 } from "lucide-react";
 import { cn, formatRelativeTime } from "@/lib/utils";
-import { useApproveJob, useRejectJob } from "@/hooks/useApprovals";
 import { useStatus } from "@/hooks/useStatus";
-import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { ChartTooltip } from "@/components/ui/ChartTooltip";
+import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
+import { OnboardingChecklist } from "@/components/home/OnboardingChecklist";
 import { MetricValue } from "@/components/ui/MetricValue";
 import { InstrumentCard } from "@/components/ui/InstrumentCard";
 import { SafetyDecisionBadge } from "@/components/ui/SafetyDecisionBadge";
 
 export default function HomePage() {
   const navigate = useNavigate();
-  const [denyTarget, setDenyTarget] = useState<string | null>(null);
-  const approveMut = useApproveJob();
-  const rejectMut = useRejectJob();
+  const [showOnboarding, setShowOnboarding] = useState(
+    () => !localStorage.getItem("onboarding-dismissed"),
+  );
 
   const { data: jobsData, isLoading: jobsLoading, isError: jobsError, error: jobsErr, refetch: refetchJobs } = useQuery({
     queryKey: ["jobs", "home"],
@@ -46,6 +46,7 @@ export default function HomePage() {
       return { items, total: res.total ?? items.length };
     },
     refetchInterval: 10_000,
+
   });
 
   const { data: workers, isLoading: workersLoading, isError: workersError, error: workersErr, refetch: refetchWorkers } = useQuery({
@@ -55,6 +56,7 @@ export default function HomePage() {
       return (res.items ?? []).map(mapHeartbeatToWorker).filter((w): w is Worker => !!w);
     },
     refetchInterval: 15_000,
+
   });
 
   const { data: approvalsData, isLoading: approvalsLoading, isError: approvalsError, error: approvalsErr, refetch: refetchApprovals } = useQuery({
@@ -64,6 +66,7 @@ export default function HomePage() {
       return (res.items ?? []).map(mapApprovalItem).filter((a): a is Approval => !!a);
     },
     refetchInterval: 5_000,
+
   });
 
   const { data: statusData, isLoading: statusLoading } = useStatus();
@@ -141,17 +144,18 @@ export default function HomePage() {
   }, [jobs]);
 
   const activityData = useMemo(() => {
-    const buckets = new Map<string, { allowed: number; denied: number; approval: number }>();
+    const buckets = new Map<string, { allowed: number; denied: number; approval: number; failed: number }>();
     for (let i = 0; i < 12; i++) {
       const label = String(i * 2).padStart(2, "0") + ":00";
-      buckets.set(label, { allowed: 0, denied: 0, approval: 0 });
+      buckets.set(label, { allowed: 0, denied: 0, approval: 0, failed: 0 });
     }
     for (const j of jobs) {
       const hour = new Date(j.createdAt).getHours();
       const bucket = String(Math.floor(hour / 2) * 2).padStart(2, "0") + ":00";
       const b = buckets.get(bucket);
       if (b) {
-        if (j.safetyDecision?.type === "deny") b.denied++;
+        if (j.status === "failed") b.failed++;
+        else if (j.safetyDecision?.type === "deny") b.denied++;
         else if (j.safetyDecision?.type === "require_approval") b.approval++;
         else b.allowed++;
       }
@@ -162,7 +166,7 @@ export default function HomePage() {
   // Decision Distribution donut — 5 safety decisions
   const decisionData = [
     { name: "Allow", value: safetyAllowed, color: "#1f7a57" },
-    { name: "Deny", value: safetyDenied, color: "#b83a3a" },
+    { name: "Deny", value: safetyDenied, color: "#7c3aed" },
     { name: "Require Approval", value: safetyApproval, color: "#c58a1c" },
     { name: "Constrained", value: safetyConstrained, color: "#0f7f7a" },
     { name: "Throttle", value: safetyThrottled, color: "#d4833a" },
@@ -203,7 +207,7 @@ export default function HomePage() {
             {/* KPI 1: Recent Jobs */}
             <InstrumentCard>
               <MetricValue label="Recent Jobs" value={totalJobs.toLocaleString()} icon={<Activity className="w-4 h-4" />}>
-                <div className="flex gap-3 mt-3 text-[10px] font-mono text-muted-foreground">
+                <div className="flex gap-3 mt-3 text-xs font-mono text-muted-foreground">
                   <span>{runningJobs} running</span>
                   <span className="text-[var(--color-success)]">{completedJobs} done</span>
                   <span className="text-destructive">{failedJobs} failed</span>
@@ -243,9 +247,9 @@ export default function HomePage() {
                 unit="allowed"
                 icon={<ShieldCheck className="w-4 h-4" />}
               >
-                <div className="flex gap-3 mt-3 text-[10px] font-mono">
+                <div className="flex gap-3 mt-3 text-xs font-mono">
                   <span className="text-[var(--color-success)]">{safetyAllowed} allow</span>
-                  <span className="text-destructive">{safetyDenied} deny</span>
+                  <span className="text-[var(--color-governance)]">{safetyDenied} deny</span>
                   <span className="text-[var(--color-warning)]">{safetyApproval} review</span>
                 </div>
               </MetricValue>
@@ -260,7 +264,7 @@ export default function HomePage() {
                 icon={<UserCheck className={cn("w-4 h-4", pendingApprovals.length > 0 ? "text-[var(--color-warning)]" : "text-cordum")} />}
               >
                 {pendingApprovals.length > 0 && (
-                  <Button variant="ghost" size="sm" className="mt-2.5 text-[var(--color-warning)] hover:text-[var(--color-warning)] p-0 h-auto font-mono text-[10px] uppercase tracking-widest" onClick={() => navigate("/approvals")}>
+                  <Button variant="ghost" size="sm" className="mt-2.5 text-[var(--color-warning)] hover:text-[var(--color-warning)] p-0 h-auto font-mono text-xs uppercase tracking-widest" onClick={() => navigate("/approvals")}>
                     Review now <ArrowRight className="w-3 h-3 ml-1" />
                   </Button>
                 )}
@@ -269,6 +273,18 @@ export default function HomePage() {
           </>
         )}
       </motion.div>
+
+      {/* Onboarding checklist — shown for new users with zero data */}
+      {showOnboarding && !jobsLoading && !workersLoading && jobs.length === 0 && (workers ?? []).length === 0 && (
+        <OnboardingChecklist
+          jobs={jobs.length}
+          workers={(workers ?? []).length}
+          onDismiss={() => {
+            localStorage.setItem("onboarding-dismissed", "true");
+            setShowOnboarding(false);
+          }}
+        />
+      )}
 
       {/* Charts Row — Job Activity with Safety Overlay + Decision Distribution */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -281,13 +297,14 @@ export default function HomePage() {
         >
           <div className="flex items-start justify-between mb-5">
             <div className="min-w-0">
-              <h3 className="font-display font-semibold text-sm text-foreground tracking-tight">Job Activity</h3>
-              <p className="text-[11px] text-muted-foreground mt-1 leading-none">Safety overlay — allowed vs denied vs approval</p>
+              <h2 className="font-display font-semibold text-sm text-foreground tracking-tight">Job Activity</h2>
+              <p className="text-xs text-muted-foreground mt-1 leading-none">Safety overlay — allowed vs denied vs approval</p>
             </div>
-            <div className="flex items-center gap-4 text-[10px] font-mono shrink-0">
+            <div className="flex items-center gap-4 text-xs font-mono shrink-0">
               <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[var(--color-success)]" />Allowed</span>
-              <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-destructive" />Denied</span>
+              <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[var(--color-governance)]" />Denied</span>
               <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[var(--color-warning)]" />Approval</span>
+              <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-destructive" />Failed</span>
             </div>
           </div>
           <ResponsiveContainer width="100%" height={260}>
@@ -298,12 +315,16 @@ export default function HomePage() {
                   <stop offset="95%" stopColor="#1f7a57" stopOpacity={0} />
                 </linearGradient>
                 <linearGradient id="gradDenied" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#b83a3a" stopOpacity={0.25} />
-                  <stop offset="95%" stopColor="#b83a3a" stopOpacity={0} />
+                  <stop offset="5%" stopColor="#7c3aed" stopOpacity={0.25} />
+                  <stop offset="95%" stopColor="#7c3aed" stopOpacity={0} />
                 </linearGradient>
                 <linearGradient id="gradApproval" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#c58a1c" stopOpacity={0.25} />
                   <stop offset="95%" stopColor="#c58a1c" stopOpacity={0} />
+                </linearGradient>
+                <linearGradient id="gradFailed" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#b83a3a" stopOpacity={0.25} />
+                  <stop offset="95%" stopColor="#b83a3a" stopOpacity={0} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
@@ -311,8 +332,9 @@ export default function HomePage() {
               <YAxis tick={{ fontSize: 10, fill: "#5a6a70" }} axisLine={false} tickLine={false} />
               <Tooltip content={<ChartTooltip />} />
               <Area type="monotone" dataKey="allowed" stackId="1" stroke="#1f7a57" fill="url(#gradAllowed)" strokeWidth={2} name="Allowed" />
-              <Area type="monotone" dataKey="denied" stackId="1" stroke="#b83a3a" fill="url(#gradDenied)" strokeWidth={2} name="Denied" />
-              <Area type="monotone" dataKey="approval" stackId="1" stroke="#c58a1c" fill="url(#gradApproval)" strokeWidth={2} name="Approval" />
+              <Area type="monotone" dataKey="denied" stackId="1" stroke="#7c3aed" fill="url(#gradDenied)" strokeWidth={2} strokeDasharray="8 4" name="Denied" />
+              <Area type="monotone" dataKey="approval" stackId="1" stroke="#c58a1c" fill="url(#gradApproval)" strokeWidth={2} strokeDasharray="4 2" name="Approval" />
+              <Area type="monotone" dataKey="failed" stackId="1" stroke="#b83a3a" fill="url(#gradFailed)" strokeWidth={2} strokeDasharray="8 4 2 4" name="Failed" />
             </AreaChart>
           </ResponsiveContainer>
         </motion.div>
@@ -324,7 +346,7 @@ export default function HomePage() {
           transition={{ duration: 0.3, delay: 0.15 }}
           className="instrument-card"
         >
-          <h3 className="font-display font-semibold text-sm text-foreground mb-0.5">Decision Distribution</h3>
+          <h2 className="font-display font-semibold text-sm text-foreground mb-0.5">Decision Distribution</h2>
           <p className="text-xs text-muted-foreground mb-4">5 safety decision types</p>
           <ResponsiveContainer width="100%" height={180}>
             <PieChart>
@@ -366,7 +388,7 @@ export default function HomePage() {
         className="instrument-card overflow-hidden"
       >
         <div className="flex items-center justify-between px-5 py-3 border-b border-border">
-          <h3 className="font-display font-semibold text-sm text-foreground">Recent Activity</h3>
+          <h2 className="font-display font-semibold text-sm text-foreground">Recent Activity</h2>
           <Button variant="ghost" size="sm" onClick={() => navigate("/jobs")}>
             View all <ArrowRight className="w-3 h-3 ml-1" />
           </Button>
@@ -374,16 +396,16 @@ export default function HomePage() {
         <table className="w-full">
           <thead>
             <tr className="border-b border-border bg-surface-0">
-              <th className="text-left px-5 py-2.5 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Job ID</th>
-              <th className="text-left px-5 py-2.5 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Topic</th>
-              <th className="text-left px-5 py-2.5 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Status</th>
-              <th className="text-left px-5 py-2.5 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Safety</th>
-              <th className="text-left px-5 py-2.5 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Duration</th>
-              <th className="text-left px-5 py-2.5 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-widest">Time</th>
+              <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Job ID</th>
+              <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Topic</th>
+              <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Status</th>
+              <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Safety</th>
+              <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Duration</th>
+              <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Time</th>
             </tr>
           </thead>
           <tbody>
-            {jobs.slice(0, 8).map((job) => {
+            {jobs.slice(0, 5).map((job) => {
               const safetyDecision = job.safetyDecision?.type;
               return (
                 <tr
@@ -391,30 +413,31 @@ export default function HomePage() {
                   onClick={() => navigate(`/jobs/${job.id}`)}
                   className="border-b border-border hover:bg-surface-1 transition-colors cursor-pointer group"
                 >
-                  <td className="px-5 py-2.5 font-mono text-sm text-cordum group-hover:underline">{job.id.slice(0, 12)}</td>
-                  <td className="px-5 py-2.5 text-sm text-foreground">{job.topic || "—"}</td>
-                  <td className="px-5 py-2.5">
+                  <td className="px-5 py-3 font-mono text-sm text-cordum group-hover:underline">{job.id.slice(0, 12)}</td>
+                  <td className="px-5 py-3 text-sm text-foreground">{job.topic || "—"}</td>
+                  <td className="px-5 py-3">
                     <StatusBadge
                       variant={
                         job.status === "running" ? "healthy" :
-                        job.status === "failed" ? "danger" :
                         job.status === "succeeded" ? "healthy" :
-                        job.status === "pending" || job.status === "scheduled" ? "warning" :
+                        job.status === "failed" || job.status === "timeout" ? "danger" :
+                        job.status === "denied" || job.status === "output_quarantined" ? "governance" :
+                        job.status === "pending" || job.status === "scheduled" || job.status === "approval_required" ? "warning" :
                         "muted"
                       }
                     >
-                      {job.status}
+                      {job.status === "output_quarantined" ? "quarantined" : job.status}
                     </StatusBadge>
                   </td>
-                  <td className="px-5 py-2.5">
+                  <td className="px-5 py-3">
                     <SafetyDecisionBadge decision={safetyDecision} />
                   </td>
-                  <td className="px-5 py-2.5 text-sm text-muted-foreground font-mono">
+                  <td className="px-5 py-3 text-sm text-muted-foreground font-mono">
                     {job.duration
                       ? `${Math.round(job.duration / 1000)}s`
                       : job.status === "running" ? "running..." : "—"}
                   </td>
-                  <td className="px-5 py-2.5 text-sm text-muted-foreground">
+                  <td className="px-5 py-3 text-sm text-muted-foreground">
                     {job.updatedAt ? formatRelativeTime(new Date(job.updatedAt).toISOString()) : "—"}
                   </td>
                 </tr>
@@ -422,27 +445,29 @@ export default function HomePage() {
             })}
             {jobs.length === 0 && !jobsLoading && (
               <tr>
-                <td colSpan={6} className="text-center text-sm text-muted-foreground py-12">
-                  No jobs yet — submit your first job to get started
+                <td colSpan={6} className="text-center py-12">
+                  <div className="flex flex-col items-center gap-2">
+                    <p className="text-sm text-muted-foreground">No jobs yet — submit your first job to get started</p>
+                    <Button variant="outline" size="sm" onClick={() => navigate("/jobs")}>Go to Jobs</Button>
+                  </div>
                 </td>
               </tr>
             )}
           </tbody>
         </table>
+        {jobs.length > 5 && (
+          <div className="flex justify-center py-3 border-t border-border">
+            <Button variant="ghost" size="sm" onClick={() => navigate("/jobs")}>
+              View all {jobs.length} jobs <ArrowRight className="w-3 h-3 ml-1" />
+            </Button>
+          </div>
+        )}
       </motion.div>
 
-      {/* Worker Pool Health */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3, delay: 0.25 }}
-        className="instrument-card"
-      >
-        <div className="flex items-center justify-between mb-5">
-          <div>
-            <h3 className="font-display font-semibold text-sm text-foreground">Worker Pool Health</h3>
-            <p className="text-xs text-muted-foreground mt-0.5">Real-time agent status</p>
-          </div>
+      {/* Worker Pool Health — collapsed by default to reduce above-fold density */}
+      <CollapsibleSection title="Worker Pool Health" defaultOpen={false}>
+        <div className="flex items-center justify-between mb-4">
+          <p className="text-xs text-muted-foreground">Real-time agent status</p>
           <Button variant="ghost" size="sm" onClick={() => navigate("/agents")}>
             View fleet <ArrowRight className="w-3 h-3 ml-1" />
           </Button>
@@ -460,17 +485,17 @@ export default function HomePage() {
               >
                 <div className="flex items-center gap-2 mb-2">
                   <div className={cn("w-2 h-2 rounded-full", isOnline ? "bg-[var(--color-success)] animate-pulse" : "bg-muted-foreground")} />
-                  <span className="font-mono text-[11px] text-foreground truncate">{w.name || w.id.slice(0, 10)}</span>
+                  <span className="font-mono text-xs text-foreground truncate">{w.name || w.id.slice(0, 10)}</span>
                 </div>
                 <div className="space-y-1.5">
-                  <div className="flex justify-between text-[9px] uppercase tracking-wider font-mono">
+                  <div className="flex justify-between text-xs uppercase tracking-wider font-mono">
                     <span className="text-muted-foreground">CPU</span>
                     <span className="text-foreground">{w.cpuLoad ?? 0}%</span>
                   </div>
                   <div className="w-full h-1 rounded-full bg-surface-2 overflow-hidden">
                     <div className="h-full rounded-full bg-cordum transition-all" style={{ width: `${w.cpuLoad ?? 0}%` }} />
                   </div>
-                  <div className="flex justify-between text-[9px] uppercase tracking-wider font-mono">
+                  <div className="flex justify-between text-xs uppercase tracking-wider font-mono">
                     <span className="text-muted-foreground">MEM</span>
                     <span className="text-foreground">{w.memoryLoad ?? 0}%</span>
                   </div>
@@ -479,28 +504,23 @@ export default function HomePage() {
                   </div>
                 </div>
                 {/* Last policy eval line */}
-                <div className="mt-2 pt-1.5 border-t border-border/40 text-[9px] font-mono text-muted-foreground">
+                <div className="mt-2 pt-1.5 border-t border-border/40 text-xs font-mono text-muted-foreground">
                   Jobs: {w.activeJobs ?? 0} / {w.capacity ?? 0}
                 </div>
               </InstrumentCard>
             );
           })}
           {(!workers || workers.length === 0) && !workersLoading && (
-            <div className="col-span-full text-center py-8 text-sm text-muted-foreground">
-              No workers registered yet
+            <div className="col-span-full flex flex-col items-center gap-2 py-8">
+              <p className="text-sm text-muted-foreground">No agents connected — start an agent with your API key</p>
+              <Button variant="outline" size="sm" onClick={() => navigate("/agents")}>Agent setup</Button>
             </div>
           )}
         </div>
-      </motion.div>
+      </CollapsibleSection>
 
-      {/* System Health — with Safety Kernel row */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3, delay: 0.3 }}
-        className="instrument-card"
-      >
-        <h3 className="font-display font-semibold text-sm text-foreground mb-5">Service Health</h3>
+      {/* System Health — collapsed by default */}
+      <CollapsibleSection title="Service Health" defaultOpen={false}>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
           {statusLoading ? (
             Array.from({ length: 5 }).map((_, i) => (
@@ -526,7 +546,7 @@ export default function HomePage() {
                   )} />
                   <div className="flex-1 min-w-0">
                     <p className="text-xs text-foreground font-semibold truncate">{svc.name}</p>
-                    <p className="text-[10px] text-muted-foreground font-mono">{svc.latency || "—"}</p>
+                    <p className="text-xs text-muted-foreground font-mono">{svc.latency || "—"}</p>
                   </div>
                 </div>
               </InstrumentCard>
@@ -537,77 +557,22 @@ export default function HomePage() {
             </div>
           )}
         </div>
-      </motion.div>
+      </CollapsibleSection>
 
-      {/* Approval Queue */}
+      {/* Approval Queue — compact banner linking to ApprovalsPage */}
       {pendingApprovals.length > 0 && (
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3, delay: 0.35 }}
-          className="space-y-3"
-        >
-          <div className="flex items-center justify-between">
-            <h3 className="font-display font-semibold text-sm text-foreground">Approval Queue</h3>
-            <Button variant="ghost" size="sm" onClick={() => navigate("/approvals")}>
-              View all <ArrowRight className="w-3 h-3 ml-1" />
-            </Button>
+        <div className="instrument-card flex items-center justify-between px-4 py-3 border-l-2 border-[var(--color-warning)]">
+          <div className="flex items-center gap-2">
+            <UserCheck className="w-4 h-4 text-[var(--color-warning)]" />
+            <span className="text-sm font-semibold text-foreground">
+              {pendingApprovals.length} approval{pendingApprovals.length > 1 ? "s" : ""} pending
+            </span>
           </div>
-          {pendingApprovals.slice(0, 3).map((approval) => (
-            <InstrumentCard
-              key={approval.id}
-              accent="warning"
-              onClick={() => navigate("/approvals")}
-              hoverable
-            >
-              <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-3 mb-2">
-                    <span className="font-mono text-sm text-cordum">{approval.id.slice(0, 12)}</span>
-                    <span className="text-[10px] text-muted-foreground font-mono">
-                      {approval.requestedAt ? formatRelativeTime(approval.requestedAt) : "—"}
-                    </span>
-                  </div>
-                  <h4 className="text-sm font-semibold font-display text-foreground leading-snug">
-                    {approval.topic || "Pending Approval"}
-                  </h4>
-                </div>
-                <div className="flex gap-2 shrink-0">
-                  <Button size="sm" variant="danger" onClick={(e) => { e.stopPropagation(); setDenyTarget(approval.id); }}>
-                    <XCircle className="w-3.5 h-3.5 mr-1" />
-                    Deny
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="primary"
-                    loading={approveMut.isPending}
-                    onClick={(e) => { e.stopPropagation(); approveMut.mutate({ id: approval.id }); }}
-                  >
-                    <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
-                    Approve
-                  </Button>
-                </div>
-              </div>
-            </InstrumentCard>
-          ))}
-        </motion.div>
+          <Button variant="outline" size="sm" onClick={() => navigate("/approvals")}>
+            Review now <ArrowRight className="w-3 h-3 ml-1" />
+          </Button>
+        </div>
       )}
-
-      <ConfirmDialog
-        open={!!denyTarget}
-        onClose={() => setDenyTarget(null)}
-        onConfirm={() => {
-          if (denyTarget) {
-            rejectMut.mutate({ id: denyTarget, reason: "Denied from dashboard" });
-          }
-          setDenyTarget(null);
-        }}
-        title="Deny Approval"
-        description="Are you sure you want to deny this approval request? This action cannot be undone."
-        confirmLabel="Deny"
-        variant="destructive"
-        loading={rejectMut.isPending}
-      />
     </div>
   );
 }

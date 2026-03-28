@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -251,10 +252,10 @@ func newTestJobStore(t *testing.T) (*store.RedisJobStore, *miniredis.Miniredis) 
 func TestDistributedRunLock_MutualExclusion(t *testing.T) {
 	jobStore, srv := newTestJobStore(t)
 	defer srv.Close()
-	defer jobStore.Close()
+	defer func() { _ = jobStore.Close() }()
 
-	lm1 := lockManager{locks: make(map[string]*runLock), locker: jobStore}
-	lm2 := lockManager{locks: make(map[string]*runLock), locker: jobStore}
+	lm1 := lockManager{locks: make(map[string]*runLock), locker: jobStore, ctx: context.Background()}
+	lm2 := lockManager{locks: make(map[string]*runLock), locker: jobStore, ctx: context.Background()}
 
 	const runID = "run-mutex-test"
 	var (
@@ -312,9 +313,9 @@ func TestDistributedRunLock_MutualExclusion(t *testing.T) {
 func TestDistributedRunLock_DifferentRunIDs(t *testing.T) {
 	jobStore, srv := newTestJobStore(t)
 	defer srv.Close()
-	defer jobStore.Close()
+	defer func() { _ = jobStore.Close() }()
 
-	lm := lockManager{locks: make(map[string]*runLock), locker: jobStore}
+	lm := lockManager{locks: make(map[string]*runLock), locker: jobStore, ctx: context.Background()}
 
 	var wg sync.WaitGroup
 	var acquired atomic.Int32
@@ -344,10 +345,10 @@ func TestDistributedRunLock_DifferentRunIDs(t *testing.T) {
 func TestDistributedRunLock_TTLExpiry(t *testing.T) {
 	jobStore, srv := newTestJobStore(t)
 	defer srv.Close()
-	defer jobStore.Close()
+	defer func() { _ = jobStore.Close() }()
 
-	lm1 := lockManager{locks: make(map[string]*runLock), locker: jobStore}
-	lm2 := lockManager{locks: make(map[string]*runLock), locker: jobStore}
+	lm1 := lockManager{locks: make(map[string]*runLock), locker: jobStore, ctx: context.Background()}
+	lm2 := lockManager{locks: make(map[string]*runLock), locker: jobStore, ctx: context.Background()}
 
 	const runID = "run-ttl-test"
 
@@ -407,9 +408,9 @@ func TestDistributedRunLock_LocalFallback(t *testing.T) {
 func TestDistributedRunLock_MarkTerminalCleanup(t *testing.T) {
 	jobStore, srv := newTestJobStore(t)
 	defer srv.Close()
-	defer jobStore.Close()
+	defer func() { _ = jobStore.Close() }()
 
-	lm := lockManager{locks: make(map[string]*runLock), locker: jobStore}
+	lm := lockManager{locks: make(map[string]*runLock), locker: jobStore, ctx: context.Background()}
 
 	const runID = "run-terminal-dist"
 	release, ok := lm.acquire(runID)
@@ -441,9 +442,9 @@ func TestDistributedRunLock_MarkTerminalCleanup(t *testing.T) {
 func TestDistributedRunLock_Renewal(t *testing.T) {
 	jobStore, srv := newTestJobStore(t)
 	defer srv.Close()
-	defer jobStore.Close()
+	defer func() { _ = jobStore.Close() }()
 
-	lm := lockManager{locks: make(map[string]*runLock), locker: jobStore}
+	lm := lockManager{locks: make(map[string]*runLock), locker: jobStore, ctx: context.Background()}
 
 	const runID = "run-renewal-dist"
 	release, ok := lm.acquire(runID)
@@ -469,4 +470,46 @@ func TestDistributedRunLock_Renewal(t *testing.T) {
 	if srv.Exists(key) {
 		t.Fatal("expected Redis lock key to be released")
 	}
+}
+
+// TestDistributedRunLock_RenewalStopsOnContextCancel verifies that the lock
+// renewal goroutine exits promptly when the parent context is cancelled
+// (engine shutdown), and does not leave orphaned goroutines or Redis ops.
+func TestDistributedRunLock_RenewalStopsOnContextCancel(t *testing.T) {
+	jobStore, srv := newTestJobStore(t)
+	defer srv.Close()
+	defer func() { _ = jobStore.Close() }()
+
+	parentCtx, parentCancel := context.WithCancel(context.Background())
+	lm := lockManager{locks: make(map[string]*runLock), locker: jobStore, ctx: parentCtx}
+
+	const runID = "run-cancel-renewal"
+	release, ok := lm.acquire(runID)
+	if !ok {
+		t.Fatal("expected lock acquisition to succeed")
+	}
+
+	key := runLockKey(runID)
+	if !srv.Exists(key) {
+		t.Fatal("expected Redis lock key to exist after acquire")
+	}
+
+	// Cancel the parent context — simulates engine shutdown.
+	parentCancel()
+
+	// Give the renewal goroutine time to notice cancellation.
+	time.Sleep(100 * time.Millisecond)
+
+	// Fast-forward past the full lock TTL (30s). Without active renewal,
+	// the lock should expire. We forward 35s to account for the last
+	// renewal that may have fired just before cancellation.
+	srv.FastForward(35 * time.Second)
+	time.Sleep(50 * time.Millisecond)
+
+	if srv.Exists(key) {
+		t.Fatal("expected Redis lock key to expire after parent context cancelled (renewal should have stopped)")
+	}
+
+	// Release must still work even after parent cancellation (uses context.Background).
+	release()
 }

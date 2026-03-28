@@ -20,7 +20,7 @@ export function markCriticalPath(
   for (const step of steps) {
     const status = step.status;
     const isCompleted =
-      status === "succeeded" || status === "failed";
+      status === "succeeded" || status === "failed" || status === "denied";
 
     if (isCompleted && step.startedAt && step.completedAt) {
       const dur =
@@ -29,7 +29,7 @@ export function markCriticalPath(
       durationMap.set(step.id, Math.max(dur, 0));
     }
 
-    depsMap.set(step.id, step.depends_on ?? step.dependsOn ?? []);
+    depsMap.set(step.id, step.depends_on ?? []);
   }
 
   // Compute cumulative duration per node (longest path to each node)
@@ -41,9 +41,9 @@ export function markCriticalPath(
   const children = new Map<string, string[]>();
 
   for (const step of steps) {
-    inDegree.set(step.id, (step.depends_on ?? step.dependsOn ?? []).length);
+    inDegree.set(step.id, (step.depends_on ?? []).length);
     if (!children.has(step.id)) children.set(step.id, []);
-    for (const dep of step.depends_on ?? step.dependsOn ?? []) {
+    for (const dep of step.depends_on ?? []) {
       if (!children.has(dep)) children.set(dep, []);
       children.get(dep)?.push(step.id);
     }
@@ -126,7 +126,7 @@ const RUNNING_STATUSES: Set<string> = new Set([
   "running",
 ]);
 
-const FAILED_STATUSES: Set<string> = new Set(["failed", "timed_out"]);
+const FAILED_STATUSES: Set<string> = new Set(["failed", "denied", "timed_out"]);
 
 /**
  * Color edges based on the status of their source and target steps.

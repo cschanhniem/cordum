@@ -8,6 +8,10 @@ import type {
   OutputSafetyRecord,
   SafetyDecision,
   Approval,
+  ApprovalContextStatus,
+  ApprovalDecisionSummary,
+  ApprovalDecisionSummaryCompleteness,
+  ApprovalDecisionSummarySource,
   UrgencyLevel,
   AuditEntry,
   AuditCategory,
@@ -17,6 +21,7 @@ import type {
   Workflow,
   WorkflowRun,
   WorkflowStep,
+  RunStatus,
   PolicyBundle,
   Worker,
   Pool,
@@ -146,6 +151,8 @@ export interface BackendWorkflowStep {
   delay_sec?: number;
   delay_until?: string;
   route_labels?: Record<string, string>;
+  on_error?: string;
+  config?: Record<string, unknown>;
   status?: string;
   output?: Record<string, unknown>;
   error?: string;
@@ -204,6 +211,23 @@ export interface BackendWorkflowRun {
   }>;
 }
 
+export interface BackendApprovalDecisionSummary {
+  source?: ApprovalDecisionSummarySource;
+  completeness?: ApprovalDecisionSummaryCompleteness;
+  context_status?: ApprovalContextStatus;
+  title?: string;
+  subject?: string;
+  why?: string;
+  next_effect?: string;
+  amount?: number;
+  currency?: string;
+  vendor?: string;
+  item_count?: number;
+  items_preview?: string[];
+  escalation_reason?: string;
+  missing_fields?: string[];
+}
+
 export interface BackendApprovalItem {
   job?: BackendJobRecord;
   decision?: string;
@@ -219,8 +243,11 @@ export interface BackendApprovalItem {
   resolved_comment?: string;
   constraints?: Record<string, unknown>;
   job_input?: Record<string, unknown>;
+  decision_summary?: BackendApprovalDecisionSummary;
   workflow_id?: string;
+  workflow_name?: string;
   workflow_run_id?: string;
+  workflow_step_id?: string;
   step_index?: number;
   step_name?: string;
   total_steps?: number;
@@ -378,14 +405,14 @@ function logInvalidDateInput(fn: string, raw: unknown): void {
   }
 }
 
-export function microsToISO(raw: unknown): string {
+export function microsToISO(raw: unknown): string | null {
   if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) {
     logInvalidDateInput("microsToISO", raw);
-    return "";
+    return null;
   }
   const ms = Math.floor(raw / 1000);
   const d = new Date(ms);
-  return isNaN(d.getTime()) ? "" : d.toISOString();
+  return isNaN(d.getTime()) ? null : d.toISOString();
 }
 
 export function normalizeJobStatus(raw?: string): JobStatus {
@@ -628,227 +655,26 @@ const WORKFLOW_NODE_TYPES = new Set([
 function normalizeWorkflowNodeType(
   raw?: string,
   meta?: Record<string, unknown>,
-): { uiType: string; backendType?: string } {
+): string {
   const trimmed = (raw || "").trim().toLowerCase();
-  if (!trimmed) {
-    return { uiType: "agent-task" };
-  }
-  if (trimmed === "subworkflow") {
-    return { uiType: "sub-workflow" };
-  }
-  if (WORKFLOW_NODE_TYPES.has(trimmed) && trimmed !== "job" && trimmed !== "worker") {
-    return { uiType: trimmed };
-  }
+  if (!trimmed) return "agent-task";
+  if (trimmed === "subworkflow") return "sub-workflow";
+  if (WORKFLOW_NODE_TYPES.has(trimmed) && trimmed !== "job" && trimmed !== "worker") return trimmed;
   // Backend "job" or "worker" → differentiate into agent-task / pack-action / tool-call
   if ((trimmed === "job" || trimmed === "worker") && meta) {
-    if (typeof meta.pack_id === "string" && meta.pack_id) {
-      return { uiType: "pack-action" };
-    }
-    if (typeof meta.capability === "string" && meta.capability && !meta.prompt) {
-      return { uiType: "tool-call" };
-    }
+    if (typeof meta.pack_id === "string" && meta.pack_id) return "pack-action";
+    if (typeof meta.capability === "string" && meta.capability && !meta.prompt) return "tool-call";
   }
-  if (trimmed === "job" || trimmed === "worker") {
-    return { uiType: "agent-task" };
-  }
-  return { uiType: "agent-task", backendType: trimmed };
-}
-
-function normalizeSwitchCases(value: unknown): Array<{ matchValue: string; stepId: string }> {
-  const fromRecord = (record: Record<string, unknown>) => {
-    const matchRaw = record.match ?? record.when ?? record.value ?? record.matchValue;
-    const stepRaw = record.next ?? record.step ?? record.target ?? record.step_id ?? record.goto ?? record.stepId;
-    const stepId = typeof stepRaw === "string" ? stepRaw.trim() : "";
-    if (!stepId) return null;
-    return {
-      matchValue: matchRaw == null ? "" : String(matchRaw),
-      stepId,
-    };
-  };
-
-  if (Array.isArray(value)) {
-    return value
-      .map((entry) => (entry && typeof entry === "object" ? fromRecord(entry as Record<string, unknown>) : null))
-      .filter((entry): entry is { matchValue: string; stepId: string } => entry !== null);
-  }
-  if (value && typeof value === "object") {
-    return Object.entries(value as Record<string, unknown>)
-      .map(([matchValue, stepRaw]) => {
-        const stepId = typeof stepRaw === "string" ? stepRaw.trim() : "";
-        if (!stepId) return null;
-        return { matchValue, stepId };
-      })
-      .filter((entry): entry is { matchValue: string; stepId: string } => entry !== null);
-  }
-  return [];
-}
-
-function buildWorkflowStepConfig(step: BackendWorkflowStep): Record<string, unknown> {
-  const config: Record<string, unknown> = {};
-
-  if (step.topic) config.topic = step.topic;
-  if (step.worker_id) config.workerId = step.worker_id;
-  if (typeof step.timeout_sec === "number" && step.timeout_sec > 0) {
-    config.timeout = `${step.timeout_sec}s`;
-  }
-  if (step.retry && typeof step.retry.max_retries === "number") {
-    config.retryMax = step.retry.max_retries;
-  }
-  if (step.condition) config.expression = step.condition;
-  if (step.for_each) config.forEach = step.for_each;
-  if (typeof step.max_parallel === "number") {
-    config.parallelism = step.max_parallel;
-  }
-  if (typeof step.delay_sec === "number" && step.delay_sec > 0) {
-    config.duration = `${step.delay_sec}s`;
-  } else if (step.delay_until) {
-    config.duration = step.delay_until;
-  }
-  if (step.input && typeof step.input === "object") {
-    config.input = step.input;
-    const input = step.input as Record<string, unknown>;
-    if (step.type === "parallel") {
-      if (Array.isArray(input.steps)) {
-        config.parallelSteps = input.steps.map((entry) => String(entry).trim()).filter(Boolean);
-      }
-      if (typeof input.strategy === "string" && input.strategy.trim()) {
-        config.completionStrategy = input.strategy.trim();
-      }
-      if (typeof input.required === "number" && Number.isFinite(input.required)) {
-        config.requiredCount = Math.floor(input.required);
-      }
-    }
-    if (step.type === "loop") {
-      if (typeof input.body_step === "string" && input.body_step.trim()) {
-        config.bodyStep = input.body_step.trim();
-      } else if (typeof input.body === "string" && input.body.trim()) {
-        config.bodyStep = input.body.trim();
-      }
-      if (typeof input.max_iterations === "number" && Number.isFinite(input.max_iterations)) {
-        config.maxIterations = Math.floor(input.max_iterations);
-      } else if (typeof input.maxIterations === "number" && Number.isFinite(input.maxIterations)) {
-        config.maxIterations = Math.floor(input.maxIterations);
-      }
-      if (typeof input.condition === "string" && input.condition.trim()) {
-        config.condition = input.condition.trim();
-      } else if (typeof input.while === "string" && input.while.trim()) {
-        config.condition = input.while.trim();
-      }
-      if (typeof input.until === "string" && input.until.trim()) {
-        config.until = input.until.trim();
-      }
-    }
-    if (step.type === "subworkflow" || step.type === "sub-workflow") {
-      if (typeof input.workflow_id === "string" && input.workflow_id.trim()) {
-        config.workflowId = input.workflow_id.trim();
-      }
-      if (input.input_mapping !== undefined) {
-        config.inputMapping = input.input_mapping;
-      }
-      if (input.output_mapping !== undefined) {
-        config.outputMapping = input.output_mapping;
-      }
-    }
-    if (step.type === "switch") {
-      const switchCases = normalizeSwitchCases(input.cases);
-      if (switchCases.length > 0) {
-        config.switchCases = switchCases;
-        config.cases = switchCases;
-      }
-      if (typeof input.default === "string" && input.default.trim()) {
-        config.defaultBranch = input.default.trim();
-      } else if (typeof input.default_step === "string" && input.default_step.trim()) {
-        config.defaultBranch = input.default_step.trim();
-      }
-    }
-    if (typeof input.message === "string" && input.message.trim()) {
-      config.messageTemplate = input.message;
-    }
-    if (typeof input.component === "string" && input.component.trim()) {
-      config.channel = input.component;
-    }
-    if (typeof input.prompt === "string" && input.prompt.trim()) {
-      config.prompt = input.prompt;
-    }
-    // Budget from input.budget or input itself
-    const budget = (input.budget ?? input) as Record<string, unknown>;
-    if (typeof budget.input_tokens === "number") config.maxInputTokens = budget.input_tokens;
-    if (typeof budget.output_tokens === "number") config.maxOutputTokens = budget.output_tokens;
-    if (typeof budget.total_tokens === "number") config.maxTotalTokens = budget.total_tokens;
-  }
-  if (step.meta && typeof step.meta === "object") {
-    config.meta = step.meta;
-    const caps: string[] = [];
-    if (typeof step.meta.capability === "string" && step.meta.capability.trim()) {
-      caps.push(step.meta.capability);
-    }
-    if (Array.isArray(step.meta.requires)) {
-      for (const req of step.meta.requires) {
-        const trimmed = String(req).trim();
-        if (trimmed) caps.push(trimmed);
-      }
-    }
-    if (caps.length > 0) {
-      config.capabilities = caps;
-    }
-    if (Array.isArray(step.meta.risk_tags) && step.meta.risk_tags.length > 0) {
-      config.riskTags = step.meta.risk_tags;
-    }
-    if (step.meta.labels) config.labels = step.meta.labels;
-    if (step.meta.pack_id) config.packId = step.meta.pack_id;
-    if (step.meta.actor_id) config.actorId = step.meta.actor_id;
-    if (step.meta.actor_type) config.actorType = step.meta.actor_type;
-    if (typeof step.meta.adapter_id === "string" && step.meta.adapter_id) {
-      config.adapterId = step.meta.adapter_id;
-    }
-    if (typeof step.meta.memory_id === "string" && step.meta.memory_id) {
-      config.memoryId = step.meta.memory_id;
-    }
-    if (typeof step.meta.context_mode === "string" && step.meta.context_mode) {
-      config.contextMode = step.meta.context_mode;
-    }
-    if (typeof step.meta.allow_summarization === "boolean") {
-      config.allowSummarization = step.meta.allow_summarization;
-    }
-    if (typeof step.meta.allow_retrieval === "boolean") {
-      config.allowRetrieval = step.meta.allow_retrieval;
-    }
-    if (typeof step.meta.deadline_ms === "number") {
-      config.deadlineMs = step.meta.deadline_ms;
-    }
-    if (typeof step.meta.priority === "string" && step.meta.priority) {
-      config.priority = step.meta.priority;
-    }
-    // Budget fallback from meta.budget
-    const metaBudget = step.meta.budget as Record<string, unknown> | undefined;
-    if (metaBudget && typeof metaBudget === "object") {
-      if (typeof metaBudget.input_tokens === "number" && !config.maxInputTokens) config.maxInputTokens = metaBudget.input_tokens;
-      if (typeof metaBudget.output_tokens === "number" && !config.maxOutputTokens) config.maxOutputTokens = metaBudget.output_tokens;
-      if (typeof metaBudget.total_tokens === "number" && !config.maxTotalTokens) config.maxTotalTokens = metaBudget.total_tokens;
-    }
-  }
-  if (step.route_labels) config.routeLabels = step.route_labels;
-  if (step.input_schema) config.inputSchema = step.input_schema;
-  if (step.input_schema_id) config.inputSchemaId = step.input_schema_id;
-  if (step.output_schema) config.outputSchema = step.output_schema;
-  if (step.output_schema_id) config.outputSchemaId = step.output_schema_id;
-  if (step.output_path) config.outputPath = step.output_path;
-
-  return config;
+  return "agent-task";
 }
 
 export function mapWorkflowStep(step: BackendWorkflowStep, fallbackId: string): WorkflowStep {
-  let { uiType, backendType } = normalizeWorkflowNodeType(
+  let uiType = normalizeWorkflowNodeType(
     step.type,
     step.meta as Record<string, unknown> | undefined,
   );
   if (uiType === "agent-task" && step.for_each) {
     uiType = "fan-out";
-  }
-  // Legacy config bag for backward compat during migration
-  const config = buildWorkflowStepConfig(step);
-  if (backendType) {
-    config.backendType = backendType;
   }
   return {
     id: step.id || fallbackId,
@@ -877,9 +703,9 @@ export function mapWorkflowStep(step: BackendWorkflowStep, fallbackId: string): 
     delay_sec: step.delay_sec,
     delay_until: step.delay_until,
     route_labels: step.route_labels,
-    // Legacy compat
-    config,
-    dependsOn: step.depends_on,
+    on_error: step.on_error,
+    // Raw backend config (branches, parallel steps, etc.)
+    config: step.config,
     // Run-time fields
     status: step.status as WorkflowStep["status"],
     output: step.output,
@@ -919,7 +745,7 @@ export function mapWorkflow(def: BackendWorkflow): Workflow {
   };
 }
 
-const VALID_RUN_STATUSES = new Set<string>(["pending", "running", "waiting", "succeeded", "failed", "timed_out", "cancelled"]);
+const VALID_RUN_STATUSES = new Set<string>(["pending", "running", "waiting", "succeeded", "failed", "denied", "timed_out", "cancelled"]);
 
 function normalizeRunStatus(raw?: string): WorkflowStep["status"] {
   const lower = (raw || "").toLowerCase();
@@ -933,11 +759,16 @@ function normalizeRunStatus(raw?: string): WorkflowStep["status"] {
 }
 
 export function mapWorkflowRunStep(step: BackendStepRun, fallbackId: string): WorkflowStep {
+  // Detect quarantined steps: status is "failed" but error.code is "output_quarantined"
+  let status = normalizeRunStatus(step.status);
+  if (status === "failed" && step.error?.code === "output_quarantined") {
+    status = "quarantined" as RunStatus;
+  }
   return {
     id: step.step_id || fallbackId,
     name: step.step_id || fallbackId,
     type: "step",
-    status: normalizeRunStatus(step.status),
+    status,
     output: (step.output as Record<string, unknown>) ?? undefined,
     error: step.error ? JSON.stringify(step.error) : undefined,
     startedAt: step.started_at || undefined,
@@ -1023,11 +854,14 @@ export function mapApprovalItem(item: BackendApprovalItem): Approval | null {
   const now = Date.now();
   const requestedAt = job.updatedAt || new Date().toISOString();
   const waitMs = now - new Date(requestedAt).getTime();
+  const decisionSummary = mapApprovalDecisionSummary(item.decision_summary);
 
   const workflowContext =
     item.workflow_id || item.workflow_run_id
       ? {
           workflowId: item.workflow_id || "",
+          workflowName: item.workflow_name,
+          stepId: item.workflow_step_id,
           runId: item.workflow_run_id || "",
           stepIndex: item.step_index,
           stepName: item.step_name,
@@ -1040,12 +874,13 @@ export function mapApprovalItem(item: BackendApprovalItem): Approval | null {
     jobId: job.id,
     status: deriveApprovalStatus(item.job.state, item.decision, item.resolved_by),
     requestedAt,
-    resolvedAt: item.resolved_at ? microsToISO(item.resolved_at) : undefined,
+    resolvedAt: (item.resolved_at ? microsToISO(item.resolved_at) : undefined) ?? undefined,
     actor: item.resolved_by,
     actorId: job.actorId,
-    reason: item.policy_reason,
+    reason: decisionSummary?.why || item.policy_reason,
     comment: item.resolved_comment,
     policyRule: item.policy_rule_id,
+    decisionSummary,
     jobContext: {
       topic: job.topic,
       tenant: job.tenant,
@@ -1057,11 +892,9 @@ export function mapApprovalItem(item: BackendApprovalItem): Approval | null {
     riskTags: job.riskTags,
     capabilities: job.capabilities,
     workflowContext,
-    humanSummary: deriveHumanSummary(
-      job.topic,
-      job.capabilities,
-      item.policy_reason,
-    ),
+    humanSummary:
+      decisionSummary?.title ||
+      deriveHumanSummary(job.topic, job.capabilities, item.policy_reason),
     urgencyLevel: computeUrgencyLevel(Math.max(0, waitMs)),
     waitMs: Math.max(0, waitMs),
     policySnapshot: item.policy_snapshot,
@@ -1071,6 +904,51 @@ export function mapApprovalItem(item: BackendApprovalItem): Approval | null {
     contextPtr: item.context_ptr,
     jobInput: item.job_input as Record<string, unknown> | undefined,
     constraints: item.constraints,
+  };
+}
+
+function mapApprovalDecisionSummary(
+  summary?: BackendApprovalDecisionSummary,
+): ApprovalDecisionSummary | undefined {
+  if (!summary || typeof summary !== "object") return undefined;
+  const title = typeof summary.title === "string" ? summary.title.trim() : "";
+  if (!title) return undefined;
+  return {
+    source: summary.source ?? "policy_only",
+    completeness: summary.completeness ?? "minimal",
+    contextStatus: summary.context_status ?? "absent",
+    title,
+    subject: typeof summary.subject === "string" ? summary.subject : undefined,
+    why: typeof summary.why === "string" ? summary.why : undefined,
+    nextEffect:
+      typeof summary.next_effect === "string"
+        ? summary.next_effect
+        : undefined,
+    amount:
+      typeof summary.amount === "number" && Number.isFinite(summary.amount)
+        ? summary.amount
+        : undefined,
+    currency:
+      typeof summary.currency === "string" ? summary.currency : undefined,
+    vendor: typeof summary.vendor === "string" ? summary.vendor : undefined,
+    itemCount:
+      typeof summary.item_count === "number" && Number.isFinite(summary.item_count)
+        ? summary.item_count
+        : undefined,
+    itemsPreview: Array.isArray(summary.items_preview)
+      ? summary.items_preview.filter(
+          (value): value is string => typeof value === "string" && value.length > 0,
+        )
+      : undefined,
+    escalationReason:
+      typeof summary.escalation_reason === "string"
+        ? summary.escalation_reason
+        : undefined,
+    missingFields: Array.isArray(summary.missing_fields)
+      ? summary.missing_fields.filter(
+          (value): value is string => typeof value === "string" && value.length > 0,
+        )
+      : undefined,
   };
 }
 
@@ -1124,6 +1002,7 @@ export function mapPolicyRule(raw: Record<string, unknown>): PolicyRule {
     source: typeof raw.source === "object" && raw.source ? (raw.source as Record<string, unknown>) : undefined,
     enabled: typeof raw.enabled === "boolean" ? raw.enabled : true,
     constraints: raw.constraints && typeof raw.constraints === "object" ? (raw.constraints as Record<string, unknown>) : undefined,
+    velocity: raw.velocity && typeof raw.velocity === "object" ? (raw.velocity as { max_requests: number; window_seconds: number; key: string }) : undefined,
   };
 }
 
@@ -1245,9 +1124,9 @@ export function auditResourceLink(
 ): string {
   switch (resourceType.toLowerCase()) {
     case "job": return `/jobs/${resourceId}`;
-    case "workflow": return `/workflows/${resourceId}`;
+    case "workflow": return `/workflows/${resourceId}/studio`;
     case "run": return `/workflows`;
-    case "policy": return `/govern/bundles`;
+    case "policy": return `/govern/overview?tab=bundles`;
     case "user": return `/settings`;
     case "pack": return `/packs`;
     case "approval": return `/approvals`;

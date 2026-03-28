@@ -28,7 +28,8 @@ export type JobStatus =
   | "approval_required"
   | "denied"
   | "timeout"
-  | "output_quarantined";
+  | "output_quarantined"
+  | "quarantined";
 
 export type OutputDecision = "ALLOW" | "QUARANTINE" | "REDACT";
 
@@ -349,6 +350,7 @@ export type RunStatus =
   | "waiting"
   | "succeeded"
   | "failed"
+  | "denied"
   | "timed_out"
   | "cancelled";
 
@@ -375,8 +377,6 @@ export interface WorkflowStep {
   delay_sec?: number;
   delay_until?: string;
   route_labels?: Record<string, string>;
-  /** @deprecated Use depends_on */
-  dependsOn?: string[];
   /** Legacy config bag — kept for backward compat during migration */
   config?: Record<string, unknown>;
   // Run-time fields (present when viewing runs)
@@ -459,8 +459,16 @@ export interface PolicyRuleMatch {
   actor_ids?: string[];
   actor_types?: string[];
   labels?: Record<string, string>;
+  label_allowlist?: Record<string, string[]>;
+  label_threshold?: Record<string, number>;
   secrets_present?: boolean;
   mcp?: McpMatchConfig;
+}
+
+export interface VelocityConfig {
+  max_requests: number;
+  window_seconds: number;
+  key: string;
 }
 
 export interface PolicyRule {
@@ -470,6 +478,7 @@ export interface PolicyRule {
   description?: string;
   bundle_id?: string;
   match: PolicyRuleMatch;
+  velocity?: VelocityConfig;
   decision: SafetyDecisionType;
   constraints?: PolicyConstraints;
   priority: number;
@@ -680,9 +689,38 @@ export interface DLQEntry {
 // ---------------------------------------------------------------------------
 
 export type UrgencyLevel = "fresh" | "aging" | "critical" | "breach";
+export type ApprovalDecisionSummarySource =
+  | "workflow_payload"
+  | "workflow_labels"
+  | "policy_only";
+export type ApprovalDecisionSummaryCompleteness = "rich" | "partial" | "minimal";
+export type ApprovalContextStatus =
+  | "available"
+  | "missing"
+  | "malformed"
+  | "unavailable"
+  | "absent";
+
+export interface ApprovalDecisionSummary {
+  source: ApprovalDecisionSummarySource;
+  completeness: ApprovalDecisionSummaryCompleteness;
+  contextStatus: ApprovalContextStatus;
+  title: string;
+  subject?: string;
+  why?: string;
+  nextEffect?: string;
+  amount?: number;
+  currency?: string;
+  vendor?: string;
+  itemCount?: number;
+  itemsPreview?: string[];
+  escalationReason?: string;
+  missingFields?: string[];
+}
 
 export interface ApprovalWorkflowContext {
   workflowId: string;
+  workflowName?: string;
   runId: string;
   stepId?: string;
   stepIndex?: number;
@@ -702,6 +740,7 @@ export interface Approval {
   comment?: string;
   policyRule?: string;
   jobContext?: Record<string, unknown>;
+  decisionSummary?: ApprovalDecisionSummary;
   // Enriched fields
   topic?: string;
   safetyDecision?: SafetyDecision;

@@ -1,3 +1,6 @@
+// NOTE: BundleDiffView uses raw <pre> intentionally for colored diff rendering.
+// CodeBlock is for plain text display — diff views need per-line styling that
+// CodeBlock doesn't support.
 import { useMemo } from "react";
 import { usePolicyBundle } from "@/hooks/usePolicies";
 import { SkeletonCard } from "@/components/ui/Skeleton";
@@ -75,7 +78,7 @@ export function BundleDiffView({ bundleId, draftYaml }: BundleDiffViewProps) {
 
   return (
     <div className="space-y-3">
-      <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+      <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground">
         draft vs published
       </p>
       <div className="instrument-card overflow-auto max-h-[520px] p-0">

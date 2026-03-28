@@ -13,9 +13,10 @@ import { Button } from "@/components/ui/Button";
 import { Skeleton } from "@/components/ui/Skeleton";
 import {
   ArrowLeft, Copy, Play, XCircle, Clock, Shield,
-  FileText, AlertTriangle, CheckCircle2, Workflow, Eye,
+  FileText, AlertTriangle, Eye,
 } from "lucide-react";
-import { cn, formatRelativeTime } from "@/lib/utils";
+import { cn, formatRelativeTime, formatDuration } from "@/lib/utils";
+import { useElapsedTimer } from "@/hooks/useElapsedTimer";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
@@ -23,39 +24,51 @@ import { useEventStore } from "@/state/events";
 import { useCancelJob, useRetryJob } from "@/hooks/useJobs";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
+import { JobActions } from "@/components/jobs/JobActions";
+import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
+import { CodeBlock } from "@/components/ui/CodeBlock";
 
 function jobStatusVariant(status: string) {
   switch (status) {
     case "running": return "healthy" as const;
-    case "completed": return "cordum" as const;
-    case "failed": return "danger" as const;
+    case "succeeded": case "completed": return "cordum" as const;
+    case "failed": case "timeout": case "timed_out": return "danger" as const;
+    case "denied": case "output_quarantined": return "governance" as const;
+    case "approval_required": return "warning" as const;
     case "pending": case "scheduled": return "warning" as const;
     case "dispatched": return "info" as const;
+    case "cancelled": return "muted" as const;
     default: return "muted" as const;
   }
 }
 
-const JOB_STATES = ["pending", "scheduled", "dispatched", "running", "completed"];
+const JOB_STATES = ["pending", "scheduled", "dispatched", "running", "succeeded"];
+
+const TERMINAL_ERROR_STATES = new Set(["failed", "timeout", "timed_out"]);
+const TERMINAL_GOVERNANCE_STATES = new Set(["denied", "output_quarantined", "approval_required"]);
 
 function StateMachine({ currentState }: { currentState: string }) {
-  const currentIdx = JOB_STATES.indexOf(currentState);
-  const isFailed = currentState === "failed";
+  const normalized = currentState === "completed" ? "succeeded" : currentState;
+  const currentIdx = JOB_STATES.indexOf(normalized);
+  const isFailed = TERMINAL_ERROR_STATES.has(normalized);
+  const isGovernance = TERMINAL_GOVERNANCE_STATES.has(normalized);
+  const isTerminalSpecial = isFailed || isGovernance;
 
   return (
     <div className="flex items-center gap-1">
       {JOB_STATES.map((state, i) => {
         const isPast = i < currentIdx;
-        const isCurrent = state === currentState;
+        const isCurrent = state === normalized;
         const isActive = isPast || isCurrent;
 
         return (
           <div key={state} className="flex items-center gap-1">
             <div
               className={cn(
-                "flex items-center justify-center w-7 h-7 rounded-full text-[9px] font-mono uppercase transition-all",
-                isCurrent && !isFailed && "bg-cordum text-[#0f1518] ring-2 ring-cordum/30",
+                "flex items-center justify-center w-7 h-7 rounded-full text-xs font-mono uppercase transition-all",
+                isCurrent && !isTerminalSpecial && "bg-cordum text-[#0f1518] ring-2 ring-cordum/30",
                 isPast && "bg-cordum/20 text-cordum",
-                !isActive && "bg-surface-2 text-muted-foreground",
+                !isActive && !isCurrent && "bg-surface-2 text-muted-foreground",
               )}
             >
               {isPast ? "✓" : (i + 1)}
@@ -69,8 +82,16 @@ function StateMachine({ currentState }: { currentState: string }) {
       {isFailed && (
         <>
           <div className="w-6 h-[2px] rounded bg-destructive/40" />
-          <div className="flex items-center justify-center w-7 h-7 rounded-full bg-destructive text-destructive-foreground text-[9px] ring-2 ring-destructive/30">
+          <div className="flex items-center justify-center w-7 h-7 rounded-full bg-destructive text-destructive-foreground text-xs ring-2 ring-destructive/30">
             ✕
+          </div>
+        </>
+      )}
+      {isGovernance && (
+        <>
+          <div className="w-6 h-[2px] rounded bg-[color:rgba(139,92,186,0.4)]" />
+          <div className="flex items-center justify-center w-7 h-7 rounded-full bg-[color:rgba(139,92,186,0.18)] text-[color:rgba(139,92,186,1)] text-xs ring-2 ring-[color:rgba(139,92,186,0.3)]">
+            ⊘
           </div>
         </>
       )}
@@ -82,6 +103,25 @@ function StateMachine({ currentState }: { currentState: string }) {
 // BlobViewer — shows Redis pointer + expandable "Read" button for data
 // ---------------------------------------------------------------------------
 
+const MAX_RESULT_DISPLAY = 100 * 1024; // 100KB
+
+function formatBlobData(data: unknown): string | null {
+  if (data == null) return null;
+  if (typeof data === "string") {
+    // Auto-parse JSON strings for pretty-printing
+    try {
+      const parsed = JSON.parse(data);
+      if (typeof parsed === "object" && parsed !== null) {
+        return JSON.stringify(parsed, null, 2);
+      }
+    } catch {
+      // Not JSON — display as-is
+    }
+    return data;
+  }
+  return JSON.stringify(data, null, 2);
+}
+
 function BlobViewer({ label, pointer, data, emptyText }: {
   label: string;
   pointer?: string;
@@ -89,6 +129,7 @@ function BlobViewer({ label, pointer, data, emptyText }: {
   emptyText: string;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [showFull, setShowFull] = useState(false);
 
   if (!pointer && data == null) {
     return (
@@ -98,9 +139,9 @@ function BlobViewer({ label, pointer, data, emptyText }: {
     );
   }
 
-  const formatted = data != null
-    ? (typeof data === "string" ? data : JSON.stringify(data, null, 2))
-    : null;
+  const formatted = formatBlobData(data);
+  const isTruncated = formatted != null && formatted.length > MAX_RESULT_DISPLAY && !showFull;
+  const displayText = isTruncated ? formatted.slice(0, MAX_RESULT_DISPLAY) : formatted;
 
   return (
     <div className="space-y-3">
@@ -123,9 +164,18 @@ function BlobViewer({ label, pointer, data, emptyText }: {
           )}
         </div>
       )}
-      {(expanded || !pointer) && formatted && (
-        <div className="surface-inset p-4 font-mono text-xs text-foreground overflow-auto max-h-[500px]">
-          <pre className="whitespace-pre-wrap break-all">{formatted}</pre>
+      {(expanded || !pointer) && displayText && (
+        <div>
+          <CodeBlock language="json" copyable maxHeight={500}>{displayText}</CodeBlock>
+          {isTruncated && (
+            <button
+              type="button"
+              onClick={() => setShowFull(true)}
+              className="mt-2 text-cordum hover:underline text-xs"
+            >
+              Show full result ({Math.round((formatted?.length ?? 0) / 1024)}KB)
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -180,7 +230,7 @@ function JobTerminal({ job }: { job: Job }) {
         <>
           {hasEvents && <div className="border-t border-border my-3" />}
           <div className="text-muted-foreground mb-1">--- Result ---</div>
-          <pre className="whitespace-pre-wrap break-all">{typeof job.result === "string" ? job.result : JSON.stringify(job.result, null, 2)}</pre>
+          <CodeBlock title="Result" language="json">{typeof job.result === "string" ? job.result : JSON.stringify(job.result, null, 2)}</CodeBlock>
         </>
       )}
     </div>
@@ -195,7 +245,7 @@ interface TimelineEntry {
   time: string;
   label: string;
   detail?: string;
-  variant: "cordum" | "warning" | "danger" | "muted";
+  variant: "cordum" | "warning" | "danger" | "muted" | "governance";
 }
 
 function JobTimeline({ job }: { job: Job }) {
@@ -211,7 +261,7 @@ function JobTimeline({ job }: { job: Job }) {
     if (job.safetyDecision?.type) {
       const t = job.createdAt; // safety eval happens at submit time
       const variant = job.safetyDecision.type === "allow" ? "cordum"
-        : job.safetyDecision.type === "deny" ? "danger"
+        : job.safetyDecision.type === "deny" ? "governance"
         : "warning";
       items.push({
         time: t,
@@ -246,8 +296,8 @@ function JobTimeline({ job }: { job: Job }) {
     }
 
     // Error
-    if (job.errorMessage) {
-      items.push({ time: job.updatedAt, label: "Error", detail: job.errorMessage, variant: "danger" });
+    if (job.errorMessage || job.status === "failed") {
+      items.push({ time: job.updatedAt, label: "Error", detail: job.errorMessage || `Job failed (no error message provided). Status code: ${job.errorCode || "unknown"}`, variant: "danger" });
     }
 
     // Final state
@@ -284,8 +334,11 @@ function JobTimeline({ job }: { job: Job }) {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold text-foreground">{entry.label}</span>
-              <span className="text-[10px] text-muted-foreground font-mono">
-                {formatRelativeTime(entry.time)}
+              <span
+                className="text-xs text-muted-foreground font-mono"
+                title={formatRelativeTime(entry.time)}
+              >
+                {new Date(entry.time).toLocaleString()}
               </span>
             </div>
             {entry.detail && (
@@ -301,10 +354,8 @@ function JobTimeline({ job }: { job: Job }) {
 export default function JobDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState("overview");
-  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
-  const cancelMut = useCancelJob();
-  const retryMut = useRetryJob();
+  // Cancel/retry handled by JobActions component
+  const isJobActive = (s?: string) => !!s && ["running", "dispatched", "pending", "scheduled"].includes(s);
 
   const { data: job, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["job", id],
@@ -315,10 +366,15 @@ export default function JobDetailPage() {
     enabled: !!id,
     refetchInterval: (query) => {
       const status = query.state.data?.status;
-      if (status && ["succeeded", "failed", "cancelled"].includes(status)) return false;
+      if (status && ["succeeded", "failed", "cancelled", "denied", "timeout", "output_quarantined"].includes(status)) return false;
       return 5_000;
     },
   });
+
+  const { formatted: elapsedFormatted, elapsed } = useElapsedTimer(
+    job?.createdAt,
+    isJobActive(job?.status),
+  );
 
   const copyId = () => {
     if (id) {
@@ -361,15 +417,6 @@ export default function JobDetailPage() {
     );
   }
 
-  const tabs = [
-    { id: "overview", label: "Overview" },
-    { id: "context", label: "Context" },
-    { id: "result", label: "Result" },
-    { id: "safety", label: "Safety Story" },
-    { id: "terminal", label: "Terminal" },
-    { id: "timeline", label: "Timeline" },
-  ];
-
   return (
     <div className="space-y-6">
       <PageHeader
@@ -377,33 +424,14 @@ export default function JobDetailPage() {
         title={`Job ${id?.slice(0, 12)}…`}
         subtitle={id || ""}
         actions={
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
             <StatusBadge variant={jobStatusVariant(job.status)} dot pulse={job.status === "running"}>
-              {job.status}
+              {job.status === "output_quarantined" ? "quarantined" : job.status}
             </StatusBadge>
             <button type="button" onClick={copyId} className="p-2 rounded-full hover:bg-surface-2 text-muted-foreground hover:text-foreground transition-colors" title="Copy Job ID">
               <Copy className="w-3.5 h-3.5" />
             </button>
-            {job.status === "failed" && (
-              <Button
-                variant="primary"
-                size="sm"
-                loading={retryMut.isPending}
-                onClick={() => retryMut.mutate({ id: job.id, topic: job.topic }, {
-                  onSuccess: () => toast.success("Job resubmitted for retry"),
-                  onError: () => toast.error("Failed to retry job"),
-                })}
-              >
-                <Play className="w-3 h-3 mr-1" />
-                Retry
-              </Button>
-            )}
-            {(job.status === "running" || job.status === "pending") && (
-              <Button variant="danger" size="sm" disabled={cancelMut.isPending} onClick={() => setShowCancelConfirm(true)}>
-                <XCircle className="w-3 h-3 mr-1" />
-                Cancel
-              </Button>
-            )}
+            <JobActions job={job} />
           </div>
         }
       />
@@ -419,7 +447,23 @@ export default function JobDetailPage() {
         </Button>
       </div>
 
-      {/* State Machine — showcase instrument card */}
+      {/* Safety Bypass Warning */}
+      {job.labels?.safety_bypassed === "true" && (
+        <div className={cn("flex items-center gap-3 px-4 py-3 rounded-xl border", "bg-[var(--color-warning)]/10 border-[var(--color-warning)]/30 text-[var(--color-warning)]")}>
+          <Shield className="w-5 h-5 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-semibold">Safety Bypassed</p>
+            <p className="text-xs opacity-80">
+              This job was allowed via fail-open because the Safety Kernel was unavailable.
+              {job.labels.safety_bypass_reason && (
+                <> Reason: {job.labels.safety_bypass_reason}</>
+              )}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* State Machine */}
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
@@ -429,235 +473,200 @@ export default function JobDetailPage() {
         <StateMachine currentState={job.status} />
       </motion.div>
 
-      {/* Tabs — showcase style */}
-      <div className="flex items-center gap-1 bg-surface-1 border border-border rounded-2xl p-0.5 w-fit">
-        {tabs.map((tab) => (
-          <button type="button"
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={cn(
-              "px-4 py-1.5 text-xs font-medium rounded transition-colors",
-              activeTab === tab.id
-                ? "bg-cordum/10 text-cordum"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Overview Tab */}
-      {activeTab === "overview" && (
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3 }}
-          className="grid grid-cols-1 lg:grid-cols-2 gap-4"
-        >
-          {/* Job Info */}
+      {/* ── A. Two-column summary ── */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0 }}
+        className="space-y-4"
+      >
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Job Identity — includes workflow context */}
           <div className="instrument-card">
             <div className="flex items-center gap-2 mb-4">
               <FileText className="w-4 h-4 text-cordum" />
-              <h3 className="font-display font-semibold text-sm text-foreground">Job Info</h3>
+              <h2 className="font-display font-semibold text-sm text-foreground">Job Identity</h2>
             </div>
             <dl className="grid grid-cols-[110px_1fr] gap-x-6 gap-y-3 items-baseline">
-              {[
+              {([
                 ["Topic", job.topic],
                 ["Tenant", job.tenant],
                 ["Team", job.team],
-                ["Actor", job.actorId ? `${job.actorId} (${job.actorType})` : "—"],
+                ["Actor", job.actorId ? `${job.actorId} (${job.actorType})` : undefined],
                 ["Capability", job.capability],
-                ["Attempts", String(job.attempts ?? 0)],
+                ["Attempts", job.attempts ? String(job.attempts) : undefined],
                 ["Trace ID", job.traceId],
-              ].map(([label, value]) => (
-                <div key={label} className="contents">
-                  <dt className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">{label}</dt>
-                  <dd className="text-sm text-foreground font-mono truncate">
-                    {value || "—"}
+                ["Workflow", job.workflowId],
+                ["Run", job.workflowRunId],
+              ] as [string, string | undefined][])
+                .filter(([, value]) => !!value)
+                .map(([label, value]) => (
+                  <div key={label} className="contents">
+                    <dt className="text-xs font-mono text-muted-foreground uppercase tracking-wider">{label}</dt>
+                    <dd className="text-sm text-foreground font-mono truncate">
+                      {label === "Workflow" ? (
+                        <button
+                          type="button"
+                          className="text-cordum hover:underline"
+                          onClick={() => navigate(`/workflows/${job.workflowId}/studio`)}
+                        >
+                          {value}
+                        </button>
+                      ) : label === "Run" && job.workflowId && job.workflowRunId ? (
+                        <button
+                          type="button"
+                          className="text-cordum hover:underline"
+                          onClick={() => navigate(`/workflows/${job.workflowId}/runs/${job.workflowRunId}`)}
+                        >
+                          {value}
+                        </button>
+                      ) : value}
+                    </dd>
+                  </div>
+                ))}
+              {isJobActive(job.status) && (
+                <div className="contents">
+                  <dt className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Elapsed</dt>
+                  <dd className="text-sm font-mono text-foreground flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-cordum animate-pulse" />
+                    {elapsedFormatted}
                   </dd>
                 </div>
-              ))}
+              )}
+              {isJobActive(job.status) && job.createdAt && (
+                <div className="contents">
+                  <dt className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Elapsed</dt>
+                  <dd className="text-sm font-mono text-foreground flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-[var(--color-info)]" />
+                    <span>{elapsedFormatted}</span>
+                    <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-info)] animate-pulse" />
+                  </dd>
+                </div>
+              )}
+              {!isJobActive(job.status) && job.createdAt && job.updatedAt && (
+                <div className="contents">
+                  <dt className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Duration</dt>
+                  <dd className="text-sm font-mono text-foreground">
+                    {formatDuration(new Date(job.updatedAt).getTime() - new Date(job.createdAt).getTime())}
+                  </dd>
+                </div>
+              )}
             </dl>
           </div>
 
           {/* Safety Decision */}
           <div className={cn(
             "instrument-card",
-            job.safetyDecision?.type === "deny" ? "status-danger" : job.safetyDecision?.type === "allow" ? "" : "",
+            job.safetyDecision?.type === "deny" && "status-danger",
           )}>
-            <div className="flex items-center gap-2 mb-4">
+            <div className="flex items-center gap-2 mb-3">
               <Shield className="w-4 h-4 text-cordum" />
-              <h3 className="font-display font-semibold text-sm text-foreground">Safety Decision</h3>
+              <h2 className="font-display font-semibold text-sm text-foreground">Safety Decision</h2>
             </div>
+            {job.safetyDecision?.type && (
+              <div className="mb-4">
+                <StatusBadge
+                  variant={
+                    job.safetyDecision.type === "allow" ? "healthy" :
+                    job.safetyDecision.type === "deny" ? "governance" :
+                    "warning"
+                  }
+                >
+                  {job.safetyDecision.type}
+                </StatusBadge>
+              </div>
+            )}
             <dl className="grid grid-cols-[110px_1fr] gap-x-6 gap-y-3 items-baseline">
-              {[
-                ["Decision", job.safetyDecision?.type],
+              {([
                 ["Reason", job.safetyDecision?.reason],
                 ["Rule ID", job.safetyDecision?.matchedRule],
-                ["Risk Tags", (job.riskTags ?? []).join(", ")],
-              ].map(([label, value]) => (
-                <div key={label} className="contents">
-                  <dt className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">{label}</dt>
-                  <dd className="text-sm text-foreground">
-                    {label === "Decision" && value ? (
-                      <StatusBadge
-                        variant={
-                          value === "allow" ? "healthy" :
-                          value === "deny" ? "danger" :
-                          "warning"
-                        }
-                      >
-                        {value}
-                      </StatusBadge>
-                    ) : (
-                      <span className="font-mono truncate">{value || "—"}</span>
-                    )}
-                  </dd>
-                </div>
-              ))}
+                ["Risk Tags", (job.riskTags ?? []).join(", ") || undefined],
+              ] as [string, string | undefined][])
+                .filter(([, value]) => !!value)
+                .map(([label, value]) => (
+                  <div key={label} className="contents">
+                    <dt className="text-xs font-mono text-muted-foreground uppercase tracking-wider">{label}</dt>
+                    <dd className="text-sm text-foreground font-mono truncate">{value}</dd>
+                  </div>
+                ))}
             </dl>
           </div>
+        </div>
 
-          {/* Workflow link */}
-          {job.workflowId && (
-            <div className="instrument-card lg:col-span-2">
-              <div className="flex items-center gap-2 mb-4">
-                <Workflow className="w-4 h-4 text-cordum" />
-                <h3 className="font-display font-semibold text-sm text-foreground">Workflow Context</h3>
-              </div>
-              <div className="flex items-center gap-6">
-                <div>
-                  <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Workflow</p>
-                  <p className="text-sm font-mono text-cordum mt-0.5">{job.workflowId}</p>
-                </div>
-                {job.workflowRunId && (
-                  <div>
-                    <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Run</p>
-                    <p className="text-sm font-mono text-cordum mt-0.5">{job.workflowRunId}</p>
-                  </div>
-                )}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="ml-auto"
-                  onClick={() => navigate(`/workflows/${job.workflowId}`)}
-                >
-                  View Workflow →
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {/* Error section */}
-          {job.errorMessage && (
-            <div className="instrument-card status-danger p-5 lg:col-span-2">
-              <div className="flex items-center gap-2 mb-4">
-                <AlertTriangle className="w-4 h-4 text-destructive" />
-                <h3 className="font-display font-semibold text-sm text-foreground">Error</h3>
-              </div>
-              <div className="rounded-2xl bg-destructive/5 border border-destructive/15 p-4">
-                <p className="text-sm font-mono text-destructive whitespace-pre-wrap">{job.errorMessage}</p>
-                {job.errorCode && (
-                  <p className="text-xs text-muted-foreground mt-2 font-mono">
-                    Code: {job.errorCode} {job.errorCodeEnum ? `(${job.errorCodeEnum})` : ""}
-                  </p>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Labels */}
-          {job.labels && Object.keys(job.labels).length > 0 && (
-            <div className="instrument-card lg:col-span-2">
-              <h3 className="font-display font-semibold text-sm text-foreground mb-3">Labels</h3>
-              <div className="flex flex-wrap gap-2">
-                {Object.entries(job.labels).map(([k, v]) => (
-                  <span key={k} className="text-xs font-mono px-2 py-1 rounded-full bg-surface-2 border border-border text-foreground">
-                    <span className="text-muted-foreground">{k}:</span> {v}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-        </motion.div>
-      )}
-
-      {/* Context Tab */}
-      {activeTab === "context" && (
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3 }}
-          className="instrument-card"
-        >
-          <div className="flex items-center gap-2 mb-4">
-            <FileText className="w-4 h-4 text-cordum" />
-            <h3 className="font-display font-semibold text-sm text-foreground">Job Context</h3>
+        {/* Labels — inline, no card wrapper */}
+        {job.labels && Object.keys(job.labels).length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(job.labels).map(([k, v]) => (
+              <span key={k} className="text-xs font-mono px-2 py-1 rounded-full bg-surface-2 border border-border text-foreground">
+                <span className="text-muted-foreground">{k}:</span> {v}
+              </span>
+            ))}
           </div>
-          <BlobViewer label="Context" pointer={job.contextPtr} data={job.context} emptyText="No context data available" />
-        </motion.div>
-      )}
+        )}
 
-      {/* Result Tab */}
-      {activeTab === "result" && (
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3 }}
-          className="instrument-card"
-        >
-          <div className="flex items-center gap-2 mb-4">
-            <CheckCircle2 className="w-4 h-4 text-cordum" />
-            <h3 className="font-display font-semibold text-sm text-foreground">Job Result</h3>
-          </div>
-          <BlobViewer
-            label="Result"
-            pointer={job.resultPtr}
-            data={job.result}
-            emptyText={
-              job.status === "running" || job.status === "pending" || job.status === "dispatched"
-                ? "Job is still running\u2026"
-                : "No result data available"
-            }
-          />
-        </motion.div>
-      )}
+        {/* Error — collapsible, right under tags */}
+        {(job.errorMessage || job.status === "failed") && (
+          <CollapsibleSection
+            title="Error"
+            defaultOpen={job.status === "failed"}
+            badge={<StatusBadge variant="danger">error</StatusBadge>}
+          >
+            <div className="rounded-2xl bg-destructive/5 border border-destructive/15 p-4">
+              <p className="text-sm font-mono text-destructive whitespace-pre-wrap">{job.errorMessage || `Job failed (no error message provided). Status code: ${job.errorCode || "unknown"}`}</p>
+              {job.errorCode && (
+                <p className="text-xs text-muted-foreground mt-2 font-mono">
+                  Code: {job.errorCode} {job.errorCodeEnum ? `(${job.errorCodeEnum})` : ""}
+                </p>
+              )}
+            </div>
+          </CollapsibleSection>
+        )}
+      </motion.div>
 
-      {/* Safety Story Tab */}
-      {activeTab === "safety" && (
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }} className="space-y-4">
+      {/* ── B. Safety Story — always visible ── */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.05 }}
+      >
+        <div className="flex items-center gap-2 mb-3">
+          <Shield className="w-4 h-4 text-cordum" />
+          <h2 className="font-display font-semibold text-sm text-foreground">Safety Story</h2>
+        </div>
+        <div className="space-y-4">
           {/* Step 1: Input Evaluation */}
           <div className="instrument-card p-0 overflow-hidden">
             <div className="px-5 py-3 border-b border-border bg-surface-0 flex items-center gap-2">
-              <div className="w-5 h-5 rounded-full bg-cordum/15 flex items-center justify-center text-[10px] font-mono font-bold text-cordum">1</div>
+              <div className="w-5 h-5 rounded-full bg-cordum/15 flex items-center justify-center text-xs font-mono font-bold text-cordum">1</div>
               <span className="text-xs font-mono font-medium text-foreground">Input Policy Evaluation</span>
-              <StatusBadge variant={job.safetyDecision?.type === "deny" ? "danger" : job.safetyDecision?.type === "require_approval" ? "warning" : "healthy"}>
+              <StatusBadge variant={job.safetyDecision?.type === "deny" ? "governance" : job.safetyDecision?.type === "require_approval" ? "warning" : "healthy"}>
                 {job.safetyDecision?.type ?? "no evaluation"}
               </StatusBadge>
             </div>
             <div className="p-5 space-y-3">
               <dl className="grid grid-cols-[120px_1fr] gap-x-6 gap-y-3 items-baseline">
-                {[
-                  ["Decision", job.safetyDecision?.type ?? "\u2014"],
-                  ["Reason", job.safetyDecision?.reason ?? "\u2014"],
-                  ["Matched Rule", job.safetyDecision?.matchedRule ?? "\u2014"],
-                  ["Eval Time", job.safetyDecision?.evalTimeMs ? `${job.safetyDecision.evalTimeMs}ms` : "\u2014"],
-                ].map(([label, value]) => (
-                  <div key={label} className="contents">
-                    <dt className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">{label}</dt>
-                    <dd className="text-sm font-mono text-foreground">{value}</dd>
-                  </div>
-                ))}
+                {([
+                  ["Decision", job.safetyDecision?.type],
+                  ["Reason", job.safetyDecision?.reason],
+                  ["Matched Rule", job.safetyDecision?.matchedRule],
+                  ["Eval Time", job.safetyDecision?.evalTimeMs ? `${job.safetyDecision.evalTimeMs}ms` : undefined],
+                ] as [string, string | undefined][])
+                  .filter(([, value]) => !!value)
+                  .map(([label, value]) => (
+                    <div key={label} className="contents">
+                      <dt className="text-xs font-mono text-muted-foreground uppercase tracking-wider">{label}</dt>
+                      <dd className="text-sm font-mono text-foreground">{value}</dd>
+                    </div>
+                  ))}
               </dl>
               {/* Evaluation path */}
               {job.safetyDecision?.evalPath && job.safetyDecision.evalPath.length > 0 && (
                 <div className="mt-3">
-                  <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-2">Evaluation Path</p>
+                  <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-2">Evaluation Path</p>
                   <div className="flex items-center gap-1 flex-wrap">
                     {job.safetyDecision.evalPath.map((step, stepIdx) => (
                       <span key={step} className="inline-flex items-center">
-                        <span className="px-2 py-0.5 rounded bg-surface-1 border border-border text-[10px] font-mono text-foreground">{step}</span>
+                        <span className="px-2 py-0.5 rounded bg-surface-1 border border-border text-xs font-mono text-foreground">{step}</span>
                         {stepIdx < (job.safetyDecision?.evalPath?.length ?? 0) - 1 && <span className="text-muted-foreground mx-1">&rarr;</span>}
                       </span>
                     ))}
@@ -667,24 +676,10 @@ export default function JobDetailPage() {
             </div>
           </div>
 
-          {/* Step 2: Constraints Applied */}
-          {job.safetyDecision?.type === "allow_with_constraints" && (
-            <div className="instrument-card p-0 overflow-hidden">
-              <div className="px-5 py-3 border-b border-border bg-surface-0 flex items-center gap-2">
-                <div className="w-5 h-5 rounded-full bg-[var(--color-warning)]/15 flex items-center justify-center text-[10px] font-mono font-bold text-[var(--color-warning)]">2</div>
-                <span className="text-xs font-mono font-medium text-foreground">Constraints Applied</span>
-                <StatusBadge variant="warning">constrained</StatusBadge>
-              </div>
-              <div className="p-5">
-                <p className="text-xs text-muted-foreground">This job was allowed with constraints. Connect to a live Cordum instance to see constraint details.</p>
-              </div>
-            </div>
-          )}
-
-          {/* Step 3: Output Evaluation */}
+          {/* Step 2: Output Evaluation */}
           <div className={cn("instrument-card p-0 overflow-hidden", job.output_safety?.decision === "QUARANTINE" ? "status-danger" : "")}>
             <div className="px-5 py-3 border-b border-border bg-surface-0 flex items-center gap-2">
-              <div className="w-5 h-5 rounded-full bg-[var(--color-info)]/15 flex items-center justify-center text-[10px] font-mono font-bold text-[var(--color-info)]">{job.safetyDecision?.type === "allow_with_constraints" ? "3" : "2"}</div>
+              <div className="w-5 h-5 rounded-full bg-[var(--color-info)]/15 flex items-center justify-center text-xs font-mono font-bold text-[var(--color-info)]">2</div>
               <span className="text-xs font-mono font-medium text-foreground">Output Policy Evaluation</span>
               {job.output_safety ? (
                 <StatusBadge variant={job.output_safety.decision === "ALLOW" ? "healthy" : job.output_safety.decision === "REDACT" ? "warning" : "danger"}>
@@ -699,34 +694,34 @@ export default function JobDetailPage() {
                 <>
                   <dl className="grid grid-cols-[120px_1fr] gap-x-6 gap-y-3 items-baseline">
                     <div className="contents">
-                      <dt className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Decision</dt>
+                      <dt className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Decision</dt>
                       <dd><StatusBadge variant={job.output_safety.decision === "ALLOW" ? "healthy" : "danger"}>{job.output_safety.decision}</StatusBadge></dd>
                     </div>
                     {job.output_safety.reason && (
                       <div className="contents">
-                        <dt className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Reason</dt>
+                        <dt className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Reason</dt>
                         <dd className="text-sm font-mono text-foreground">{job.output_safety.reason}</dd>
                       </div>
                     )}
                     {job.output_safety.rule_id && (
                       <div className="contents">
-                        <dt className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Rule</dt>
+                        <dt className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Rule</dt>
                         <dd className="text-sm font-mono text-foreground">{job.output_safety.rule_id}</dd>
                       </div>
                     )}
                   </dl>
                   {Array.isArray(job.output_safety.findings) && job.output_safety.findings.length > 0 && (
                     <div className="mt-3 space-y-2">
-                      <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Findings</p>
+                      <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Findings</p>
                       {job.output_safety.findings.map((f: OutputFinding) => (
                         <div key={`${f.type}-${f.scanner ?? ""}-${f.detail.slice(0, 40)}`} className="surface-inset p-3">
                           <div className="flex items-center gap-2 mb-1">
                             <StatusBadge variant={f.severity === "critical" ? "danger" : f.severity === "high" ? "warning" : "muted"}>{f.severity}</StatusBadge>
                             <span className="text-xs font-mono text-foreground">{f.type}</span>
-                            {f.scanner && <span className="text-[10px] text-muted-foreground">via {f.scanner}</span>}
+                            {f.scanner && <span className="text-xs text-muted-foreground">via {f.scanner}</span>}
                           </div>
                           <p className="text-xs text-muted-foreground">{f.detail}</p>
-                          {f.matched_pattern && <p className="text-[10px] font-mono text-destructive mt-1">Pattern: {f.matched_pattern}</p>}
+                          {f.matched_pattern && <p className="text-xs font-mono text-destructive mt-1">Pattern: {f.matched_pattern}</p>}
                         </div>
                       ))}
                     </div>
@@ -734,7 +729,7 @@ export default function JobDetailPage() {
                   {/* Redaction preview */}
                   {job.output_safety.decision === "REDACT" && job.output_safety.redacted_ptr && (
                     <div className="mt-3">
-                      <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-2">Redacted Output</p>
+                      <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-2">Redacted Output</p>
                       <BlobViewer
                         label="Redacted"
                         pointer={job.output_safety.redacted_ptr}
@@ -749,59 +744,60 @@ export default function JobDetailPage() {
               )}
             </div>
           </div>
-        </motion.div>
-      )}
+        </div>
+      </motion.div>
 
-      {/* Terminal Tab */}
-      {activeTab === "terminal" && (
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }} className="instrument-card">
-          <div className="flex items-center gap-2 mb-4">
-            <FileText className="w-4 h-4 text-cordum" />
-            <h3 className="font-display font-semibold text-sm text-foreground">Terminal Output</h3>
-          </div>
-          <div className="surface-inset p-4 font-mono text-xs text-foreground min-h-[200px] max-h-[500px] overflow-auto">
-            <JobTerminal job={job} />
-          </div>
-        </motion.div>
-      )}
+      {/* ── C. Timeline — always visible ── */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.1 }}
+        className="instrument-card"
+      >
+        <div className="flex items-center gap-2 mb-4">
+          <Clock className="w-4 h-4 text-cordum" />
+          <h2 className="font-display font-semibold text-sm text-foreground">Event Timeline</h2>
+        </div>
+        <JobTimeline job={job} />
+      </motion.div>
 
-      {/* Timeline Tab */}
-      {activeTab === "timeline" && (
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3 }}
-          className="instrument-card"
-        >
-          <div className="flex items-center gap-2 mb-4">
-            <Clock className="w-4 h-4 text-cordum" />
-            <h3 className="font-display font-semibold text-sm text-foreground">Event Timeline</h3>
+      {/* ── E. Collapsed drawers ── */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.2 }}
+        className="space-y-4"
+      >
+        <CollapsibleSection title="Context payload" defaultOpen={false}>
+          <div className="instrument-card">
+            <BlobViewer label="Context" pointer={job.contextPtr} data={job.context} emptyText="No context data available" />
           </div>
-          <JobTimeline job={job} />
-        </motion.div>
-      )}
+        </CollapsibleSection>
 
-      <ConfirmDialog
-        open={showCancelConfirm}
-        onClose={() => setShowCancelConfirm(false)}
-        onConfirm={() => {
-          cancelMut.mutate(job.id, {
-            onSuccess: () => {
-              toast.success("Job cancelled");
-              setShowCancelConfirm(false);
-            },
-            onError: () => {
-              toast.error("Failed to cancel job");
-              setShowCancelConfirm(false);
-            },
-          });
-        }}
-        title="Cancel Job"
-        description={`Cancel job ${job.id.slice(0, 12)}…? This will stop the job if it is currently running.`}
-        confirmLabel="Cancel Job"
-        variant="destructive"
-        loading={cancelMut.isPending}
-      />
+        <CollapsibleSection title="Raw output" defaultOpen={false}>
+          <div className="space-y-4">
+            <div className="instrument-card">
+              <BlobViewer
+                label="Result"
+                pointer={job.resultPtr}
+                data={job.result}
+                emptyText={
+                  ["running", "pending", "dispatched"].includes(job.status)
+                    ? "Job is still running\u2026"
+                    : "No result data available"
+                }
+              />
+            </div>
+            <div className="instrument-card">
+              <div className="surface-inset p-4 font-mono text-xs text-foreground min-h-[200px] max-h-[500px] overflow-auto">
+                <JobTerminal job={job} />
+              </div>
+            </div>
+          </div>
+        </CollapsibleSection>
+      </motion.div>
+
+      {/* Cancel/retry/remediate dialogs are handled by JobActions */}
     </div>
   );
 }

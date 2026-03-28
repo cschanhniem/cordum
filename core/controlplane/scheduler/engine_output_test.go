@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -319,7 +320,7 @@ func TestHandleJobResultSecretContentEventuallyQuarantined(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new redis client: %v", err)
 	}
-	defer resultClient.Close()
+	defer func() { _ = resultClient.Close() }()
 
 	secret := []byte("leak AKIA1234567890ABCDEF in output")
 	if err := resultClient.Set(context.Background(), "res:job-real-secret", secret, 0).Err(); err != nil {
@@ -392,7 +393,7 @@ func TestHandleJobResultCleanContentRemainsAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new redis client: %v", err)
 	}
-	defer resultClient.Close()
+	defer func() { _ = resultClient.Close() }()
 
 	if err := resultClient.Set(context.Background(), "res:job-real-clean", []byte("safe output"), 0).Err(); err != nil {
 		t.Fatalf("seed result content: %v", err)
@@ -573,5 +574,87 @@ func TestAsyncOutputWaitGroupTracked(t *testing.T) {
 
 	if checker.contentCalls.Load() != 1 {
 		t.Fatalf("expected 1 content call, got %d", checker.contentCalls.Load())
+	}
+}
+
+// failingSagaStore is a sagaJobStore whose SetState fails for a specific target state.
+type failingSagaStore struct {
+	*sagaJobStore
+	failOnState JobState
+	setStateErr error
+}
+
+func (s *failingSagaStore) SetState(ctx context.Context, jobID string, state JobState) error {
+	if state == s.failOnState {
+		return s.setStateErr
+	}
+	return s.sagaJobStore.SetState(ctx, jobID, state)
+}
+
+// TestAsyncQuarantineStateFailureEmitsDLQ verifies that when the quarantine
+// state transition fails after all retries, a DLQ entry with error_code
+// "quarantine_failed" is emitted so operators can investigate.
+func TestAsyncQuarantineStateFailureEmitsDLQ(t *testing.T) {
+	jobID := "job-quarantine-fail"
+	base := newSagaJobStore()
+	base.states[jobID] = JobStateRunning
+	base.topics[jobID] = "job.default"
+	base.reqs[jobID] = &pb.JobRequest{JobId: jobID, Topic: "job.default", TenantId: "t"}
+
+	store := &failingSagaStore{
+		sagaJobStore: base,
+		failOnState:  JobStateQuarantined,
+		setStateErr:  fmt.Errorf("redis unavailable"),
+	}
+
+	checker := &stubOutputChecker{
+		metaRecord:    OutputSafetyRecord{Decision: OutputAllow, Reason: "ok"},
+		contentRecord: OutputSafetyRecord{Decision: OutputQuarantine, Reason: "PII detected"},
+	}
+	bus := &fakeBus{}
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil).
+		WithOutputChecker(checker).
+		WithOutputSafetyEnabled(true)
+
+	err := engine.handleJobResult(&pb.JobResult{
+		JobId:     jobID,
+		Status:    pb.JobStatus_JOB_STATUS_SUCCEEDED,
+		ResultPtr: "redis://res:" + jobID,
+	})
+	if err != nil {
+		t.Fatalf("handle result: %v", err)
+	}
+
+	// Wait for async goroutine to finish (with retries + backoff, takes ~6s max).
+	done := make(chan struct{})
+	go func() {
+		engine.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		t.Fatal("async quarantine goroutine never finished")
+	}
+
+	// Job should NOT be in quarantined state (state transition failed).
+	ctx := context.Background()
+	state, _ := store.GetState(ctx, jobID)
+	if state == JobStateQuarantined {
+		t.Fatalf("expected job NOT quarantined (state transition should have failed), got %s", state)
+	}
+
+	// Verify a DLQ entry was emitted with quarantine_failed error code.
+	published := bus.snapshotPublished()
+	foundQuarantineFailDLQ := false
+	for _, msg := range published {
+		jr := msg.packet.GetJobResult()
+		if msg.subject == capsdk.SubjectDLQ && jr != nil && jr.GetErrorCode() == "quarantine_failed" {
+			foundQuarantineFailDLQ = true
+			break
+		}
+	}
+	if !foundQuarantineFailDLQ {
+		t.Fatalf("expected quarantine_failed DLQ entry, published: %d messages", len(published))
 	}
 }

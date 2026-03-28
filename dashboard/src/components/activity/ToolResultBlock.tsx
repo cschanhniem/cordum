@@ -1,4 +1,5 @@
 import { CheckCircle2, AlertTriangle, Clock } from "lucide-react";
+import { CodeBlock } from "../ui/CodeBlock";
 import { formatRelative } from "../../lib/format";
 import type { ActivityItem } from "../../types/activity";
 
@@ -16,7 +17,7 @@ export function ToolResultBlock({ activity }: Props) {
           <Icon className={`h-4 w-4 ${isError ? "text-danger" : "text-success"}`} />
           <div className="text-sm font-semibold text-ink">Tool result</div>
         </div>
-        <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+        <div className="flex items-center gap-3 text-xs text-muted-foreground">
           {activity.payload?.latency_ms ? (
             <span className="flex items-center gap-1">
               <Clock className="h-3 w-3" />
@@ -27,9 +28,9 @@ export function ToolResultBlock({ activity }: Props) {
         </div>
       </div>
       {activity.payload?.tool_output ? (
-        <pre className="mt-3 rounded-xl bg-card/80 p-3 text-[11px] text-ink">
-          {JSON.stringify(activity.payload.tool_output, null, 2)}
-        </pre>
+        <div className="mt-3">
+          <CodeBlock language="json" maxHeight={200}>{JSON.stringify(activity.payload.tool_output, null, 2)}</CodeBlock>
+        </div>
       ) : (
         <div className="mt-2 text-xs text-muted-foreground">No output recorded.</div>
       )}

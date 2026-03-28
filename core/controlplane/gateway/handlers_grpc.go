@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/infra/secrets"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
@@ -75,6 +76,230 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 
 	jobID := uuid.NewString()
 	traceID := uuid.NewString()
+
+	// --- Build payloadReq, validate, and detect secrets (before policy check) ---
+	payloadReq := submitJobRequest{
+		Prompt:         req.GetPrompt(),
+		Topic:          req.GetTopic(),
+		AdapterId:      req.GetAdapterId(),
+		Priority:       req.GetPriority(),
+		TenantId:       orgID,
+		PrincipalId:    principalID,
+		OrgId:          orgID,
+		ActorId:        req.GetActorId(),
+		ActorType:      req.GetActorType(),
+		IdempotencyKey: req.GetIdempotencyKey(),
+		PackId:         req.GetPackId(),
+		Capability:     req.GetCapability(),
+		RiskTags:       req.GetRiskTags(),
+		Requires:       req.GetRequires(),
+		Labels:         req.GetLabels(),
+		MemoryId:       req.GetMemoryId(),
+	}
+	rawMemoryID := strings.TrimSpace(req.GetMemoryId())
+	explicitMemoryID := store.NormalizeMemoryID(rawMemoryID)
+	if rawMemoryID != "" && explicitMemoryID == "" {
+		return nil, status.Error(codes.InvalidArgument, "invalid memory id")
+	}
+	if explicitMemoryID != "" {
+		if err := s.enforceMemoryID(ctx, orgID, req.GetTeamId(), "", "", explicitMemoryID); err != nil {
+			var perr memoryPolicyError
+			if errors.As(err, &perr) {
+				switch perr.status {
+				case http.StatusForbidden:
+					return nil, status.Error(codes.PermissionDenied, perr.msg)
+				case http.StatusServiceUnavailable:
+					return nil, status.Error(codes.Unavailable, perr.msg)
+				default:
+					return nil, status.Error(codes.InvalidArgument, perr.msg)
+				}
+			}
+			return nil, status.Error(codes.Internal, "memory policy check failed")
+		}
+	}
+	payloadReq.MemoryId = explicitMemoryID
+	payloadReq.applyDefaults(s.tenant)
+	if err := payloadReq.validate(s.tenant); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	secretsPresent := secrets.ContainsSecretRefs(payloadReq.Prompt)
+	if secretsPresent {
+		payloadReq.RiskTags = appendUniqueTag(payloadReq.RiskTags, "secrets")
+		if payloadReq.Labels == nil {
+			payloadReq.Labels = map[string]string{}
+		}
+		payloadReq.Labels["secrets_present"] = "true"
+	}
+
+	memoryID := payloadReq.MemoryId
+	if memoryID == "" {
+		memoryID = deriveMemoryIDFromReq(payloadReq.Topic, "", jobID)
+	}
+
+	// --- Build metadata (needed for policy check) ---
+	actorID := strings.TrimSpace(payloadReq.ActorId)
+	if actorID == "" {
+		actorID = principalID
+	}
+	meta := &pb.JobMetadata{
+		TenantId:       orgID,
+		ActorId:        actorID,
+		ActorType:      parseActorType(payloadReq.ActorType),
+		IdempotencyKey: strings.TrimSpace(payloadReq.IdempotencyKey),
+		Capability:     strings.TrimSpace(payloadReq.Capability),
+		RiskTags:       append([]string{}, payloadReq.RiskTags...),
+		Requires:       append([]string{}, payloadReq.Requires...),
+		PackId:         strings.TrimSpace(payloadReq.PackId),
+	}
+	if len(payloadReq.Labels) > 0 {
+		meta.Labels = payloadReq.Labels
+	}
+
+	maxInput := int64(8000)
+	maxOutput := int64(1024)
+
+	// --- Submit-time policy check (before any state persistence) ---
+	policyResult := s.evaluateSubmitPolicy(ctx, jobID, payloadReq.Topic, orgID, principalID, payloadReq.Priority, meta, payloadReq.Labels, &pb.Budget{
+		MaxInputTokens:  maxInput,
+		MaxOutputTokens: maxOutput,
+	}, memoryID)
+	if policyResult.Denied {
+		reason := "policy denied"
+		if policyResult.Reason != "" {
+			reason = policyResult.Reason
+		}
+		actorForAudit, roleForAudit := "anonymous", "none"
+		if ac := authFromContext(ctx); ac != nil {
+			actorForAudit, roleForAudit = ac.PrincipalID, ac.Role
+		}
+		s.appendAuditEntryNamed(ctx, "submit_denied", "job", jobID, payloadReq.Topic, actorForAudit, roleForAudit, "submit-time policy denied: "+reason)
+		return nil, status.Error(codes.PermissionDenied, reason)
+	}
+	if policyResult.Throttled {
+		reason := "policy throttled"
+		if policyResult.Reason != "" {
+			reason = policyResult.Reason
+		}
+		return nil, status.Error(codes.ResourceExhausted, reason)
+	}
+	if policyResult.ApprovalRequired {
+		slog.Info("submit-time policy requires approval",
+			"job_id", jobID, "topic", payloadReq.Topic, "reason", policyResult.Reason)
+		actorForAudit, roleForAudit := "anonymous", "none"
+		if ac := authFromContext(ctx); ac != nil {
+			actorForAudit, roleForAudit = ac.PrincipalID, ac.Role
+		}
+		s.appendAuditEntryNamed(ctx, "submit_approval_required", "job", jobID, payloadReq.Topic, actorForAudit, roleForAudit, "submit-time policy requires approval: "+policyResult.Reason)
+
+		// Reserve idempotency key to prevent duplicate approval jobs.
+		if key != "" && s.jobStore != nil {
+			reserved, existingID, err := s.jobStore.TrySetIdempotencyKeyScoped(ctx, orgID, key, jobID)
+			if err != nil {
+				return nil, status.Error(codes.Internal, "idempotency reservation failed")
+			}
+			if !reserved {
+				if existingID == "" {
+					existingID, _ = s.jobStore.GetJobByIdempotencyKeyScoped(ctx, orgID, key)
+				}
+				if existingID != "" {
+					return &pb.SubmitJobResponse{JobId: existingID, TraceId: traceID}, nil
+				}
+				return nil, status.Error(codes.AlreadyExists, "idempotency key already used")
+			}
+		}
+
+		// Build and persist the full job context + request so the approval
+		// endpoint can retrieve, hash-validate, and publish them later.
+		ctxKey := store.MakeContextKey(jobID)
+		ctxPtr := store.PointerForKey(ctxKey)
+		jobPriority := parsePriority(req.GetPriority())
+		envVars := map[string]string{
+			"tenant_id":         orgID,
+			"memory_id":         memoryID,
+			"context_mode":      "",
+			"max_input_tokens":  fmt.Sprintf("%d", maxInput),
+			"max_output_tokens": fmt.Sprintf("%d", maxOutput),
+		}
+		if team := req.GetTeamId(); team != "" {
+			envVars["team_id"] = team
+		}
+		if project := req.GetProjectId(); project != "" {
+			envVars["project_id"] = project
+		}
+		payload := map[string]any{
+			"prompt": payloadReq.Prompt, "adapter_id": payloadReq.AdapterId,
+			"priority": payloadReq.Priority, "topic": payloadReq.Topic,
+			"created_at": time.Now().UTC().Format(time.RFC3339), "tenant_id": orgID,
+		}
+		payloadBytes, _ := json.Marshal(payload)
+		if s.memStore != nil {
+			if err := s.memStore.PutContext(ctx, ctxKey, payloadBytes); err != nil {
+				slog.Error("failed to persist approval job context", "job_id", jobID, "error", err)
+			}
+		}
+
+		jobReq := &pb.JobRequest{
+			JobId: jobID, Topic: payloadReq.Topic, Priority: jobPriority,
+			ContextPtr: ctxPtr, AdapterId: payloadReq.AdapterId, Env: envVars,
+			MemoryId: memoryID, TenantId: orgID, PrincipalId: principalID,
+			Labels: payloadReq.Labels, Meta: meta,
+			ContextHints: &pb.ContextHints{
+				MaxInputTokens: int32(maxInput), AllowSummarization: false,
+				AllowRetrieval: false,
+			},
+			Budget: &pb.Budget{
+				MaxInputTokens: maxInput, MaxOutputTokens: maxOutput,
+			},
+		}
+
+		if s.jobStore != nil {
+			if err := s.jobStore.SetState(ctx, jobID, model.JobStateApproval); err != nil {
+				slog.Error("failed to set approval state", "job_id", jobID, "error", err)
+				return nil, status.Error(codes.Unavailable, "failed to initialize job state")
+			}
+			if err := s.jobStore.SetTopic(ctx, jobID, payloadReq.Topic); err != nil {
+				slog.Error("failed to set job topic", "job_id", jobID, "error", err)
+			}
+			if err := s.jobStore.SetTenant(ctx, jobID, orgID); err != nil {
+				slog.Error("failed to set job tenant", "job_id", jobID, "error", err)
+			}
+			if err := s.jobStore.AddJobToTrace(ctx, traceID, jobID); err != nil {
+				slog.Error("failed to add approval job to trace", "job_id", jobID, "error", err)
+			}
+			if err := s.jobStore.SetJobMeta(ctx, jobReq); err != nil {
+				slog.Error("failed to persist approval job metadata", "job_id", jobID, "error", err)
+			}
+			if err := s.jobStore.SetJobRequest(ctx, jobReq); err != nil {
+				slog.Error("failed to persist approval job request", "job_id", jobID, "error", err)
+			}
+
+			jobHash, _ := scheduler.HashJobRequest(jobReq)
+			safetyRecord := model.SafetyDecisionRecord{
+				Decision:         model.SafetyRequireApproval,
+				Reason:           policyResult.Reason,
+				RuleID:           policyResult.RuleId,
+				PolicySnapshot:   policyResult.PolicySnapshot,
+				Constraints:      policyResult.Constraints,
+				ApprovalRequired: true,
+				ApprovalRef:      jobID,
+				JobHash:          jobHash,
+				Remediations:     policyResult.Remediations,
+				CheckedAt:        time.Now().UnixMicro(),
+			}
+			if err := s.jobStore.SetSafetyDecision(ctx, jobID, safetyRecord); err != nil {
+				slog.Error("failed to persist safety decision for approval", "job_id", jobID, "error", err)
+			}
+		}
+		return &pb.SubmitJobResponse{
+			JobId:   jobID,
+			TraceId: traceID,
+			Status:  "approval_required",
+			Reason:  policyResult.Reason,
+		}, nil
+	}
+
+	// --- Idempotency reservation (after policy check to avoid orphaned keys) ---
 	if key != "" && s.jobStore != nil {
 		reserved, existingID, err := s.jobStore.TrySetIdempotencyKeyScoped(ctx, orgID, key, jobID)
 		if err != nil {
@@ -99,64 +324,14 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 	ctxPtr := store.PointerForKey(ctxKey)
 	jobPriority := parsePriority(req.GetPriority())
 
-	payloadReq := submitJobRequest{
-		Prompt:         req.GetPrompt(),
-		Topic:          req.GetTopic(),
-		AdapterId:      req.GetAdapterId(),
-		Priority:       req.GetPriority(),
-		TenantId:       orgID, // Use OrgId for TenantId in payloadReq
-		PrincipalId:    principalID,
-		OrgId:          orgID,
-		ActorId:        req.GetActorId(),
-		ActorType:      req.GetActorType(),
-		IdempotencyKey: req.GetIdempotencyKey(),
-		PackId:         req.GetPackId(),
-		Capability:     req.GetCapability(),
-		RiskTags:       req.GetRiskTags(),
-		Requires:       req.GetRequires(),
-		Labels:         req.GetLabels(),
-		MemoryId:       req.GetMemoryId(),
-		// SubmitJobRequest does not carry budget limits yet; defaults are applied below.
-	}
-	rawMemoryID := strings.TrimSpace(req.GetMemoryId())
-	explicitMemoryID := store.NormalizeMemoryID(rawMemoryID)
-	if rawMemoryID != "" && explicitMemoryID == "" {
-		return nil, status.Error(codes.InvalidArgument, "invalid memory id")
-	}
-	if explicitMemoryID != "" {
-		if err := s.enforceMemoryID(ctx, orgID, req.GetTeamId(), "", "", explicitMemoryID); err != nil {
-			var perr memoryPolicyError
-			if errors.As(err, &perr) {
-				switch perr.status {
-				case http.StatusForbidden:
-					return nil, status.Error(codes.PermissionDenied, perr.msg)
-				case http.StatusServiceUnavailable:
-					return nil, status.Error(codes.Unavailable, perr.msg)
-				default:
-					return nil, status.Error(codes.InvalidArgument, perr.msg)
-				}
-			}
-			return nil, status.Error(codes.Internal, "memory policy check failed")
-		}
-	}
-	payloadReq.MemoryId = explicitMemoryID
-	// For gRPC, validation of basic fields like prompt, topic happens earlier via protobuf definition
-	// For complex validation rules, we can still use a simplified applyDefaults and validate for payloadReq.
-	payloadReq.applyDefaults(s.tenant)
-	// Basic validation, primarily for prompt length and topic prefix
-	if err := payloadReq.validate(s.tenant); err != nil {
-		return nil, status.Error(codes.InvalidArgument, err.Error())
-	}
-
 	payload := map[string]any{
 		"prompt":     payloadReq.Prompt,
 		"adapter_id": payloadReq.AdapterId,
 		"priority":   payloadReq.Priority,
 		"topic":      payloadReq.Topic,
 		"created_at": time.Now().UTC().Format(time.RFC3339),
-		"tenant_id":  orgID, // Use OrgId here
+		"tenant_id":  orgID,
 	}
-	// Context is not directly passed in SubmitJobRequest, but could be added
 	payloadBytes, _ := json.Marshal(payload)
 	if s.memStore == nil {
 		return nil, status.Error(codes.Unavailable, "memory store unavailable")
@@ -178,23 +353,8 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 	if err := s.jobStore.SetTenant(ctx, jobID, orgID); err != nil {
 		slog.Error("failed to set job tenant", "job_id", jobID, "error", err)
 		return nil, status.Error(codes.Unavailable, "failed to initialize job metadata")
-	} // Use OrgId here
-
-	secretsPresent := secrets.ContainsSecretRefs(payloadReq.Prompt)
-	if secretsPresent {
-		payloadReq.RiskTags = appendUniqueTag(payloadReq.RiskTags, "secrets")
-		if payloadReq.Labels == nil {
-			payloadReq.Labels = map[string]string{}
-		}
-		payloadReq.Labels["secrets_present"] = "true"
 	}
 
-	maxInput := int64(8000)
-	maxOutput := int64(1024)
-	memoryID := payloadReq.MemoryId
-	if memoryID == "" {
-		memoryID = deriveMemoryIDFromReq(payloadReq.Topic, "", jobID)
-	}
 	envVars := map[string]string{
 		"tenant_id":         orgID,
 		"memory_id":         memoryID,
@@ -210,24 +370,6 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 	}
 	if mode := parseContextMode(payloadReq.Topic, ""); mode != "" {
 		envVars["context_mode"] = mode
-	}
-
-	actorID := strings.TrimSpace(payloadReq.ActorId)
-	if actorID == "" {
-		actorID = principalID
-	}
-	meta := &pb.JobMetadata{
-		TenantId:       orgID,
-		ActorId:        actorID,
-		ActorType:      parseActorType(payloadReq.ActorType),
-		IdempotencyKey: strings.TrimSpace(payloadReq.IdempotencyKey),
-		Capability:     strings.TrimSpace(payloadReq.Capability),
-		RiskTags:       append([]string{}, payloadReq.RiskTags...),
-		Requires:       append([]string{}, payloadReq.Requires...),
-		PackId:         strings.TrimSpace(payloadReq.PackId),
-	}
-	if len(payloadReq.Labels) > 0 {
-		meta.Labels = payloadReq.Labels
 	}
 
 	jobReq := &pb.JobRequest{

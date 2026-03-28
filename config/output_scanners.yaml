@@ -49,7 +49,7 @@ scanners:
 
   pii:
     finding_type: pii
-    description: "Detect common personal data and payment card artifacts."
+    description: "Detect common personal data, payment card artifacts, and Israeli PII."
     patterns:
       - name: email_address
         regex: "\\b[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}\\b"
@@ -61,6 +61,24 @@ scanners:
         confidence: 0.95
       - name: credit_card
         regex: "\\b(?:\\d[ -]*?){13,19}\\b"
+        severity: high
+        confidence: 0.88
+        context_required: true
+      - name: israeli_national_id
+        regex: "\\b\\d{9}\\b"
+        severity: high
+        confidence: 0.85
+        context_required: true
+      - name: israeli_mobile
+        regex: "\\b05\\d-?\\d{3}-?\\d{4}\\b"
+        severity: high
+        confidence: 0.92
+      - name: israeli_intl_mobile
+        regex: "\\+972-?5\\d-?\\d{3}-?\\d{4}\\b"
+        severity: high
+        confidence: 0.95
+      - name: israeli_bank_account
+        regex: "\\b\\d{2}-\\d{3}-\\d{5,6}\\b"
         severity: high
         confidence: 0.88
         context_required: true

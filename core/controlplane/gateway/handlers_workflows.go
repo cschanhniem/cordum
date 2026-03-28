@@ -859,7 +859,7 @@ func (s *server) handleDeleteRun(w http.ResponseWriter, r *http.Request) {
 		// orphaned NATS messages from completed jobs arriving after deletion.
 		// Best-effort: if cancel fails, proceed with deletion anyway — the
 		// gateway-side ErrRunNotFound discard handles any stragglers.
-		if s.workflowEng != nil && run.Status != wf.RunStatusSucceeded && run.Status != wf.RunStatusFailed && run.Status != wf.RunStatusCancelled && run.Status != wf.RunStatusTimedOut {
+		if s.workflowEng != nil && run.Status != wf.RunStatusSucceeded && run.Status != wf.RunStatusFailed && run.Status != wf.RunStatusDenied && run.Status != wf.RunStatusCancelled && run.Status != wf.RunStatusTimedOut {
 			if err := s.workflowEng.CancelRun(r.Context(), id); err != nil {
 				slog.Warn("pre-delete cancel failed, proceeding with deletion",
 					"run_id", id, "error", err)

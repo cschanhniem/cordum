@@ -39,7 +39,7 @@ function extractStepId(event: StreamEvent): string | undefined {
   return (p.stepId ?? p.step_id) as string | undefined;
 }
 
-const VALID_RUN_STATUSES = new Set<string>(["pending", "running", "waiting", "succeeded", "failed", "timed_out", "cancelled"]);
+const VALID_RUN_STATUSES = new Set<string>(["pending", "running", "waiting", "succeeded", "failed", "denied", "timed_out", "cancelled"]);
 
 function extractStatus(event: StreamEvent): RunStatus | undefined {
   const p = event.payload ?? {};
@@ -163,11 +163,11 @@ export function useRunStream(runId: string | null | undefined): void {
               ...s,
               status: newStatus,
               completedAt:
-                newStatus === "succeeded" || newStatus === "failed" || newStatus === "timed_out"
+                newStatus === "succeeded" || newStatus === "failed" || newStatus === "denied" || newStatus === "timed_out" || newStatus === "cancelled"
                   ? latest.timestamp
                   : s.completedAt,
               error:
-                newStatus === "failed"
+                newStatus === "failed" || newStatus === "denied"
                   ? ((latest.payload?.errorMessage as string) ?? s.error)
                   : s.error,
             };
@@ -191,11 +191,11 @@ export function useRunStream(runId: string | null | undefined): void {
               ...s,
               status: newStatus,
               completedAt:
-                newStatus === "succeeded" || newStatus === "failed"
+                newStatus === "succeeded" || newStatus === "failed" || newStatus === "denied" || newStatus === "timed_out" || newStatus === "cancelled"
                   ? latest.timestamp
                   : s.completedAt,
               error:
-                newStatus === "failed"
+                newStatus === "failed" || newStatus === "denied"
                   ? ((latest.payload?.errorMessage as string) ?? s.error)
                   : s.error,
             };
@@ -211,7 +211,7 @@ export function useRunStream(runId: string | null | undefined): void {
           status: newStatus,
           updatedAt: latest.timestamp,
           completedAt:
-            newStatus === "succeeded" || newStatus === "failed" || newStatus === "cancelled"
+            newStatus === "succeeded" || newStatus === "failed" || newStatus === "denied" || newStatus === "cancelled" || newStatus === "timed_out"
               ? latest.timestamp
               : run.completedAt,
         }));

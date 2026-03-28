@@ -8,8 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/infra/config"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/redis/go-redis/v9"
 )
 
 func TestCacheKeyForRequestStable(t *testing.T) {
@@ -477,6 +479,120 @@ func TestCachedDecisionImmutable(t *testing.T) {
 	}
 	if len(got2.Remediations) > 0 && got2.Remediations[0].Title != "original-title" {
 		t.Fatalf("cached remediation mutated: got %q, want %q", got2.Remediations[0].Title, "original-title")
+	}
+}
+
+func TestCacheBypassedForVelocityPolicies(t *testing.T) {
+	// When the active policy has velocity rules, caching must be entirely bypassed
+	// so that the sliding window advances correctly on every request.
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+
+	policy := &config.SafetyPolicy{
+		DefaultTenant:   "default",
+		DefaultDecision: "deny",
+		Rules: []config.PolicyRule{
+			{
+				ID:       "velocity-rule",
+				Match:    config.PolicyMatch{Topics: []string{"job.rate-limited"}},
+				Velocity: &config.VelocityConfig{MaxRequests: 2, WindowSeconds: 60, Key: "labels.session_id"},
+				Decision: "deny",
+				Reason:   "rate limit hit",
+			},
+			{
+				ID:       "allow-fallback",
+				Match:    config.PolicyMatch{Topics: []string{"job.*"}},
+				Decision: "allow",
+				Reason:   "allowed",
+			},
+		},
+	}
+
+	srv := &server{
+		cacheTTL:        5 * time.Minute,
+		cache:           map[string]cacheEntry{},
+		cacheMaxSize:    100,
+		resultClient:    client,
+		velocityChecker: newVelocityChecker(client),
+	}
+	srv.setPolicy(policy, "snap-cache-velocity")
+
+	// Make 3 requests — first 2 should allow (within limit), 3rd should deny.
+	for i := 1; i <= 3; i++ {
+		req := &pb.PolicyCheckRequest{
+			JobId:  fmt.Sprintf("job-cv-%d", i),
+			Topic:  "job.rate-limited",
+			Tenant: "default",
+			Labels: map[string]string{"session_id": "sess-cv"},
+		}
+		resp, err := srv.evaluate(context.Background(), req, "check")
+		if err != nil {
+			t.Fatalf("request %d: error: %v", i, err)
+		}
+		if i <= 2 {
+			if resp.Decision != pb.DecisionType_DECISION_TYPE_ALLOW {
+				t.Fatalf("request %d: expected ALLOW, got %v", i, resp.Decision)
+			}
+		} else {
+			if resp.Decision != pb.DecisionType_DECISION_TYPE_DENY {
+				t.Fatalf("request %d: expected DENY (velocity exceeded), got %v — cache may have short-circuited velocity", i, resp.Decision)
+			}
+		}
+	}
+
+	// Cache should remain empty — velocity policies bypass caching.
+	srv.cacheMu.Lock()
+	size := len(srv.cache)
+	srv.cacheMu.Unlock()
+	if size != 0 {
+		t.Fatalf("expected cache to be empty (velocity policies bypass caching), got %d entries", size)
+	}
+}
+
+func TestCacheStillWorksForNonVelocityPolicies(t *testing.T) {
+	// Caching must continue working for policies without velocity rules.
+	policy := &config.SafetyPolicy{
+		DefaultTenant:   "default",
+		DefaultDecision: "allow",
+	}
+	srv := &server{
+		cacheTTL:     5 * time.Minute,
+		cache:        map[string]cacheEntry{},
+		cacheMaxSize: 100,
+	}
+	srv.setPolicy(policy, "snap-no-velocity")
+
+	req := &pb.PolicyCheckRequest{
+		JobId:  "job-cached",
+		Topic:  "job.test",
+		Tenant: "default",
+	}
+	// First call evaluates and caches.
+	resp1, err := srv.evaluate(context.Background(), req, "check")
+	if err != nil {
+		t.Fatalf("first evaluate: %v", err)
+	}
+	if resp1.Decision != pb.DecisionType_DECISION_TYPE_ALLOW {
+		t.Fatalf("expected ALLOW, got %v", resp1.Decision)
+	}
+
+	// Cache should have an entry.
+	srv.cacheMu.Lock()
+	size := len(srv.cache)
+	srv.cacheMu.Unlock()
+	if size != 1 {
+		t.Fatalf("expected 1 cache entry for non-velocity policy, got %d", size)
+	}
+
+	// Second call should hit cache (different job_id, same topic/tenant/labels).
+	req.JobId = "job-cached-2"
+	resp2, err := srv.evaluate(context.Background(), req, "check")
+	if err != nil {
+		t.Fatalf("second evaluate: %v", err)
+	}
+	if resp2.Decision != pb.DecisionType_DECISION_TYPE_ALLOW {
+		t.Fatalf("expected ALLOW from cache, got %v", resp2.Decision)
 	}
 }
 

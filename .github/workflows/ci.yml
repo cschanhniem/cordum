@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go-version: ['1.24']
+        go-version: ['1.25']
 
     steps:
     - uses: actions/checkout@v4
@@ -30,8 +30,10 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-go-
 
-    - name: Download dependencies
-      run: go mod download
+    - name: Drop local replace directives (CI uses published modules)
+      run: |
+        go mod edit -dropreplace github.com/cordum-io/cap/v2
+        go mod tidy
 
     - name: Run tests
       run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
@@ -79,7 +81,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.24'
+        go-version: '1.25'
 
     - name: Cache Go modules
       uses: actions/cache@v4
@@ -89,13 +91,15 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-go-
 
-    - name: Download dependencies
-      run: go mod download
+    - name: Drop local replace directives (CI uses published modules)
+      run: |
+        go mod edit -dropreplace github.com/cordum-io/cap/v2
+        go mod tidy
 
     - name: golangci-lint
-      uses: golangci/golangci-lint-action@v6
+      uses: golangci/golangci-lint-action@v7
       with:
-        version: latest
+        version: v2.11.4
         args: --timeout=5m
 
     - name: Lint shell scripts for secret leaks
@@ -112,7 +116,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.24'
+        go-version: '1.25'
 
     - name: Cache Go modules
       uses: actions/cache@v4
@@ -122,8 +126,10 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-go-
 
-    - name: Download dependencies
-      run: go mod download
+    - name: Drop local replace directives (CI uses published modules)
+      run: |
+        go mod edit -dropreplace github.com/cordum-io/cap/v2
+        go mod tidy
 
     - name: Run Gosec Security Scanner
       env:
@@ -157,7 +163,12 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.24'
+        go-version: '1.25'
+
+    - name: Drop local replace directives (CI uses published modules)
+      run: |
+        go mod edit -dropreplace github.com/cordum-io/cap/v2
+        go mod tidy
 
     - name: Build all binaries
       run: |
@@ -186,7 +197,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.24'
+        go-version: '1.25'
 
     - name: Cache Go modules
       uses: actions/cache@v4

@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Save } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -40,7 +41,8 @@ export function getOutputRulesAffordances(canWriteOutputRules: boolean): {
   };
 }
 
-export default function OutputRulesPage() {
+export default function OutputRulesPage({ hideHeader }: { hideHeader?: boolean } = {}) {
+  const navigate = useNavigate();
   const policyAccess = usePolicyAccess();
   const canWriteOutputRules = policyAccess.canManageOutputRules;
   const affordances = getOutputRulesAffordances(canWriteOutputRules);
@@ -93,23 +95,26 @@ export default function OutputRulesPage() {
     return (
       <EmptyState
         title="No policy bundles found"
-        description="Create or sync a policy bundle before managing output rules."
+        description="Create a policy bundle to start configuring output rules."
+        action={<Button variant="outline" size="sm" onClick={() => navigate("/govern/overview?tab=bundles")}>View bundles</Button>}
       />
     );
   }
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        label="Govern"
-        title="Output Rules"
-        subtitle="Dedicated output-policy surface for scanner behavior, fail mode, and output rule enforcement."
-        actions={
-          <StatusBadge variant={canWriteOutputRules ? "healthy" : "muted"}>
-            {canWriteOutputRules ? "editor access" : "read-only role"}
-          </StatusBadge>
-        }
-      />
+      {!hideHeader && (
+        <PageHeader
+          label="Govern"
+          title="Output Rules"
+          subtitle="Dedicated output-policy surface for scanner behavior, fail mode, and output rule enforcement."
+          actions={
+            <StatusBadge variant={canWriteOutputRules ? "healthy" : "muted"}>
+              {canWriteOutputRules ? "editor access" : "read-only role"}
+            </StatusBadge>
+          }
+        />
+      )}
 
       <InfoBanner variant="cordum">
         Output Rules page is output-only: tune scanner fail mode, output policy activation, and output rule behavior without input-rule mixing.

@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/infra/artifacts"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
@@ -240,6 +241,7 @@ func (s *server) statusPipeline(ctx context.Context, tenantID string) map[string
 		"running":    int64(0),
 		"succeeded":  int64(0),
 		"failed":     int64(0),
+		"denied":     int64(0),
 	}
 	if s == nil || s.jobStore == nil {
 		return pipeline
@@ -254,7 +256,7 @@ func (s *server) statusPipeline(ctx context.Context, tenantID string) map[string
 	}
 
 	tenantID = strings.TrimSpace(tenantID)
-	var pending, dispatched, running, succeeded, failed int64
+	var pending, dispatched, running, succeeded, failed, denied int64
 	for _, job := range jobs {
 		if tenantID != "" && strings.TrimSpace(job.Tenant) != tenantID {
 			continue
@@ -268,7 +270,9 @@ func (s *server) statusPipeline(ctx context.Context, tenantID string) map[string
 			running++
 		case model.JobStateSucceeded:
 			succeeded++
-		case model.JobStateFailed, model.JobStateCancelled, model.JobStateTimeout, model.JobStateDenied, model.JobStateQuarantined:
+		case model.JobStateDenied:
+			denied++
+		case model.JobStateFailed, model.JobStateCancelled, model.JobStateTimeout, model.JobStateQuarantined:
 			failed++
 		}
 	}
@@ -278,6 +282,7 @@ func (s *server) statusPipeline(ctx context.Context, tenantID string) map[string
 	pipeline["running"] = running
 	pipeline["succeeded"] = succeeded
 	pipeline["failed"] = failed
+	pipeline["denied"] = denied
 	return pipeline
 }
 
@@ -931,14 +936,17 @@ func (s *server) handlePutArtifact(w http.ResponseWriter, r *http.Request) {
 		if meta.Labels == nil {
 			meta.Labels = map[string]string{}
 		}
-		if existing := strings.TrimSpace(meta.Labels["tenant_id"]); existing != "" {
-			if !allowCrossTenant && existing != tenant {
+		if existing := strings.TrimSpace(meta.Labels["tenant_id"]); existing != "" && existing != tenant {
+			if !allowCrossTenant {
+				slog.Warn("SECURITY: tenant mismatch in job metadata labels",
+					"component", "gateway", "auth_tenant", tenant,
+					"label_tenant", existing, "remote_addr", r.RemoteAddr)
 				writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
 				return
 			}
-		} else {
-			meta.Labels["tenant_id"] = tenant
 		}
+		// Always stamp the authenticated tenant — prevent client-injected overrides.
+		meta.Labels["tenant_id"] = tenant
 	}
 	ptr, err := s.artifactStore.Put(r.Context(), content, meta)
 	if err != nil {
@@ -1335,36 +1343,8 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 
 	jobID := uuid.NewString()
 	traceID := uuid.NewString()
-	if key != "" && s.jobStore != nil {
-		reserved, existingID, err := s.jobStore.TrySetIdempotencyKeyScoped(r.Context(), orgID, key, jobID)
-		if err != nil {
-			writeErrorJSON(w, http.StatusInternalServerError, "idempotency reservation failed")
-			return
-		}
-		if !reserved {
-			if existingID == "" {
-				existingID, err = s.jobStore.GetJobByIdempotencyKeyScoped(r.Context(), orgID, key)
-			}
-			if err == nil && existingID != "" {
-				traceID, _ := s.jobStore.GetTraceID(r.Context(), existingID)
-				w.Header().Set("Content-Type", "application/json")
-				writeJSON(w, map[string]string{
-					"job_id":   existingID,
-					"trace_id": traceID,
-				})
-				return
-			}
-			if err != nil && !errors.Is(err, redis.Nil) {
-				slog.Error("idempotency lookup failed", "error", err)
-			}
-			writeErrorJSON(w, http.StatusConflict, "idempotency key already used")
-			return
-		}
-	}
-	ctxKey := store.MakeContextKey(jobID)
-	ctxPtr := store.PointerForKey(ctxKey)
-	jobPriority := parsePriority(req.Priority)
 
+	// --- Secrets & memory validation (needed for policy check metadata) ---
 	secretsPresent := secrets.ContainsSecretRefs(req.Prompt) || secrets.ContainsSecretRefs(req.Context)
 	if secretsPresent {
 		req.RiskTags = appendUniqueTag(req.RiskTags, "secrets")
@@ -1396,24 +1376,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		memoryID = deriveMemoryIDFromReq(req.Topic, "", jobID)
 	}
 
-	envVars := map[string]string{
-		"tenant_id": orgID, // Use OrgId as tenant_id in env for now
-	}
-	if teamID != "" {
-		envVars["team_id"] = teamID
-	}
-	if projectID != "" {
-		envVars["project_id"] = projectID
-	}
-	if memoryID != "" {
-		envVars["memory_id"] = memoryID
-	}
-	if req.Mode != "" {
-		envVars["context_mode"] = req.Mode
-	}
-	envVars["max_input_tokens"] = fmt.Sprintf("%d", req.MaxInputTokens)
-	envVars["max_output_tokens"] = fmt.Sprintf("%d", req.MaxOutputTokens)
-
+	// --- Build metadata (needed for policy check) ---
 	actorID := strings.TrimSpace(req.ActorId)
 	if actorID == "" {
 		actorID = principalID
@@ -1431,6 +1394,219 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	if len(req.Labels) > 0 {
 		meta.Labels = req.Labels
 	}
+
+	// --- Submit-time policy check (before any state persistence) ---
+	policyResult := s.evaluateSubmitPolicy(r.Context(), jobID, req.Topic, orgID, principalID, req.Priority, meta, req.Labels, &pb.Budget{
+		MaxInputTokens:  int64(req.MaxInputTokens),
+		MaxOutputTokens: req.MaxOutputTokens,
+		MaxTotalTokens:  req.MaxTotalTokens,
+		DeadlineMs:      req.DeadlineMs,
+	}, memoryID)
+	if policyResult.Denied {
+		reason := "policy denied"
+		if policyResult.Reason != "" {
+			reason = policyResult.Reason
+		}
+		s.appendAuditEntryNamed(r.Context(), "submit_denied", "job", jobID, req.Topic, policyActorID(r), policyRole(r), "submit-time policy denied: "+reason)
+		writeErrorJSON(w, http.StatusForbidden, reason)
+		return
+	}
+	if policyResult.Throttled {
+		reason := "policy throttled"
+		if policyResult.Reason != "" {
+			reason = policyResult.Reason
+		}
+		s.appendAuditEntryNamed(r.Context(), "submit_throttled", "job", jobID, req.Topic, policyActorID(r), policyRole(r), "submit-time policy throttled: "+reason)
+		w.Header().Set("Retry-After", "30")
+		writeErrorJSON(w, http.StatusTooManyRequests, reason)
+		return
+	}
+
+	// For approval_required, the job is created in APPROVAL state with full
+	// persistence (idempotency, context, metadata, safety decision record) so the
+	// approval endpoint can validate snapshot/hash and publish later. The job is
+	// NOT published to SubjectSubmit until explicitly approved.
+	if policyResult.ApprovalRequired {
+		slog.Info("submit-time policy requires approval",
+			"job_id", jobID, "topic", req.Topic, "reason", policyResult.Reason)
+		s.appendAuditEntryNamed(r.Context(), "submit_approval_required", "job", jobID, req.Topic, policyActorID(r), policyRole(r), "submit-time policy requires approval: "+policyResult.Reason)
+
+		// Reserve idempotency key to prevent duplicate approval jobs.
+		if key != "" && s.jobStore != nil {
+			reserved, existingID, err := s.jobStore.TrySetIdempotencyKeyScoped(r.Context(), orgID, key, jobID)
+			if err != nil {
+				writeErrorJSON(w, http.StatusInternalServerError, "idempotency reservation failed")
+				return
+			}
+			if !reserved {
+				if existingID == "" {
+					existingID, _ = s.jobStore.GetJobByIdempotencyKeyScoped(r.Context(), orgID, key)
+				}
+				if existingID != "" {
+					w.Header().Set("Content-Type", "application/json")
+					writeJSON(w, map[string]string{
+						"job_id": existingID,
+						"status": "approval_required",
+					})
+					return
+				}
+				writeErrorJSON(w, http.StatusConflict, "idempotency key already used")
+				return
+			}
+		}
+
+		// Build and persist the full job context + request so the approval
+		// endpoint can retrieve, hash-validate, and publish them later.
+		ctxKey := store.MakeContextKey(jobID)
+		ctxPtr := store.PointerForKey(ctxKey)
+		jobPriority := parsePriority(req.Priority)
+		envVars := map[string]string{
+			"tenant_id":         orgID,
+			"max_input_tokens":  fmt.Sprintf("%d", req.MaxInputTokens),
+			"max_output_tokens": fmt.Sprintf("%d", req.MaxOutputTokens),
+		}
+		if teamID != "" {
+			envVars["team_id"] = teamID
+		}
+		if projectID != "" {
+			envVars["project_id"] = projectID
+		}
+		if memoryID != "" {
+			envVars["memory_id"] = memoryID
+		}
+		if req.Mode != "" {
+			envVars["context_mode"] = req.Mode
+		}
+		payload := map[string]any{
+			"prompt": req.Prompt, "adapter_id": req.AdapterId,
+			"priority": req.Priority, "topic": req.Topic,
+			"created_at": time.Now().UTC().Format(time.RFC3339), "tenant_id": orgID,
+		}
+		if req.Context != nil {
+			payload["context"] = req.Context
+		}
+		payloadBytes, _ := json.Marshal(payload)
+		if s.memStore != nil {
+			if err := s.memStore.PutContext(r.Context(), ctxKey, payloadBytes); err != nil {
+				slog.Error("failed to persist approval job context", "job_id", jobID, "error", err)
+			}
+		}
+
+		jobReq := &pb.JobRequest{
+			JobId: jobID, Topic: req.Topic, Priority: jobPriority,
+			ContextPtr: ctxPtr, AdapterId: req.AdapterId, Env: envVars,
+			MemoryId: memoryID, TenantId: orgID, PrincipalId: principalID,
+			Labels: req.Labels, Meta: meta,
+			ContextHints: &pb.ContextHints{
+				MaxInputTokens: req.MaxInputTokens, AllowSummarization: req.AllowSummarization,
+				AllowRetrieval: req.AllowRetrieval, Tags: req.Tags,
+			},
+			Budget: &pb.Budget{
+				MaxInputTokens: int64(req.MaxInputTokens), MaxOutputTokens: req.MaxOutputTokens,
+				MaxTotalTokens: req.MaxTotalTokens, DeadlineMs: req.DeadlineMs,
+			},
+		}
+
+		if s.jobStore != nil {
+			if err := s.jobStore.SetState(r.Context(), jobID, model.JobStateApproval); err != nil {
+				slog.Error("failed to set approval state", "job_id", jobID, "error", err)
+				writeErrorJSON(w, http.StatusServiceUnavailable, "failed to initialize job state")
+				return
+			}
+			if err := s.jobStore.SetTopic(r.Context(), jobID, req.Topic); err != nil {
+				slog.Error("failed to set job topic", "job_id", jobID, "error", err)
+			}
+			if err := s.jobStore.SetTenant(r.Context(), jobID, orgID); err != nil {
+				slog.Error("failed to set job tenant", "job_id", jobID, "error", err)
+			}
+			if err := s.jobStore.AddJobToTrace(r.Context(), traceID, jobID); err != nil {
+				slog.Error("failed to add approval job to trace", "job_id", jobID, "error", err)
+			}
+			if err := s.jobStore.SetJobMeta(r.Context(), jobReq); err != nil {
+				slog.Error("failed to persist approval job metadata", "job_id", jobID, "error", err)
+			}
+			if err := s.jobStore.SetJobRequest(r.Context(), jobReq); err != nil {
+				slog.Error("failed to persist approval job request", "job_id", jobID, "error", err)
+			}
+
+			// Persist safety decision record so the approval endpoint can
+			// validate policy snapshot stability and job request integrity.
+			jobHash, _ := scheduler.HashJobRequest(jobReq)
+			safetyRecord := model.SafetyDecisionRecord{
+				Decision:         model.SafetyRequireApproval,
+				Reason:           policyResult.Reason,
+				RuleID:           policyResult.RuleId,
+				PolicySnapshot:   policyResult.PolicySnapshot,
+				Constraints:      policyResult.Constraints,
+				ApprovalRequired: true,
+				ApprovalRef:      jobID,
+				JobHash:          jobHash,
+				Remediations:     policyResult.Remediations,
+				CheckedAt:        time.Now().UnixMicro(),
+			}
+			if err := s.jobStore.SetSafetyDecision(r.Context(), jobID, safetyRecord); err != nil {
+				slog.Error("failed to persist safety decision for approval", "job_id", jobID, "error", err)
+			}
+		}
+
+		w.Header().Set("X-Trace-Id", traceID)
+		w.Header().Set("Content-Type", "application/json")
+		writeJSON(w, map[string]string{
+			"job_id": jobID,
+			"status": "approval_required",
+			"reason": policyResult.Reason,
+		})
+		return
+	}
+
+	// --- Idempotency reservation (after policy check to avoid orphaned keys) ---
+	if key != "" && s.jobStore != nil {
+		reserved, existingID, err := s.jobStore.TrySetIdempotencyKeyScoped(r.Context(), orgID, key, jobID)
+		if err != nil {
+			writeErrorJSON(w, http.StatusInternalServerError, "idempotency reservation failed")
+			return
+		}
+		if !reserved {
+			if existingID == "" {
+				existingID, err = s.jobStore.GetJobByIdempotencyKeyScoped(r.Context(), orgID, key)
+			}
+			if err == nil && existingID != "" {
+				traceID, _ := s.jobStore.GetTraceID(r.Context(), existingID)
+				w.Header().Set("Content-Type", "application/json")
+				writeJSON(w, map[string]string{
+					"job_id":   existingID,
+					"trace_id": traceID,
+				})
+				return
+			}
+			if err != nil && !errors.Is(err, redis.Nil) {
+				slog.Error("idempotency lookup failed", "error", err)
+			}
+			writeErrorJSON(w, http.StatusConflict, "idempotency key already used")
+			return
+		}
+	}
+	ctxKey := store.MakeContextKey(jobID)
+	ctxPtr := store.PointerForKey(ctxKey)
+	jobPriority := parsePriority(req.Priority)
+
+	envVars := map[string]string{
+		"tenant_id": orgID, // Use OrgId as tenant_id in env for now
+	}
+	if teamID != "" {
+		envVars["team_id"] = teamID
+	}
+	if projectID != "" {
+		envVars["project_id"] = projectID
+	}
+	if memoryID != "" {
+		envVars["memory_id"] = memoryID
+	}
+	if req.Mode != "" {
+		envVars["context_mode"] = req.Mode
+	}
+	envVars["max_input_tokens"] = fmt.Sprintf("%d", req.MaxInputTokens)
+	envVars["max_output_tokens"] = fmt.Sprintf("%d", req.MaxOutputTokens)
 
 	payload := map[string]any{
 		"prompt":     req.Prompt,

@@ -61,7 +61,7 @@ func newMockOIDCServer(t *testing.T) *mockOIDCServer {
 	})
 
 	m.Server = httptest.NewServer(mux)
-	m.issuer = m.Server.URL
+	m.issuer = m.URL
 	return m
 }
 
@@ -750,7 +750,7 @@ func newMockOIDCServerWithCounter(t *testing.T) *mockOIDCServerWithCounter {
 	})
 
 	m.Server = httptest.NewServer(mux)
-	m.issuer = m.Server.URL
+	m.issuer = m.URL
 	return m
 }
 
@@ -763,7 +763,7 @@ func TestJWKSRedisCacheHit(t *testing.T) {
 	defer srv.Close()
 
 	rdb := redis.NewClient(&redis.Options{Addr: srv.Addr()})
-	defer rdb.Close()
+	defer func() { _ = rdb.Close() }()
 
 	m := newMockOIDCServerWithCounter(t)
 	defer m.Close()
@@ -822,7 +822,7 @@ func TestJWKSRedisCacheMiss(t *testing.T) {
 	defer srv.Close()
 
 	rdb := redis.NewClient(&redis.Options{Addr: srv.Addr()})
-	defer rdb.Close()
+	defer func() { _ = rdb.Close() }()
 
 	m := newMockOIDCServerWithCounter(t)
 	defer m.Close()
@@ -892,7 +892,7 @@ func TestJWKSRedisFallback(t *testing.T) {
 		MaxRetries:  0,
 		DialTimeout: 100 * time.Millisecond,
 	})
-	defer brokenRdb.Close()
+	defer func() { _ = brokenRdb.Close() }()
 
 	provider.WithRedis(brokenRdb)
 

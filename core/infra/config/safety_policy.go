@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -14,6 +15,7 @@ type SafetyPolicy struct {
 	Version         string                  `yaml:"version"`
 	Rules           []PolicyRule            `yaml:"rules"`
 	InputPolicy     InputPolicyConfig       `yaml:"input_policy"`
+	InputRules      []InputPolicyRule       `yaml:"input_rules"`
 	OutputPolicy    OutputPolicyConfig      `yaml:"output_policy"`
 	OutputRules     []OutputPolicyRule      `yaml:"output_rules"`
 	DefaultTenant   string                  `yaml:"default_tenant,omitempty"`
@@ -23,7 +25,72 @@ type SafetyPolicy struct {
 
 // InputPolicyConfig controls input-policy evaluation behavior.
 type InputPolicyConfig struct {
-	FailMode string `yaml:"fail_mode,omitempty"` // open|closed (default: closed = requeue when kernel down)
+	Enabled      bool   `yaml:"enabled"`
+	FailMode     string `yaml:"fail_mode,omitempty"`     // open|closed (default: closed = requeue when kernel down)
+	MaxScanBytes int    `yaml:"max_scan_bytes,omitempty"` // default 2 MiB
+}
+
+// InputPolicyRule defines policy checks on job input content.
+// Mirrors OutputPolicyRule — same scanner/pattern infrastructure applied pre-execution.
+type InputPolicyRule struct {
+	ID       string           `yaml:"id"`
+	Enabled  *bool            `yaml:"enabled,omitempty"`
+	Severity string           `yaml:"severity"` // low|medium|high|critical
+	Desc     string           `yaml:"description"`
+	Match    InputPolicyMatch `yaml:"match"`
+	Decision string           `yaml:"decision"` // deny|require_approval
+	Reason   string           `yaml:"reason"`
+}
+
+// InputPolicyMatch captures matching criteria for input content checks.
+// Mirrors OutputPolicyMatch with input-specific field names.
+type InputPolicyMatch struct {
+	Tenants         []string     `yaml:"tenants"`
+	Topics          []string     `yaml:"topics"`
+	Capabilities    []string     `yaml:"capabilities"`
+	RiskTags        []string     `yaml:"risk_tags"`
+	Scanners        []string     `yaml:"scanners"`
+	ContentPatterns []string     `yaml:"content_patterns"`
+	Keywords        []string     `yaml:"keywords"`
+	ContentTypes    []string     `yaml:"content_types"`
+	Detectors       []string     `yaml:"detectors"`
+	InputSizeGt     int64        `yaml:"input_size_gt"`
+	MaxInputBytes   int64        `yaml:"max_input_bytes"`
+	Scope           *ScopeConfig `yaml:"scope,omitempty"`
+}
+
+// ScopeConfig defines a deterministic instruction-vs-cart scope evaluator.
+// It compares the declared instruction (what the user asked for) against the
+// items in the cart/payload to detect unauthorized modifications (e.g., TX2
+// adding gift_card to a grocery purchase). The evaluator is not a keyword
+// blocklist — it performs structured comparison with category normalization.
+type ScopeConfig struct {
+	// InstructionPath is a dot-separated JSON path to the instruction field
+	// in the input payload (e.g., "instruction" or "request.instruction").
+	InstructionPath string `yaml:"instruction_path" json:"instruction_path"`
+	// ItemsPath is a dot-separated JSON path to the items array
+	// (e.g., "items" or "cart.items").
+	ItemsPath string `yaml:"items_path" json:"items_path"`
+	// CategoryPath is the field name within each item that holds the category
+	// (e.g., "category" or "type"). Defaults to "category".
+	CategoryPath string `yaml:"category_path,omitempty" json:"category_path,omitempty"`
+	// NamePath is the field name within each item that holds the item name
+	// (e.g., "name" or "product"). Defaults to "name".
+	NamePath string `yaml:"name_path,omitempty" json:"name_path,omitempty"`
+	// AllowedCategories lists the categories that are permitted when the
+	// instruction matches specific intents. Map of normalized intent keyword
+	// to list of allowed category strings. Empty means all categories allowed
+	// for that intent.
+	AllowedCategories map[string][]string `yaml:"allowed_categories,omitempty" json:"allowed_categories,omitempty"`
+	// Aliases maps alternative category names to their canonical form for
+	// normalization (e.g., "gift-card" -> "gift_card", "giftcard" -> "gift_card").
+	Aliases map[string]string `yaml:"aliases,omitempty" json:"aliases,omitempty"`
+	// OnMissingInput controls behavior when required fields (instruction or items)
+	// are absent from the payload. "deny" (default) or "allow".
+	OnMissingInput string `yaml:"on_missing_input,omitempty" json:"on_missing_input,omitempty"`
+	// OnAmbiguous controls behavior when the instruction cannot be confidently
+	// classified into a known intent. "deny" (default) or "allow".
+	OnAmbiguous string `yaml:"on_ambiguous,omitempty" json:"on_ambiguous,omitempty"`
 }
 
 // OutputPolicyConfig controls output-policy evaluation behavior.
@@ -35,10 +102,81 @@ type OutputPolicyConfig struct {
 type PolicyRule struct {
 	ID           string              `yaml:"id"`
 	Match        PolicyMatch         `yaml:"match"`
+	Velocity     *VelocityConfig     `yaml:"velocity,omitempty"`
 	Decision     string              `yaml:"decision"` // allow|deny|require_approval|allow_with_constraints|throttle
 	Reason       string              `yaml:"reason"`
 	Constraints  PolicyConstraints   `yaml:"constraints"`
 	Remediations []PolicyRemediation `yaml:"remediations"`
+}
+
+// VelocityConfig defines sliding-window rate limiting for a policy rule.
+// When configured on a rule, the rule only fires if the rate limit is exceeded.
+type VelocityConfig struct {
+	MaxRequests   int    `yaml:"max_requests" json:"max_requests"`
+	WindowSeconds int    `yaml:"window_seconds" json:"window_seconds"`
+	Key           string `yaml:"key" json:"key"` // e.g. "labels.session_id", "actor_id", "tenant", "topic", "tenant:topic"
+}
+
+// Validate checks that VelocityConfig has valid values.
+func (v *VelocityConfig) Validate(ruleID string) error {
+	if v == nil {
+		return nil
+	}
+	if v.MaxRequests <= 0 {
+		return fmt.Errorf("rule %q: velocity.max_requests must be >= 1, got %d", ruleID, v.MaxRequests)
+	}
+	if v.WindowSeconds <= 0 {
+		return fmt.Errorf("rule %q: velocity.window_seconds must be >= 1, got %d", ruleID, v.WindowSeconds)
+	}
+	if strings.TrimSpace(v.Key) == "" {
+		return fmt.Errorf("rule %q: velocity.key must be non-empty", ruleID)
+	}
+	return nil
+}
+
+// ResolveKey extracts the velocity bucket key from the policy input.
+func (v *VelocityConfig) ResolveKey(input PolicyInput) string {
+	if v == nil || v.Key == "" {
+		return ""
+	}
+	// Compound keys: "tenant:topic" → "default:job.visa.evaluate"
+	if strings.Contains(v.Key, ":") {
+		parts := strings.Split(v.Key, ":")
+		resolved := make([]string, 0, len(parts))
+		for _, part := range parts {
+			val := resolveKeyPart(strings.TrimSpace(part), input)
+			if val == "" {
+				return ""
+			}
+			resolved = append(resolved, val)
+		}
+		return strings.Join(resolved, ":")
+	}
+	return resolveKeyPart(v.Key, input)
+}
+
+func resolveKeyPart(key string, input PolicyInput) string {
+	// Label lookup: "labels.session_id" → input.Labels["session_id"]
+	if strings.HasPrefix(key, "labels.") {
+		labelKey := strings.TrimPrefix(key, "labels.")
+		return input.Labels[labelKey]
+	}
+	switch key {
+	case "actor_id":
+		return input.Meta.ActorID
+	case "actor_type":
+		return input.Meta.ActorType
+	case "tenant":
+		return input.Tenant
+	case "topic":
+		return input.Topic
+	case "pack_id":
+		return input.Meta.PackID
+	case "capability":
+		return input.Meta.Capability
+	default:
+		return ""
+	}
 }
 
 // OutputPolicyRule defines policy checks on job outputs.
@@ -69,17 +207,19 @@ type OutputPolicyMatch struct {
 }
 
 type PolicyMatch struct {
-	Tenants        []string          `yaml:"tenants"`
-	Topics         []string          `yaml:"topics"`
-	Capabilities   []string          `yaml:"capabilities"`
-	RiskTags       []string          `yaml:"risk_tags"`
-	Requires       []string          `yaml:"requires"`
-	PackIDs        []string          `yaml:"pack_ids"`
-	ActorIDs       []string          `yaml:"actor_ids"`
-	ActorTypes     []string          `yaml:"actor_types"`
-	Labels         map[string]string `yaml:"labels"`
-	SecretsPresent *bool             `yaml:"secrets_present,omitempty"`
-	MCP            MCPPolicy         `yaml:"mcp"`
+	Tenants        []string                `yaml:"tenants"`
+	Topics         []string                `yaml:"topics"`
+	Capabilities   []string                `yaml:"capabilities"`
+	RiskTags       []string                `yaml:"risk_tags"`
+	Requires       []string                `yaml:"requires"`
+	PackIDs        []string                `yaml:"pack_ids"`
+	ActorIDs       []string                `yaml:"actor_ids"`
+	ActorTypes     []string                `yaml:"actor_types"`
+	Labels         map[string]string       `yaml:"labels"`
+	LabelAllowlist map[string][]string     `yaml:"label_allowlist,omitempty"` // deny when label value NOT in list
+	LabelThreshold map[string]float64      `yaml:"label_threshold,omitempty"` // deny when label value > threshold
+	SecretsPresent *bool                   `yaml:"secrets_present,omitempty"`
+	MCP            MCPPolicy               `yaml:"mcp"`
 }
 
 type PolicyConstraints struct {
@@ -202,6 +342,14 @@ func ParseSafetyPolicy(data []byte) (*SafetyPolicy, error) {
 	if policy.Tenants == nil {
 		policy.Tenants = map[string]TenantPolicy{}
 	}
+	// Validate velocity configs on all rules.
+	for _, rule := range policy.Rules {
+		if rule.Velocity != nil {
+			if err := rule.Velocity.Validate(rule.ID); err != nil {
+				return nil, fmt.Errorf("parse safety policy: %w", err)
+			}
+		}
+	}
 	return &policy, nil
 }
 
@@ -236,6 +384,50 @@ func (p *SafetyPolicy) Evaluate(input PolicyInput) PolicyDecision {
 	return PolicyDecision{
 		Decision: "deny",
 		Reason:   "no matching rule — default policy: deny",
+	}
+}
+
+// EffectiveRules returns the active rule list (rules or legacy-generated rules).
+// Used by the kernel for velocity-aware evaluation that needs to iterate rules directly.
+func (p *SafetyPolicy) EffectiveRules() []PolicyRule {
+	if len(p.Rules) > 0 {
+		return p.Rules
+	}
+	return legacyRules(p)
+}
+
+// DefaultPolicyDecision returns the default decision when no rule matches.
+func (p *SafetyPolicy) DefaultPolicyDecision() PolicyDecision {
+	dd := strings.ToLower(strings.TrimSpace(p.DefaultDecision))
+	if dd == "allow" || dd == "permit" {
+		return PolicyDecision{Decision: "allow", Reason: "no matching rule — default policy: allow"}
+	}
+	if dd != "" && dd != "deny" {
+		slog.Warn("unrecognized default_decision value, defaulting to deny (fail-closed)", "raw", p.DefaultDecision)
+	}
+	return PolicyDecision{Decision: "deny", Reason: "no matching rule — default policy: deny"}
+}
+
+// MatchRule checks if a policy rule's match criteria are satisfied by the input.
+func MatchRule(match PolicyMatch, input PolicyInput) bool {
+	return matchRule(match, input)
+}
+
+// NormalizeDecision normalizes a raw decision string to a canonical form.
+func NormalizeDecision(raw string) string {
+	return normalizeDecision(raw)
+}
+
+// BuildDecision constructs a PolicyDecision from a matched rule.
+func BuildDecision(rule PolicyRule) PolicyDecision {
+	decision := normalizeDecision(rule.Decision)
+	return PolicyDecision{
+		Decision:         decision,
+		Reason:           rule.Reason,
+		RuleID:           rule.ID,
+		Constraints:      rule.Constraints,
+		ApprovalRequired: decision == "require_approval",
+		Remediations:     rule.Remediations,
 	}
 }
 
@@ -322,10 +514,59 @@ func matchRule(match PolicyMatch, input PolicyInput) bool {
 	if len(match.Labels) > 0 && !labelsMatch(match.Labels, input.Labels) {
 		return false
 	}
+	if len(match.LabelAllowlist) > 0 && !labelAllowlistMatch(match.LabelAllowlist, input.Labels) {
+		return false
+	}
+	if len(match.LabelThreshold) > 0 && !labelThresholdMatch(match.LabelThreshold, input.Labels) {
+		return false
+	}
 	if !mcpMatch(match.MCP, input.MCP) {
 		return false
 	}
 	return true
+}
+
+// labelAllowlistMatch returns true when ANY label value is NOT in its allowlist.
+// This is an inverse match: the rule fires (returns true) when a value is OUTSIDE the list.
+// If the label is missing from input, skip that check (fail-open).
+func labelAllowlistMatch(allowlists map[string][]string, labels map[string]string) bool {
+	for key, allowed := range allowlists {
+		actual, exists := labels[key]
+		if !exists {
+			continue // label not present → skip check (fail-open)
+		}
+		found := false
+		lower := strings.ToLower(strings.TrimSpace(actual))
+		for _, v := range allowed {
+			if strings.ToLower(strings.TrimSpace(v)) == lower {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return true // value NOT in allowlist → rule matches (deny)
+		}
+	}
+	return false // all present labels are in their allowlists → rule does NOT match
+}
+
+// labelThresholdMatch returns true when ANY label value exceeds its threshold.
+// If the label is missing or not a valid number, skip that check (fail-open).
+func labelThresholdMatch(thresholds map[string]float64, labels map[string]string) bool {
+	for key, maxVal := range thresholds {
+		actual, exists := labels[key]
+		if !exists {
+			continue
+		}
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(actual), 64)
+		if err != nil {
+			continue // not a number → skip (fail-open)
+		}
+		if parsed > maxVal {
+			return true // exceeds threshold → rule matches (deny)
+		}
+	}
+	return false
 }
 
 func containsString(list []string, value string) bool {

@@ -15,8 +15,8 @@ import (
 func TestStdioTransportReadWrite(t *testing.T) {
 	t.Parallel()
 	inReader, inWriter := io.Pipe()
-	defer inReader.Close()
-	defer inWriter.Close()
+	defer func() { _ = inReader.Close() }()
+	defer func() { _ = inWriter.Close() }()
 
 	errBuf := &bytes.Buffer{}
 	outBuf := &bytes.Buffer{}
@@ -79,7 +79,7 @@ func TestHTTPTransportMessageAndSSE(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post message failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 from message endpoint, got %d", resp.StatusCode)
 	}
@@ -100,7 +100,7 @@ func TestHTTPTransportMessageAndSSE(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open sse failed: %v", err)
 	}
-	defer sseResp.Body.Close()
+	defer func() { _ = sseResp.Body.Close() }()
 	if sseResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 from sse endpoint, got %d", sseResp.StatusCode)
 	}

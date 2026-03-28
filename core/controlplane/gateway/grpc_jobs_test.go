@@ -369,3 +369,179 @@ func TestDialSafetyKernelTLSRequired(t *testing.T) {
 		t.Fatalf("expected tls required error")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Submit-time policy regression tests (gRPC)
+// ---------------------------------------------------------------------------
+
+func TestSubmitJobGRPC_PolicyDeny(t *testing.T) {
+	s, bus, safetyClient := newTestGateway(t)
+	s.tenant = "default"
+
+	safetyClient.setResponse(&pb.PolicyCheckResponse{
+		Decision: pb.DecisionType_DECISION_TYPE_DENY,
+		Reason:   "prohibited by org policy",
+	})
+
+	ctx := context.Background()
+	_, err := s.SubmitJob(ctx, &pb.SubmitJobRequest{
+		Prompt: "hello",
+		Topic:  "job.default",
+		OrgId:  "org-1",
+	})
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("expected PermissionDenied for policy deny, got %v", err)
+	}
+	if !strings.Contains(status.Convert(err).Message(), "prohibited by org policy") {
+		t.Fatalf("expected deny reason in error message, got %q", status.Convert(err).Message())
+	}
+
+	bus.mu.Lock()
+	defer bus.mu.Unlock()
+	if len(bus.published) != 0 {
+		t.Fatalf("expected no bus publish on deny, got %d", len(bus.published))
+	}
+}
+
+func TestSubmitJobGRPC_PolicyThrottle(t *testing.T) {
+	s, bus, safetyClient := newTestGateway(t)
+	s.tenant = "default"
+
+	safetyClient.setResponse(&pb.PolicyCheckResponse{
+		Decision: pb.DecisionType_DECISION_TYPE_THROTTLE,
+		Reason:   "rate limit exceeded",
+	})
+
+	ctx := context.Background()
+	_, err := s.SubmitJob(ctx, &pb.SubmitJobRequest{
+		Prompt: "hello",
+		Topic:  "job.default",
+		OrgId:  "org-1",
+	})
+	if status.Code(err) != codes.ResourceExhausted {
+		t.Fatalf("expected ResourceExhausted for policy throttle, got %v", err)
+	}
+
+	bus.mu.Lock()
+	defer bus.mu.Unlock()
+	if len(bus.published) != 0 {
+		t.Fatalf("expected no bus publish on throttle, got %d", len(bus.published))
+	}
+}
+
+func TestSubmitJobGRPC_PolicyApprovalRequired(t *testing.T) {
+	s, bus, safetyClient := newTestGateway(t)
+	s.tenant = "default"
+
+	safetyClient.setResponse(&pb.PolicyCheckResponse{
+		Decision:         pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN,
+		Reason:           "high-risk action",
+		ApprovalRequired: true,
+	})
+
+	ctx := context.Background()
+	resp, err := s.SubmitJob(ctx, &pb.SubmitJobRequest{
+		Prompt: "hello",
+		Topic:  "job.default",
+		OrgId:  "org-1",
+	})
+	if err != nil {
+		t.Fatalf("expected no error for approval required, got %v", err)
+	}
+	if resp.JobId == "" {
+		t.Fatalf("expected job_id in response")
+	}
+
+	// Verify proto response fields expose the approval disposition.
+	if resp.Status != "approval_required" {
+		t.Fatalf("expected status=approval_required, got %q", resp.Status)
+	}
+	if resp.Reason != "high-risk action" {
+		t.Fatalf("expected reason=high-risk action, got %q", resp.Reason)
+	}
+
+	// Verify job is in APPROVAL state.
+	state, err := s.jobStore.GetState(context.Background(), resp.JobId)
+	if err != nil {
+		t.Fatalf("get state: %v", err)
+	}
+	if state != model.JobStateApproval {
+		t.Fatalf("expected job state APPROVAL_REQUIRED, got %s", state)
+	}
+
+	// Verify safety decision record was persisted.
+	safetyRec, err := s.jobStore.GetSafetyDecision(context.Background(), resp.JobId)
+	if err != nil {
+		t.Fatalf("expected safety decision record, got error: %v", err)
+	}
+	if !safetyRec.ApprovalRequired {
+		t.Fatalf("expected approval_required=true in safety record")
+	}
+
+	// Verify job request was persisted (needed by approval endpoint).
+	jobReq, err := s.jobStore.GetJobRequest(context.Background(), resp.JobId)
+	if err != nil {
+		t.Fatalf("expected job request persisted for approval, got error: %v", err)
+	}
+	if jobReq.GetTopic() != "job.default" {
+		t.Fatalf("expected job request topic=job.default, got %q", jobReq.GetTopic())
+	}
+
+	// No bus publish — job awaits human approval.
+	bus.mu.Lock()
+	defer bus.mu.Unlock()
+	if len(bus.published) != 0 {
+		t.Fatalf("expected no bus publish for approval-required job, got %d", len(bus.published))
+	}
+}
+
+func TestSubmitJobGRPC_PolicyFailClosed(t *testing.T) {
+	s, bus, _ := newTestGateway(t)
+	s.tenant = "default"
+	s.safetyClient = &failingSafetyClient{}
+
+	t.Setenv("POLICY_CHECK_FAIL_MODE", "")
+
+	ctx := context.Background()
+	_, err := s.SubmitJob(ctx, &pb.SubmitJobRequest{
+		Prompt: "hello",
+		Topic:  "job.default",
+		OrgId:  "org-1",
+	})
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("expected PermissionDenied for fail-closed, got %v", err)
+	}
+
+	bus.mu.Lock()
+	defer bus.mu.Unlock()
+	if len(bus.published) != 0 {
+		t.Fatalf("expected no bus publish on fail-closed, got %d", len(bus.published))
+	}
+}
+
+func TestSubmitJobGRPC_PolicyFailOpen(t *testing.T) {
+	s, bus, _ := newTestGateway(t)
+	s.tenant = "default"
+	s.safetyClient = &failingSafetyClient{}
+
+	t.Setenv("POLICY_CHECK_FAIL_MODE", "open")
+
+	ctx := context.Background()
+	resp, err := s.SubmitJob(ctx, &pb.SubmitJobRequest{
+		Prompt: "hello",
+		Topic:  "job.default",
+		OrgId:  "org-1",
+	})
+	if err != nil {
+		t.Fatalf("expected no error for fail-open, got %v", err)
+	}
+	if resp.JobId == "" {
+		t.Fatalf("expected job_id in response")
+	}
+
+	bus.mu.Lock()
+	defer bus.mu.Unlock()
+	if len(bus.published) != 1 {
+		t.Fatalf("expected 1 bus publish for fail-open, got %d", len(bus.published))
+	}
+}

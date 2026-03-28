@@ -41,13 +41,13 @@ func newSchemaRegistry(t *testing.T) (*schema.Registry, *store.RedisStore, func(
 	reg, err := schema.NewRegistry("redis://" + srv.Addr())
 	if err != nil {
 		srv.Close()
-		memStore.Close()
+		_ = memStore.Close()
 		t.Fatalf("schema registry init: %v", err)
 	}
 	cleanup := func() {
-		reg.Close()
+		_ = reg.Close()
 		srv.Close()
-		memStore.Close()
+		_ = memStore.Close()
 	}
 	return reg, memStore, cleanup
 }
@@ -162,7 +162,7 @@ func TestValidateInlineOutputRespectsTimeout(t *testing.T) {
 func TestScheduleAfterTimerCallbackBounded(t *testing.T) {
 	wfStore, srv := newTestStoreWithServer(t)
 	defer srv.Close()
-	defer wfStore.Close()
+	defer func() { _ = wfStore.Close() }()
 
 	// Engine with store but no workflow — StartRun will fail fast.
 	engine := NewEngine(wfStore, nil)
@@ -193,7 +193,7 @@ func TestScheduleAfterTimerCallbackBounded(t *testing.T) {
 func TestScheduleAfterStoppedEngineDiscards(t *testing.T) {
 	wfStore, srv := newTestStoreWithServer(t)
 	defer srv.Close()
-	defer wfStore.Close()
+	defer func() { _ = wfStore.Close() }()
 
 	engine := NewEngine(wfStore, nil)
 	engine.Stop() // Stop before scheduling.
@@ -211,7 +211,7 @@ func TestScheduleAfterStoppedEngineDiscards(t *testing.T) {
 func TestScheduleAfterDurableTimerThreshold(t *testing.T) {
 	wfStore, srv := newTestStoreWithServer(t)
 	defer srv.Close()
-	defer wfStore.Close()
+	defer func() { _ = wfStore.Close() }()
 
 	engine := NewEngine(wfStore, nil)
 	defer engine.Stop()

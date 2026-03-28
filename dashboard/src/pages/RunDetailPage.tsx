@@ -10,10 +10,11 @@ import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { SkeletonCard } from "@/components/ui/Skeleton";
+import { EmptyState } from "@/components/ui/EmptyState";
 import {
-  ArrowLeft, Send, Briefcase, Shield, GitBranch, Clock,
+  ArrowLeft, Send, Briefcase, Shield, ShieldAlert, GitBranch, Clock,
   CheckCircle2, XCircle, Loader2, MessageSquare, AlertTriangle,
-  ChevronDown, Copy, RotateCcw,
+  ChevronDown, Copy, RotateCcw, Hand,
 } from "lucide-react";
 import { cn, formatRelativeTime, formatDuration } from "@/lib/utils";
 import { toast } from "sonner";
@@ -38,7 +39,7 @@ interface RunStep {
   id: string;
   label: string;
   type: "worker" | "approval" | "condition" | "delay";
-  status: "succeeded" | "running" | "failed" | "pending" | "skipped";
+  status: "succeeded" | "running" | "waiting" | "failed" | "pending" | "skipped" | "quarantined";
   duration?: string;
   output?: string;
 }
@@ -56,8 +57,10 @@ function mapStepType(type: string): RunStep["type"] {
 function mapStepStatus(status?: string): RunStep["status"] {
   switch (status) {
     case "succeeded": return "succeeded";
-    case "running":
-    case "waiting": return "running";
+    case "running": return "running";
+    case "waiting": return "waiting";
+    case "quarantined":
+    case "output_quarantined": return "quarantined";
     case "failed":
     case "timed_out": return "failed";
     case "cancelled": return "skipped";
@@ -65,11 +68,14 @@ function mapStepStatus(status?: string): RunStep["status"] {
   }
 }
 
-function runStatusVariant(status: RunStatus): "healthy" | "warning" | "danger" | "info" | "muted" {
+function runStatusVariant(status?: string): "healthy" | "warning" | "danger" | "info" | "muted" | "governance" {
   switch (status) {
     case "succeeded": return "healthy";
     case "running": return "info";
     case "waiting": return "warning";
+    case "quarantined":
+    case "output_quarantined":
+    case "denied": return "governance";
     case "failed":
     case "timed_out": return "danger";
     case "cancelled": return "muted";
@@ -192,8 +198,8 @@ export default function WorkflowRunDetailPage() {
   // Auto-select first running or first step
   useEffect(() => {
     if (steps.length > 0 && !selectedStep) {
-      const running = steps.find(s => s.status === "running");
-      setSelectedStep(running ?? steps[0]);
+      const active = steps.find(s => s.status === "waiting") ?? steps.find(s => s.status === "running");
+      setSelectedStep(active ?? steps[0]);
     }
   }, [steps, selectedStep]);
 
@@ -212,7 +218,7 @@ export default function WorkflowRunDetailPage() {
     if (!workflowId || !runId) return;
     cancelMutation.mutate(
       { workflowId, runId },
-      { onSuccess: () => { setCancelOpen(false); navigate(`/workflows/${workflowId}`); } },
+      { onSuccess: () => { setCancelOpen(false); navigate(`/workflows/${workflowId}/studio`); } },
     );
   };
 
@@ -243,7 +249,9 @@ export default function WorkflowRunDetailPage() {
     switch (status) {
       case "succeeded": return <CheckCircle2 className="w-4 h-4 text-[var(--color-success)]" />;
       case "running": return <Loader2 className="w-4 h-4 text-cordum animate-spin" />;
+      case "waiting": return <Hand className="w-4 h-4 text-[var(--color-warning)] animate-pulse" />;
       case "failed": return <XCircle className="w-4 h-4 text-destructive" />;
+      case "quarantined": return <ShieldAlert className="w-4 h-4 text-[var(--color-governance)]" />;
       case "skipped": return <ChevronDown className="w-4 h-4 text-muted-foreground" />;
       default: return <div className="w-4 h-4 rounded-full border-2 border-border" />;
     }
@@ -294,7 +302,7 @@ export default function WorkflowRunDetailPage() {
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-3 border-b border-border bg-surface-0 shrink-0">
         <div className="flex items-center gap-3">
-          <button type="button" onClick={() => navigate(`/workflows/${workflowId}`)} className="p-1.5 rounded-full hover:bg-surface-2 transition-colors">
+          <button type="button" onClick={() => navigate(`/workflows/${workflowId}/studio`)} className="p-1.5 rounded-full hover:bg-surface-2 transition-colors">
             <ArrowLeft className="w-4 h-4 text-muted-foreground" />
           </button>
           <div>
@@ -308,6 +316,20 @@ export default function WorkflowRunDetailPage() {
                 {run?.status ?? "unknown"}
               </StatusBadge>
               <span className="text-xs font-mono text-muted-foreground">{completedCount}/{totalSteps} steps</span>
+              {isRunning ? (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-mono font-medium bg-[var(--color-success)]/15 text-[var(--color-success)]">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-success)] animate-pulse" />
+                  LIVE
+                </span>
+              ) : run?.status && ["succeeded", "failed", "denied", "cancelled", "timed_out"].includes(run.status) ? (
+                <span className={cn(
+                  "text-xs font-mono",
+                  run.status === "succeeded" ? "text-[var(--color-success)]" : run.status === "denied" ? "text-[color:rgba(139,92,186,1)]" : "text-destructive",
+                )}>
+                  {run.status === "succeeded" ? "Completed" : run.status === "failed" ? "Failed" : run.status === "denied" ? "Denied" : run.status === "cancelled" ? "Cancelled" : "Timed out"}
+                  {run.updatedAt ? ` ${formatRelativeTime(run.updatedAt)}` : ""}
+                </span>
+              ) : null}
             </div>
             <p className="text-xs text-muted-foreground font-mono">Workflow: {run?.workflowId ?? workflowId}</p>
           </div>
@@ -349,7 +371,7 @@ export default function WorkflowRunDetailPage() {
         {/* Steps Panel — Animated Graph */}
         <div className="w-80 border-r border-border bg-surface-0 overflow-y-auto shrink-0">
           <div className="p-4">
-            <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-3">
+            <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-3">
               Execution Graph ({completedCount}/{totalSteps})
             </p>
             {timelineLoading && steps.length === 0 ? (
@@ -367,7 +389,9 @@ export default function WorkflowRunDetailPage() {
                 <div className="space-y-0.5">
                   {steps.map((step, i) => {
                     const Icon = stepIcon(step.type);
-                    const isActive = step.status === "running";
+                    const isRunning = step.status === "running";
+                    const isWaiting = step.status === "waiting";
+                    const isActive = isRunning || isWaiting;
                     return (
                       <motion.div
                         key={step.id}
@@ -377,7 +401,7 @@ export default function WorkflowRunDetailPage() {
                         onClick={() => setSelectedStep(step)}
                         className={cn(
                           "relative flex items-center gap-3 px-3 py-3 rounded-2xl transition-colors cursor-pointer",
-                          isActive ? "bg-cordum/5 border border-cordum/20" : "hover:bg-surface-1",
+                          isRunning ? "bg-cordum/5 border border-cordum/20" : isWaiting ? "bg-[var(--color-warning)]/5 border border-[var(--color-warning)]/20" : "hover:bg-surface-1",
                           selectedStep?.id === step.id && !isActive && "bg-surface-1 border border-border",
                           step.status === "pending" && "opacity-50",
                         )}
@@ -387,19 +411,28 @@ export default function WorkflowRunDetailPage() {
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
-                            <p className={cn("text-xs font-medium", step.status === "pending" ? "text-muted-foreground" : "text-foreground")}>{step.label}</p>
+                            <p className={cn(
+                              "text-xs font-medium",
+                              step.status === "pending" ? "text-muted-foreground" : "text-foreground",
+                              step.status === "skipped" && "text-muted-foreground line-through opacity-50",
+                            )}>{step.label}</p>
                             <Icon className="w-3 h-3 text-muted-foreground" />
                           </div>
+                          {step.status === "skipped" && (
+                            <p className="text-xs text-muted-foreground italic mt-0.5">Skipped: dependency failed</p>
+                          )}
                           <div className="flex items-center gap-2 mt-0.5">
-                            <span className="text-[10px] text-muted-foreground capitalize">{step.type}</span>
+                            <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">{step.status}</span>
+                            <span className="text-border">·</span>
+                            <span className="text-xs text-muted-foreground capitalize">{step.type}</span>
                             {step.duration && (
-                              <span className={cn("text-[10px] font-mono", isActive ? "text-cordum" : "text-muted-foreground")}>
+                              <span className={cn("text-xs font-mono", isActive ? "text-cordum" : "text-muted-foreground")}>
                                 {step.duration}
                               </span>
                             )}
                           </div>
                         </div>
-                        <span className="text-[10px] font-mono text-muted-foreground">{i + 1}</span>
+                        <span className="text-xs font-mono text-muted-foreground">{i + 1}</span>
                       </motion.div>
                     );
                   })}
@@ -420,7 +453,7 @@ export default function WorkflowRunDetailPage() {
               >
                 <div className="p-4">
                   <div className="flex items-center justify-between mb-3">
-                    <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Step Output</p>
+                    <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Step Output</p>
                     {selectedStep.output && (
                       <button type="button"
                         onClick={() => { if (selectedStep.output) { navigator.clipboard.writeText(selectedStep.output); toast.success("Copied"); } }}
@@ -442,6 +475,11 @@ export default function WorkflowRunDetailPage() {
                       <Loader2 className="w-3 h-3 animate-spin text-cordum" />
                       Processing...
                     </div>
+                  ) : selectedStep.status === "waiting" ? (
+                    <div className="flex items-center gap-2 text-xs text-[var(--color-warning)]">
+                      <Hand className="w-3 h-3 animate-pulse" />
+                      Awaiting approval
+                    </div>
                   ) : (
                     <p className="text-xs text-muted-foreground">Waiting to execute</p>
                   )}
@@ -456,10 +494,10 @@ export default function WorkflowRunDetailPage() {
           <div className="flex items-center gap-2 px-5 py-3 border-b border-border bg-surface-0">
             <MessageSquare className="w-4 h-4 text-cordum" />
             <span className="text-sm font-display font-semibold text-foreground">Run Chat</span>
-            <span className="text-[10px] font-mono text-muted-foreground ml-auto">{messages.length} messages</span>
+            <span className="text-xs font-mono text-muted-foreground ml-auto">{messages.length} messages</span>
           </div>
           {isChatFallback && (
-            <div className="flex items-center gap-2 px-5 py-1.5 border-b border-[var(--color-warning)]/20 bg-[var(--color-warning)]/5 text-[11px] text-[var(--color-warning)]">
+            <div className="flex items-center gap-2 px-5 py-1.5 border-b border-[var(--color-warning)]/20 bg-[var(--color-warning)]/5 text-xs text-[var(--color-warning)]">
               <AlertTriangle className="w-3 h-3 shrink-0" />
               Showing timeline events {chatError ? "(chat unavailable)" : "(no chat messages)"}
             </div>
@@ -468,7 +506,12 @@ export default function WorkflowRunDetailPage() {
           {/* Messages */}
           <div className="flex-1 overflow-y-auto p-5 space-y-3">
             {messages.length === 0 && (
-              <p className="text-xs text-muted-foreground text-center py-8">No messages yet</p>
+              <EmptyState
+                icon={<MessageSquare className="w-5 h-5" />}
+                title="No messages yet"
+                description="Messages will appear here as the run progresses."
+                className="py-8"
+              />
             )}
             {messages.map((msg, i) => (
               <motion.div
@@ -485,14 +528,14 @@ export default function WorkflowRunDetailPage() {
               >
                 <div className="flex items-center gap-2 mb-1">
                   <span className={cn(
-                    "text-[10px] font-mono uppercase",
+                    "text-xs font-mono uppercase",
                     msg.role === "user" ? "text-cordum" :
                     msg.role === "agent" ? "text-[var(--color-info)]" :
                     "text-muted-foreground",
                   )}>
                     {msg.role}
                   </span>
-                  <span className="text-[10px] text-muted-foreground">{msg.timestamp}</span>
+                  <span className="text-xs text-muted-foreground">{msg.timestamp}</span>
                 </div>
                 <p className="text-sm text-foreground leading-relaxed">{msg.content}</p>
               </motion.div>
@@ -509,13 +552,17 @@ export default function WorkflowRunDetailPage() {
                 onChange={(e) => setChatInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && sendMessage()}
                 placeholder="Send a message to the workflow..."
-                className="flex-1 h-9 px-3 text-sm bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+                disabled={chatMutation.isPending}
+                className={cn(
+                  "flex-1 h-9 px-3 text-sm bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum",
+                  chatMutation.isPending && "opacity-50 cursor-not-allowed",
+                )}
               />
               <Button variant="primary" size="sm" onClick={sendMessage} disabled={!chatInput.trim() || chatMutation.isPending}>
                 <Send className="w-3.5 h-3.5" />
               </Button>
             </div>
-            <p className="text-[9px] text-muted-foreground mt-1.5">Press Enter to send. Messages are visible to all participants.</p>
+            <p className="text-xs text-muted-foreground mt-1.5">Press Enter to send. Messages are visible to all participants.</p>
           </div>
         </div>
       </div>

@@ -84,7 +84,7 @@ func (s *server) handleInstallPack(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, "bundle file required")
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	if header != nil && header.Filename != "" && !isTarGz(header.Filename) {
 		writeErrorJSON(w, http.StatusBadRequest, "bundle must be .tgz")
 		return
@@ -623,6 +623,7 @@ func (s *server) applyConfigOverlay(ctx context.Context, overlay packConfigOverl
 	if err := s.configSvc.Set(ctx, doc); err != nil {
 		return appliedConfigChange{}, err
 	}
+	s.publishConfigChanged(scope, scopeID)
 	return appliedConfigChange{
 		Overlay: packAppliedConfigOverlay{
 			Name:    overlay.Name,
@@ -653,7 +654,11 @@ func (s *server) removeConfigOverlay(ctx context.Context, overlay packAppliedCon
 	deletePatch := buildDeletePatch(overlay.Patch)
 	updated := mergePatch(current, deletePatch)
 	doc.Data[overlay.Key] = updated
-	return s.configSvc.Set(ctx, doc)
+	if err := s.configSvc.Set(ctx, doc); err != nil {
+		return err
+	}
+	s.publishConfigChanged(overlay.Scope, overlay.ScopeID)
+	return nil
 }
 
 func (s *server) restoreConfigOverlay(ctx context.Context, change appliedConfigChange) error {
@@ -1311,7 +1316,7 @@ func fetchMarketplaceCatalog(ctx context.Context, catalogURL string, allowedHost
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("catalog fetch failed: %s", resp.Status)
@@ -1461,7 +1466,7 @@ func downloadPackBundle(ctx context.Context, parsed *url.URL, allowedHosts map[s
 	if err != nil {
 		return "", "", func() {}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 		return "", "", func() {}, fmt.Errorf("download failed: %s", resp.Status)
