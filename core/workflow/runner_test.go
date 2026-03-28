@@ -91,7 +91,7 @@ func TestReconcilerFailureReasonPropagation(t *testing.T) {
 	if err != nil {
 		t.Skipf("miniredis unavailable: %v", err)
 	}
-	defer func() { _ = srv.Close() }()
+	defer srv.Close()
 
 	redisURL := "redis://" + srv.Addr()
 	workflowStore, err := NewRedisWorkflowStore(redisURL)
@@ -154,7 +154,7 @@ func TestReconcilerFallbackErrorMessage(t *testing.T) {
 	if err != nil {
 		t.Skipf("miniredis unavailable: %v", err)
 	}
-	defer func() { _ = srv.Close() }()
+	defer srv.Close()
 
 	redisURL := "redis://" + srv.Addr()
 	workflowStore, err := NewRedisWorkflowStore(redisURL)
@@ -226,7 +226,7 @@ func TestReconcilerHandleJobResultLockBusy(t *testing.T) {
 	if err != nil {
 		t.Skipf("miniredis unavailable: %v", err)
 	}
-	defer func() { _ = srv.Close() }()
+	defer srv.Close()
 
 	jobStore, err := store.NewRedisJobStore("redis://" + srv.Addr())
 	if err != nil {
@@ -256,7 +256,7 @@ func TestReconcilerStartStopsOnContext(t *testing.T) {
 	if err != nil {
 		t.Skipf("miniredis unavailable: %v", err)
 	}
-	defer func() { _ = srv.Close() }()
+	defer srv.Close()
 
 	redisURL := "redis://" + srv.Addr()
 	workflowStore, err := NewRedisWorkflowStore(redisURL)
@@ -295,7 +295,7 @@ func TestHandleJobResult_CancelledContext(t *testing.T) {
 	if err != nil {
 		t.Skipf("miniredis unavailable: %v", err)
 	}
-	defer func() { _ = srv.Close() }()
+	defer srv.Close()
 
 	jobStore, err := store.NewRedisJobStore("redis://" + srv.Addr())
 	if err != nil {

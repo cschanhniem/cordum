@@ -219,7 +219,7 @@ func TestPolicyLoaderLoadsFragments(t *testing.T) {
 	if err != nil {
 		t.Skipf("miniredis unavailable: %v", err)
 	}
-	defer func() { _ = srv.Close() }()
+	defer srv.Close()
 
 	svc, err := configsvc.New("redis://" + srv.Addr())
 	if err != nil {
@@ -288,7 +288,7 @@ func TestPolicyLoaderRejectsInvalidFragments(t *testing.T) {
 	if err != nil {
 		t.Skipf("miniredis unavailable: %v", err)
 	}
-	defer func() { _ = srv.Close() }()
+	defer srv.Close()
 
 	svc, err := configsvc.New("redis://" + srv.Addr())
 	if err != nil {

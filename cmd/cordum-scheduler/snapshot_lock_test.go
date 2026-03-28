@@ -21,7 +21,7 @@ func TestSnapshotWriterLock_OnlyOneWriterPerTTL(t *testing.T) {
 	if err != nil {
 		t.Skipf("miniredis unavailable: %v", err)
 	}
-	defer func() { _ = srv.Close() }()
+	defer srv.Close()
 
 	jobStore, err := store.NewRedisJobStore("redis://" + srv.Addr())
 	if err != nil {
@@ -103,7 +103,7 @@ func TestSnapshotWriterLock_SkipsWhenHeld(t *testing.T) {
 	if err != nil {
 		t.Skipf("miniredis unavailable: %v", err)
 	}
-	defer func() { _ = srv.Close() }()
+	defer srv.Close()
 
 	jobStore, err := store.NewRedisJobStore("redis://" + srv.Addr())
 	if err != nil {
@@ -152,7 +152,7 @@ func TestSnapshotWriterLock_TTLExpiry(t *testing.T) {
 	if err != nil {
 		t.Skipf("miniredis unavailable: %v", err)
 	}
-	defer func() { _ = srv.Close() }()
+	defer srv.Close()
 
 	jobStore, err := store.NewRedisJobStore("redis://" + srv.Addr())
 	if err != nil {

@@ -59,7 +59,7 @@ func TestHTTPTransportMessageAndSSE(t *testing.T) {
 	mux.HandleFunc("GET /mcp/sse", transport.HandleSSE)
 	mux.HandleFunc("POST /mcp/message", transport.HandleMessage)
 	srv := httptest.NewServer(mux)
-	defer func() { _ = srv.Close() }()
+	defer srv.Close()
 
 	go func() {
 		msg, err := transport.ReadMessage()
