@@ -824,6 +824,7 @@ export function deriveApprovalStatus(
     return "denied";
   if (s === "denied") return "denied";
   if (s === "output_quarantined") return "quarantined";
+  if (s === "timeout") return "expired";
   if (s === "approval_required") return "pending";
   // Job resolved through approval flow — derive from post-approval state.
   if (resolvedBy) {

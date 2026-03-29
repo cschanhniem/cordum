@@ -108,6 +108,7 @@ describe("api/transform mappings", () => {
       { decision: "reject", expected: "denied" },
       { jobState: "DENIED", expected: "denied" },
       { jobState: "OUTPUT_QUARANTINED", expected: "quarantined" },
+      { jobState: "TIMEOUT", expected: "expired" },
       { jobState: "APPROVAL_REQUIRED", expected: "pending" },
       { jobState: "SUCCEEDED", expected: "approved" },
       { jobState: "UNKNOWN", expected: "pending" },
