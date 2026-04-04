@@ -10,10 +10,17 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/cordum-io/cordum/stargazers"><img src="https://img.shields.io/github/stars/cordum-io/cordum?style=social" alt="Stars"/></a>
   <a href="https://github.com/cordum-io/cordum/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-BUSL--1.1-blue" alt="License"/></a>
   <a href="https://github.com/cordum-io/cordum/releases"><img src="https://img.shields.io/github/v/release/cordum-io/cordum?sort=semver" alt="Release"/></a>
+  <a href="https://github.com/cordum-io/cordum/actions/workflows/ci.yml"><img src="https://github.com/cordum-io/cordum/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
+  <a href="https://goreportcard.com/report/github.com/cordum-io/cordum"><img src="https://goreportcard.com/badge/github.com/cordum-io/cordum" alt="Go Report Card"/></a>
   <a href="https://discord.gg/nvHzPCcWWt"><img src="https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white" alt="Discord"/></a>
   <a href="https://github.com/cordum-io/cap"><img src="https://img.shields.io/badge/protocol-CAP%20v2-green" alt="CAP Protocol"/></a>
+</p>
+
+<p align="center">
+  <a href="https://cordum.io">Website</a> · <a href="https://cordum.io/docs">Docs</a> · <a href="https://cordum.io/blog">Blog</a> · <a href="https://discord.gg/nvHzPCcWWt">Discord</a> · <a href="https://github.com/cordum-io/cordum/discussions">Discussions</a>
 </p>
 
 ---
@@ -278,7 +285,20 @@ SDKs: **Go** (stable) | [**Python**](https://github.com/cordum-io/cap) | [**Node
 
 ## Integration Packs
 
-Extend Cordum with [26+ integration packs](https://github.com/cordum-io/cordum-packs) for Slack, GitHub, AWS, Jira, and more. Each pack is a CAP-native worker with policy-gated workflows. Browse the catalog at [packs.cordum.io](https://packs.cordum.io).
+Extend Cordum with [30+ integration packs](https://github.com/cordum-io/cordum-packs) for Slack, GitHub, AWS, Jira, Terraform, Datadog, PagerDuty, and more. Each pack is a CAP-native worker with policy-gated workflows.
+
+| Pack | Category | Description |
+|------|----------|-------------|
+| [Slack](https://cordum.io/integrations/slack) | Communication | Approval notifications and agent alerts |
+| [GitHub](https://cordum.io/integrations/github) | DevOps | Govern agent actions on repositories |
+| [AWS](https://cordum.io/integrations/aws) | Cloud | Policy-gated cloud operations |
+| [Kubernetes](https://cordum.io/integrations/kubernetes-triage) | DevOps | Governed incident remediation |
+| [Terraform](https://cordum.io/integrations/terraform) | DevOps | Pre-apply governance for IaC |
+| [Datadog](https://cordum.io/integrations/datadog) | Monitoring | Alert-triggered governed workflows |
+| [LangChain](https://cordum.io/integrations/langchain) | AI Framework | Governance for LangChain tool calls |
+| [MCP Bridge](https://cordum.io/integrations/mcp-bridge) | AI Framework | Gateway governance for MCP tools |
+
+[Browse all integrations →](https://cordum.io/integrations)
 
 ## Community
 
@@ -313,9 +333,22 @@ See [ROADMAP.md](ROADMAP.md) for the full feature roadmap, completed milestones,
 
 See [CHANGELOG.md](CHANGELOG.md) for a detailed log of all changes by version.
 
+## Compared To
+
+| Feature | Cordum | Guardrails AI | NeMo Guardrails | Custom Middleware |
+|---------|--------|--------------|-----------------|-------------------|
+| Pre-execution policy engine | ✅ Safety Kernel | ❌ Post-generation | ⚠️ Dialog rails only | ⚠️ Manual |
+| Human-in-the-loop approvals | ✅ Built-in | ❌ | ❌ | ⚠️ DIY |
+| Multi-agent fleet governance | ✅ | ❌ Single model | ❌ Single model | ❌ |
+| Deterministic audit trail | ✅ | ❌ | ❌ | ⚠️ Manual |
+| Framework agnostic | ✅ Any via CAP | ❌ Python only | ❌ NVIDIA stack | ❌ |
+| MCP governance | ✅ Bridge + Gateway | ❌ | ❌ | ❌ |
+
+[See detailed comparisons →](https://cordum.io/compare/ai-governance-platforms)
+
 ## Contributing
 
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. Check out our [good first issues](https://github.com/cordum-io/cordum/labels/good%20first%20issue) to get started.
 
 ## License
 
@@ -330,11 +363,23 @@ See [LICENSE](LICENSE) for full terms.
 
 ---
 
+## Star History
+
+<a href="https://star-history.com/#cordum-io/cordum&Date">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=cordum-io/cordum&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=cordum-io/cordum&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=cordum-io/cordum&type=Date" />
+ </picture>
+</a>
+
+---
+
 <p align="center">
   <strong>Ready to govern your AI agents?</strong><br/>
-  <a href="https://cordum.io">cordum.io</a> · <a href="https://github.com/cordum-io/cap">CAP Protocol</a> · <a href="https://packs.cordum.io">Packs</a> · <a href="https://discord.gg/nvHzPCcWWt">Discord</a>
+  <a href="https://cordum.io">cordum.io</a> · <a href="https://github.com/cordum-io/cap">CAP Protocol</a> · <a href="https://cordum.io/integrations">Integrations</a> · <a href="https://discord.gg/nvHzPCcWWt">Discord</a>
 </p>
 
 <p align="center">
-  ⭐ Star this repo if Cordum helps you deploy agents safely
+  If Cordum helps you deploy agents safely, <a href="https://github.com/cordum-io/cordum/stargazers">give it a ⭐</a>
 </p>
