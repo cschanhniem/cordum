@@ -289,36 +289,44 @@ func (s *RedisUserStore) Create(ctx context.Context, user *User, password string
 	tenantIdx := userTenantIndexPrefix + user.Tenant
 	idVal := user.Tenant + ":" + user.Username
 
-	// Phase 1: Check username and email uniqueness (individual commands,
-	// Redis Cluster safe — no multi-key Lua).
-	exists, err := s.client.Exists(ctx, key).Result()
+	// Atomically claim the username key using SetNX (SET if Not eXists).
+	// This prevents the TOCTOU race where two concurrent creates both pass
+	// an Exists check before either writes.
+	claimed, err := s.client.SetNX(ctx, key, string(data), 0).Result()
 	if err != nil {
-		return fmt.Errorf("redis check username: %w", err)
+		return fmt.Errorf("redis claim username: %w", err)
 	}
-	if exists > 0 {
+	if !claimed {
 		return ErrUserAlreadyExists
 	}
+
+	// Atomically claim the email key if present.
 	if emailKey != "" {
-		emailExists, eErr := s.client.Exists(ctx, emailKey).Result()
+		emailClaimed, eErr := s.client.SetNX(ctx, emailKey, emailVal, 0).Result()
 		if eErr != nil {
-			return fmt.Errorf("redis check email: %w", eErr)
+			// Roll back the username key.
+			s.client.Del(ctx, key)
+			return fmt.Errorf("redis claim email: %w", eErr)
 		}
-		if emailExists > 0 {
+		if !emailClaimed {
+			// Email already taken — roll back the username key.
+			s.client.Del(ctx, key)
 			return ErrUserAlreadyExists
 		}
 	}
 
-	// Phase 2: Create all user records via pipeline.
+	// Write the remaining index keys (id lookup, tenant index).
 	pipe := s.client.Pipeline()
-	pipe.Set(ctx, key, string(data), 0)
 	pipe.Set(ctx, idKey, idVal, 0)
-	if emailKey != "" {
-		pipe.Set(ctx, emailKey, emailVal, 0)
-	}
 	pipe.SAdd(ctx, tenantIdx, user.ID)
 	_, err = pipe.Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("redis create user: %w", err)
+		// Roll back claimed keys on pipeline failure.
+		s.client.Del(ctx, key)
+		if emailKey != "" {
+			s.client.Del(ctx, emailKey)
+		}
+		return fmt.Errorf("redis create user indexes: %w", err)
 	}
 	return nil
 }
