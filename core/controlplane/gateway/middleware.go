@@ -18,6 +18,7 @@ import (
 
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/infra/env"
+	"github.com/cordum/cordum/core/licensing"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -71,13 +72,13 @@ func rateLimitFromEnv(rpsEnv, burstEnv string, defaultRPS, defaultBurst int) (in
 	return rps, burst
 }
 
-func newKeyedRateLimiterFromEnv() *keyedRateLimiter {
-	rps, burst := rateLimitFromEnv("API_RATE_LIMIT_RPS", "API_RATE_LIMIT_BURST", defaultRateLimitRPS, defaultRateLimitBurst)
+func newKeyedRateLimiterFromEnvWithDefaults(defaultRPS, defaultBurst int) *keyedRateLimiter {
+	rps, burst := rateLimitFromEnv("API_RATE_LIMIT_RPS", "API_RATE_LIMIT_BURST", defaultRPS, defaultBurst)
 	return newKeyedRateLimiter(rps, burst)
 }
 
-func newPublicRateLimiterFromEnv() *keyedRateLimiter {
-	rps, burst := rateLimitFromEnv("API_PUBLIC_RATE_LIMIT_RPS", "API_PUBLIC_RATE_LIMIT_BURST", defaultPublicRateLimitRPS, defaultPublicRateLimitBurst)
+func newPublicRateLimiterFromEnvWithDefaults(defaultRPS, defaultBurst int) *keyedRateLimiter {
+	rps, burst := rateLimitFromEnv("API_PUBLIC_RATE_LIMIT_RPS", "API_PUBLIC_RATE_LIMIT_BURST", defaultRPS, defaultBurst)
 	return newKeyedRateLimiter(rps, burst)
 }
 
@@ -190,11 +191,17 @@ type rateLimiter interface {
 	Allow(key string) bool
 }
 
-// defaultAPILimiter and defaultPublicLimiter are in-memory fallbacks used when
-// Redis-backed rate limiting is not wired up (e.g. during tests or before
-// RunWithAuth completes).
-var defaultAPILimiter rateLimiter = newKeyedRateLimiterFromEnv()
-var defaultPublicLimiter rateLimiter = newPublicRateLimiterFromEnv()
+func entitlementBodyBytesLimit(resolvers ...*licensing.EntitlementResolver) int64 {
+	for _, resolver := range resolvers {
+		if resolver == nil {
+			continue
+		}
+		if limit := resolver.Entitlements().MaxBodyBytes; limit > 0 {
+			return limit
+		}
+	}
+	return maxJSONBodyBytes()
+}
 
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

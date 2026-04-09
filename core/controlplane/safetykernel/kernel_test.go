@@ -289,7 +289,7 @@ rules:
 		configID:    "policy",
 		configKey:   "bundles",
 	}
-	policy, snapshot, err := loader.loadFragments(context.Background())
+	policy, snapshot, _, err := loader.loadFragments(context.Background())
 	if err != nil {
 		t.Fatalf("load fragments: %v", err)
 	}
@@ -348,7 +348,7 @@ default_decision: maybe
 		configID:    "policy",
 		configKey:   "bundles",
 	}
-	policy, snapshot, err := loader.loadFragments(context.Background())
+	policy, snapshot, _, err := loader.loadFragments(context.Background())
 	// Malformed fragments are now skipped instead of failing all
 	if err != nil {
 		t.Fatalf("expected no error (malformed fragments should be skipped): %v", err)
@@ -435,7 +435,7 @@ func TestPolicyLoaderFromSource(t *testing.T) {
 	}
 
 	loader := &policyLoader{source: path}
-	policy, snapshot, err := loader.Load(context.Background())
+	policy, snapshot, _, err := loader.Load(context.Background())
 	if err != nil {
 		t.Fatalf("load policy: %v", err)
 	}
@@ -446,7 +446,7 @@ func TestPolicyLoaderFromSource(t *testing.T) {
 
 func TestNewPolicyLoaderDefaults(t *testing.T) {
 	t.Setenv("SAFETY_POLICY_CONFIG_DISABLE", "1")
-	loader := newPolicyLoader(nil, "")
+	loader := newPolicyLoader(nil, "", nil)
 	if loader.configSvc != nil {
 		t.Fatalf("expected config service disabled")
 	}
@@ -455,7 +455,7 @@ func TestNewPolicyLoaderDefaults(t *testing.T) {
 	}
 	loader.Close()
 
-	loader = newPolicyLoader(nil, "/tmp/policy.yaml")
+	loader = newPolicyLoader(nil, "/tmp/policy.yaml", nil)
 	if !loader.ShouldWatch() {
 		t.Fatalf("expected ShouldWatch true when source set")
 	}

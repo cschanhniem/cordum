@@ -226,6 +226,8 @@ func TestUsageIncludesTopicAndWorkerCommands(t *testing.T) {
 	})
 
 	for _, want := range []string{
+		"cordumctl license install",
+		"cordumctl license info",
 		"cordumctl topic list",
 		"cordumctl topic create",
 		"cordumctl worker credential list",

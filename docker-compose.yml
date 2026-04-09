@@ -234,6 +234,8 @@ services:
       - GRPC_TLS_KEY=/etc/cordum/tls/server/tls.key
       - "CORDUM_API_KEY=${CORDUM_API_KEY:?error: CORDUM_API_KEY is not set}"
       - TENANT_ID=default
+      - CORDUM_LICENSE_TOKEN=${CORDUM_LICENSE_TOKEN:-}
+      - CORDUM_LICENSE_PUBLIC_KEY=${CORDUM_LICENSE_PUBLIC_KEY:-}
       - API_RATE_LIMIT_RPS=2000
       - API_RATE_LIMIT_BURST=4000
       - REDIS_DATA_TTL=24h

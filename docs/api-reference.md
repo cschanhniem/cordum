@@ -871,6 +871,10 @@ curl -sS -X POST http://localhost:8081/api/v1/workflows/WF_ID/runs \
       "job_hash": "...",
       "approval_required": true,
       "approval_ref": "job-id",
+      "approval_status": "approved",
+      "approval_actionability": "resolved",
+      "approval_revision": 2,
+      "approval_decision": "approve",
       "workflow_id": "wf-1",
       "workflow_run_id": "run-1",
       "workflow_step_id": "approve",
@@ -915,6 +919,17 @@ curl -sS -X POST http://localhost:8081/api/v1/workflows/WF_ID/runs \
 }
 ```
 
+Approval lifecycle endpoints may return structured conflict payloads on `409`:
+
+```json
+{
+  "error": "approval in progress; retry",
+  "status": 409,
+  "code": "approval_retryable_lock",
+  "retryable": true
+}
+```
+
 Notes:
 
 - Workflow approval gates and policy approvals share the same list endpoint.
@@ -928,6 +943,15 @@ Notes:
 - `decision_summary.source` distinguishes rich workflow payloads (`workflow_payload`),
   workflow-label fallback (`workflow_labels`), and legacy/policy-only approvals
   (`policy_only`).
+- `approval_status` is the explicit lifecycle state. Values: `pending`,
+  `approved`, `rejected`, `expired`, `invalidated`, `repaired`.
+- `approval_actionability` tells the dashboard whether the approval can still be
+  acted on. Values: `actionable`, `resolved`, `expired`, `invalidated`,
+  `repaired`.
+- `approval_revision` increments on each lifecycle mutation and helps clients
+  detect stale views or concurrent operator repair work.
+- `approval_decision` records the lifecycle mutation that resolved or repaired
+  the approval (`approve`, `reject`, `expire`, `invalidate`, `repair`).
 - Resolved approvals continue to expose `decision_summary`, `policy_snapshot`,
   `job_hash`, `resolved_by`, `resolved_comment`, and `resolution` for audit/history
   views.
@@ -955,6 +979,15 @@ Notes:
 
 - Errors: `400`, `403`, `404`, `409`, `502`, `503`
 
+`409 Conflict` uses machine-readable `code` values:
+
+- `approval_retryable_lock` — another decision or repair is in progress; safe to retry
+- `approval_terminal_run` — the workflow run already moved past this approval
+- `approval_stale_snapshot` — the governing policy snapshot changed
+- `approval_stale_request` — the underlying job request changed
+- `approval_not_actionable` — the approval is no longer actionable
+- `approval_already_resolved` — a decision is already recorded; refresh for audit detail
+
 ### POST `/api/v1/approvals/{job_id}/reject`
 
 - Auth: required + admin + tenant access
@@ -974,6 +1007,57 @@ Notes:
 ```
 
 - Errors: `400`, `403`, `404`, `409`, `503`
+
+Reject conflicts use the same structured `409` payload and `code` values as the
+approve endpoint.
+
+### POST `/api/v1/approvals/{job_id}/repair`
+
+- Auth: required + admin + tenant access
+- Request:
+
+```json
+{
+  "apply": false,
+  "note": "optional operator note"
+}
+```
+
+- Response (dry-run):
+
+```json
+{
+  "job_id": "job-id",
+  "apply": false,
+  "applied": false,
+  "repairable": true,
+  "state": "APPROVAL_REQUIRED",
+  "trace_id": "trace-id",
+  "approval": {
+    "status": "approved",
+    "actionability": "resolved"
+  },
+  "plan": {
+    "kind": "invalidate_stale_snapshot",
+    "repairable": true,
+    "reason": "policy snapshot changed after approval request creation"
+  }
+}
+```
+
+- Response (apply): same envelope, but `applied=true`; the returned `approval`
+  object reflects the repaired lifecycle record and may include
+  `publish_deferred=true` / `publish_error` when state repair succeeded but the
+  follow-up publish must be replayed by recovery logic.
+- Errors: `400`, `403`, `404`, `409`, `500`
+
+Notes:
+
+- `apply=false` is the dry-run inspection path used by operators and `cordumctl`.
+- `plan.kind` classifies terminal workflow runs, stale request drift, stale
+  policy snapshots, legacy partial approvals, and publish-intent recovery.
+- Repair requests also use `approval_retryable_lock` when another decision or
+  repair currently holds the approval lock.
 
 Note: There are no `GET /api/v1/approvals/{id}` or `PUT /api/v1/approvals/{id}` routes in current gateway route registration.
 
@@ -1765,6 +1849,75 @@ curl -sS http://localhost:8081/api/v1/marketplace/packs \
   - `replicas` is a map of service name to array of registered instance info. Only present when the instance registry is active (HA mode with Redis).
 - Errors: auth/tenant middleware errors (`401`, `403`).
 
+### GET `/api/v1/telemetry/status`
+
+- Auth: required + admin
+- Response schema:
+
+```json
+{
+  "mode": "anonymous",
+  "endpoint": "https://telemetry.cordum.io/v1/report",
+  "last_collected_at": "2026-04-08T22:00:00Z",
+  "last_reported_at": "2026-04-08T22:00:05Z"
+}
+```
+
+- Notes:
+  - `mode` is controlled by `CORDUM_TELEMETRY_MODE` (`off`, `local_only`, `anonymous`).
+  - `endpoint` is only populated when remote reporting is enabled.
+- Errors: auth/tenant middleware errors (`401`, `403`), `500`.
+
+### GET `/api/v1/telemetry/inspect`
+
+- Auth: required + admin
+- Response: the exact last locally stored telemetry payload as JSON, or `null` if nothing has been collected yet.
+- Errors: auth/tenant middleware errors (`401`, `403`), `500`.
+
+### GET `/api/v1/telemetry/export`
+
+- Auth: required + admin
+- Response: downloadable JSON attachment (`Content-Disposition: attachment; filename="cordum-telemetry.json"`) containing the exact last locally stored telemetry payload, or `null` if nothing has been collected yet.
+- Errors: auth/tenant middleware errors (`401`, `403`), `500`.
+
+### GET `/api/v1/telemetry/usage`
+
+- Auth: required + admin
+- Response schema:
+
+```json
+{
+  "workers": {
+    "registered": 2,
+    "connected": 1
+  },
+  "usage": {
+    "active_jobs": 1,
+    "active_workflow_runs": 1,
+    "jobs_last_24h": 12,
+    "workflow_runs_last_24h": 4,
+    "schemas": 3,
+    "policy_bundles": 2
+  },
+  "features_enabled": {
+    "user_auth": true,
+    "oidc": false,
+    "output_policy": true
+  },
+  "engagement": {
+    "topics_configured": 5,
+    "workflows_configured": 3,
+    "packs_installed": 1,
+    "user_auth_enabled": true,
+    "oidc_enabled": false,
+    "output_policy_enabled": true
+  },
+  "limits_hit": {}
+}
+```
+
+- Errors: auth/tenant middleware errors (`401`, `403`), `500`.
+
 ### GET `/api/v1/workers`
 
 - Auth: required + admin
@@ -2154,6 +2307,7 @@ The following routes are registered in gateway route setup.
 | GET | `/api/v1/approvals` |
 | POST | `/api/v1/approvals/{job_id}/approve` |
 | POST | `/api/v1/approvals/{job_id}/reject` |
+| POST | `/api/v1/approvals/{job_id}/repair` |
 | POST | `/api/v1/policy/evaluate` |
 | POST | `/api/v1/policy/simulate` |
 | POST | `/api/v1/policy/explain` |

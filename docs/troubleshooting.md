@@ -1147,6 +1147,113 @@ docker compose logs gateway workflow-engine --tail=200
 - Re-run `./tools/scripts/e2e_install_workflow.sh` or the manual flow in
   `docs/LOCAL_E2E.md` after changing workflow approval behavior.
 
+---
+
+## 16. Stuck or Zombie Approvals
+
+**Symptoms**: The dashboard shows an approval that cannot be acted on, a job stays in
+`APPROVAL_REQUIRED` after someone already approved/rejected it, or approve/reject calls
+return `409` conflicts.
+
+### Read the lifecycle fields first
+
+Inspect the approval record before deciding whether this is an operator repair case or a
+normal race:
+
+```bash
+curl -sS "http://localhost:8081/api/v1/approvals?include_resolved=true" \
+  -H "X-API-Key: $CORDUM_API_KEY" \
+  -H "X-Tenant-ID: $CORDUM_TENANT_ID" \
+  | jq --arg job "$JOB_ID" '
+      .items[]
+      | select(.job.id == $job)
+      | {
+          approval_status,
+          approval_actionability,
+          approval_revision,
+          approval_decision,
+          policy_snapshot,
+          job_hash,
+          resolved_by,
+          resolved_comment
+        }
+    '
+```
+
+Interpretation:
+
+| Field | Meaning |
+|-------|---------|
+| `approval_status=pending` + `approval_actionability=actionable` | Normal active approval |
+| `approval_status=approved/rejected` + job still `APPROVAL_REQUIRED` | Legacy zombie approval; repairable |
+| `approval_status=invalidated` | Request/workflow drifted; refresh and re-evaluate |
+| `approval_status=repaired` | Operator or reconciler repaired an inconsistent record |
+
+### Understand structured `409` conflicts
+
+Approve/reject/repair endpoints now return machine-readable conflict codes:
+
+| Code | Meaning | Operator action |
+|------|---------|-----------------|
+| `approval_retryable_lock` | Another approval decision or repair is in progress | Wait a moment and retry |
+| `approval_terminal_run` | Workflow run already moved past this approval | Refresh the run and inspect final state |
+| `approval_stale_snapshot` | Policy snapshot drifted | Re-evaluate against the latest policy |
+| `approval_stale_request` | Underlying job request changed | Refresh and review the latest request |
+| `approval_not_actionable` | Approval is no longer actionable | Refresh dashboard state |
+| `approval_already_resolved` | Decision already recorded | Review audit/history; no repair needed |
+
+### Run an approval repair dry-run
+
+Use dry-run first. It inspects the approval and returns the planned repair without
+mutating Redis:
+
+```bash
+cordumctl approval repair "$JOB_ID"
+```
+
+Equivalent API call:
+
+```bash
+curl -sS -X POST "http://localhost:8081/api/v1/approvals/${JOB_ID}/repair" \
+  -H "X-API-Key: $CORDUM_API_KEY" \
+  -H "X-Tenant-ID: $CORDUM_TENANT_ID" \
+  -H "Content-Type: application/json" \
+  -d '{"apply":false}' | jq .
+```
+
+Common dry-run `plan.kind` values:
+
+- `repair_approved_resolution` / `repair_rejected_resolution` — legacy partial approval
+- `invalidate_terminal_run` — workflow already ended
+- `invalidate_stale_snapshot` — policy snapshot drifted
+- `invalidate_stale_request` — job payload/hash drifted
+- publish-intent repair plans — state was decided but follow-up publish must be replayed
+
+### Apply the repair
+
+If the dry-run plan is safe and expected:
+
+```bash
+cordumctl approval repair "$JOB_ID" --apply --note "on-call repair after zombie approval"
+```
+
+What happens next:
+
+- the approval lifecycle is updated atomically
+- an audit entry is recorded with action `repair`
+- if possible, any deferred submit/DLQ publish is emitted immediately
+- if publish cannot complete inline, recovery logic replays it later and the response
+  includes `publish_deferred=true`
+
+### When not to repair manually
+
+Do **not** apply a manual repair when:
+
+- the conflict code is `approval_retryable_lock` (retry instead)
+- the approval is still `actionable`
+- the dry-run plan is not the state transition you expect
+- you cannot explain the policy snapshot or job hash drift
+
 ## Related Docs
 
 - [production.md](production.md) — Production readiness guide with incident runbooks

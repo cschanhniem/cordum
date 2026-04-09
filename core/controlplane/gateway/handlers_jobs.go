@@ -23,6 +23,7 @@ import (
 	"github.com/cordum/cordum/core/infra/registry"
 	"github.com/cordum/cordum/core/infra/secrets"
 	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -181,10 +182,8 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		},
 		"pipeline": s.statusPipeline(r.Context(), tenantID),
 	}
-	if provider, ok := s.auth.(LicenseInfoProvider); ok {
-		if info := provider.LicenseInfo(); info != nil {
-			resp["license"] = info
-		}
+	if info := s.currentLicenseInfo(); info != nil {
+		resp["license"] = info
 	}
 
 	// Infrastructure details are admin-only to prevent information disclosure.
@@ -450,12 +449,21 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		Note:           meta["approval_note"],
 		PolicySnapshot: meta["approval_policy_snapshot"],
 		JobHash:        meta["approval_job_hash"],
+		Status:         model.ApprovalStatus(meta["approval_status"]),
+		Actionability:  model.ApprovalActionability(meta["approval_actionability"]),
+		Decision:       model.ApprovalDecision(meta["approval_decision"]),
 	}
 	if raw := meta["approval_at"]; raw != "" {
 		if parsed, parseErr := strconv.ParseInt(raw, 10, 64); parseErr == nil {
 			approvalRecord.ApprovedAt = parsed
 		}
 	}
+	if raw := meta["approval_revision"]; raw != "" {
+		if parsed, parseErr := strconv.ParseInt(raw, 10, 64); parseErr == nil {
+			approvalRecord.Revision = parsed
+		}
+	}
+	approvalRecord = store.NormalizeApprovalRecord(state, safetyRecord, approvalRecord)
 
 	// Output safety uses a dedicated key — separate call.
 	outputSafety, _ := s.jobStore.GetOutputSafety(r.Context(), id)
@@ -599,6 +607,18 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	}
 	if approvalRecord.JobHash != "" {
 		resp["approval_job_hash"] = approvalRecord.JobHash
+	}
+	if approvalRecord.Status != "" {
+		resp["approval_status"] = approvalRecord.Status
+	}
+	if approvalRecord.Actionability != "" {
+		resp["approval_actionability"] = approvalRecord.Actionability
+	}
+	if approvalRecord.Revision > 0 {
+		resp["approval_revision"] = approvalRecord.Revision
+	}
+	if approvalRecord.Decision != "" {
+		resp["approval_decision"] = approvalRecord.Decision
 	}
 	writeJSON(w, resp)
 }
@@ -1281,13 +1301,14 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxJobPayloadBytes)
+	jobPayloadLimit := s.jobPayloadBytesLimit()
+	r.Body = http.MaxBytesReader(w, r.Body, jobPayloadLimit)
 
 	var req submitJobRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
-			writeErrorJSON(w, http.StatusRequestEntityTooLarge, "request body too large")
+			writeTierLimitJSON(w, tierLimitFromMaxBytes(int64(maxErr.Limit)))
 			return
 		}
 		writeErrorJSON(w, http.StatusBadRequest, "invalid json")
@@ -1295,7 +1316,12 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req.applyDefaults(s.tenant)
-	if err := req.validate(s.tenant); err != nil {
+	if err := req.validate(s.tenant, s.promptCharLimit()); err != nil {
+		var limitErr *licensing.TierLimitError
+		if errors.As(err, &limitErr) {
+			writeTierLimitJSON(w, limitErr)
+			return
+		}
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}

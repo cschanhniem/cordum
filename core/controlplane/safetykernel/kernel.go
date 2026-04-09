@@ -32,6 +32,7 @@ import (
 	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/cordum/cordum/core/infra/tlsreload"
+	"github.com/cordum/cordum/core/licensing"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/nats-io/nats.go"
@@ -49,20 +50,22 @@ import (
 type server struct {
 	pb.UnimplementedSafetyKernelServer
 	pb.UnimplementedOutputPolicyServiceServer
-	mu              sync.RWMutex
-	policy          *config.SafetyPolicy
-	outputRules     []compiledOutputRule
-	inputRules      []compiledInputRule
-	scanners        map[string]OutputScanner
-	snapshot        string
-	snapshots       []string
-	resultClient    redis.UniversalClient
-	velocityChecker *velocityChecker
-	policyVersion   atomic.Uint64
-	cacheMu         sync.Mutex
-	cacheTTL        time.Duration
-	cache           map[string]cacheEntry
-	cacheMaxSize    int
+	mu                sync.RWMutex
+	policy            *config.SafetyPolicy
+	outputRules       []compiledOutputRule
+	inputRules        []compiledInputRule
+	scanners          map[string]OutputScanner
+	snapshot          string
+	snapshots         []string
+	resultClient      redis.UniversalClient
+	velocityChecker   *velocityChecker
+	policyVersion     atomic.Uint64
+	cacheMu           sync.Mutex
+	cacheTTL          time.Duration
+	cache             map[string]cacheEntry
+	cacheMaxSize      int
+	entitlements      *licensing.EntitlementResolver
+	customBundleCount int
 }
 
 const (
@@ -75,6 +78,7 @@ const (
 	defaultDecisionCacheMaxSize = 10000
 	snapshotHistoryKey          = "cordum:safety:snapshots"
 	snapshotHistoryMax          = 10
+	customPolicyBundlePrefix    = "secops/"
 )
 
 type cacheEntry struct {
@@ -163,14 +167,20 @@ func registerConfigChangeNotifications(natsBus configChangeBus, notifyCh chan st
 
 // Run starts the Safety Kernel gRPC server and blocks until it exits.
 func Run(cfg *config.Config) error {
+	return RunWithEntitlements(cfg, nil)
+}
+
+// RunWithEntitlements starts the Safety Kernel with an optional shared
+// entitlement resolver. Nil falls back to community defaults.
+func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementResolver) error {
 	if cfg == nil {
 		cfg = config.Load()
 	}
 
 	policySource := policySourceFromEnv(cfg.SafetyPolicyPath)
-	loader := newPolicyLoader(cfg, policySource)
+	loader := newPolicyLoader(cfg, policySource, resolver)
 	defer loader.Close()
-	policy, snapshot, err := loader.Load(context.Background())
+	policy, snapshot, customBundleCount, err := loader.Load(context.Background())
 	if err != nil {
 		return fmt.Errorf("load safety policy: %w", err)
 	}
@@ -233,8 +243,9 @@ func Run(cfg *config.Config) error {
 		scanners:        loadOutputScanners(),
 		resultClient:    resultClient,
 		velocityChecker: newVelocityChecker(resultClient),
+		entitlements:    resolver,
 	}
-	srv.setPolicy(policy, snapshot)
+	srv.setPolicyWithBundleCount(policy, snapshot, customBundleCount)
 
 	// Lifecycle context for background goroutines — cancelled when Run returns.
 	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
@@ -296,6 +307,55 @@ func Run(cfg *config.Config) error {
 	return nil
 }
 
+func (s *server) currentEntitlements() licensing.Entitlements {
+	if s != nil && s.entitlements != nil {
+		return s.entitlements.Entitlements()
+	}
+	return licensing.DefaultEntitlements(licensing.PlanCommunity)
+}
+
+func (s *server) resolvedPlan() licensing.Plan {
+	if s != nil && s.entitlements != nil {
+		return s.entitlements.ResolvedPlan()
+	}
+	return licensing.PlanCommunity
+}
+
+func (s *server) velocityRuleLimit() int64 {
+	if entitlements := s.currentEntitlements(); entitlements.Limits != nil {
+		for _, key := range []string{"velocity_rule_count", "velocity_rules"} {
+			if limit, ok := entitlements.Limits[key]; ok {
+				return limit
+			}
+		}
+	}
+	switch s.resolvedPlan() {
+	case licensing.PlanEnterprise:
+		return licensing.Unlimited
+	case licensing.PlanTeam:
+		return 20
+	default:
+		return 3
+	}
+}
+
+func effectiveVelocityRuleCount(policy *config.SafetyPolicy, limit int64) int {
+	if policy == nil || limit == 0 {
+		return 0
+	}
+	count := 0
+	for _, rule := range policy.EffectiveRules() {
+		if rule.Velocity == nil {
+			continue
+		}
+		count++
+		if limit != licensing.Unlimited && int64(count) >= limit {
+			break
+		}
+	}
+	return count
+}
+
 func (s *server) Check(ctx context.Context, req *pb.PolicyCheckRequest) (*pb.PolicyCheckResponse, error) {
 	return s.evaluate(ctx, req, "check")
 }
@@ -354,11 +414,11 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	}
 	s.mu.RUnlock()
 
-	// Bypass decision cache when the active policy has velocity rules.
+	// Bypass decision cache when the active policy has effective velocity rules.
 	// Velocity decisions depend on sliding-window state that changes with every
 	// request, so caching any result (even a fallthrough ALLOW) would prevent
 	// the window from advancing correctly.
-	policyHasVelocity := policy != nil && hasVelocityRules(policy.EffectiveRules())
+	policyHasVelocity := effectiveVelocityRuleCount(policy, s.velocityRuleLimit()) > 0
 	cacheKey := ""
 	if s.cacheTTL > 0 && !policyHasVelocity {
 		cacheKey = cacheKeyForRequest(req, snapshot)
@@ -832,7 +892,7 @@ func (s *server) watchPolicy(ctx context.Context, loader *policyLoader, notifyCh
 	reload := func(trigger string) {
 		slog.Info("safety-kernel: policy reload triggered", "trigger", trigger)
 
-		policy, snapshot, err := loader.Load(ctx)
+		policy, snapshot, customBundleCount, err := loader.Load(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				return
@@ -844,7 +904,7 @@ func (s *server) watchPolicy(ctx context.Context, loader *policyLoader, notifyCh
 		current := s.snapshot
 		s.mu.RUnlock()
 		if snapshot != "" && snapshot != current {
-			s.setPolicy(policy, snapshot)
+			s.setPolicyWithBundleCount(policy, snapshot, customBundleCount)
 			slog.Info("safety-kernel: policy snapshot updated", "snapshot", snapshot, "trigger", trigger)
 		}
 	}
@@ -862,6 +922,10 @@ func (s *server) watchPolicy(ctx context.Context, loader *policyLoader, notifyCh
 }
 
 func (s *server) setPolicy(policy *config.SafetyPolicy, snapshot string) {
+	s.setPolicyWithBundleCount(policy, snapshot, 0)
+}
+
+func (s *server) setPolicyWithBundleCount(policy *config.SafetyPolicy, snapshot string, customBundleCount int) {
 	newVersion := s.policyVersion.Add(1)
 
 	s.mu.Lock()
@@ -869,6 +933,7 @@ func (s *server) setPolicy(policy *config.SafetyPolicy, snapshot string) {
 	s.outputRules = compileOutputRules(policy)
 	s.inputRules = compileInputRules(policy)
 	s.snapshot = snapshot
+	s.customBundleCount = customBundleCount
 	if snapshot != "" {
 		s.snapshots = append([]string{snapshot}, s.snapshots...)
 		if len(s.snapshots) > snapshotHistoryMax {
@@ -897,15 +962,16 @@ func (s *server) setPolicy(policy *config.SafetyPolicy, snapshot string) {
 }
 
 type policyLoader struct {
-	source      string
-	configSvc   *configsvc.Service
-	configScope configsvc.Scope
-	configID    string
-	configKey   string
+	source       string
+	configSvc    *configsvc.Service
+	configScope  configsvc.Scope
+	configID     string
+	configKey    string
+	entitlements *licensing.EntitlementResolver
 }
 
-func newPolicyLoader(cfg *config.Config, source string) *policyLoader {
-	loader := &policyLoader{source: source}
+func newPolicyLoader(cfg *config.Config, source string, resolver *licensing.EntitlementResolver) *policyLoader {
+	loader := &policyLoader{source: source, entitlements: resolver}
 	if strings.TrimSpace(os.Getenv("SAFETY_POLICY_CONFIG_DISABLE")) != "" {
 		return loader
 	}
@@ -950,36 +1016,66 @@ func (l *policyLoader) ShouldWatch() bool {
 	return l.source != "" || l.configSvc != nil
 }
 
-func (l *policyLoader) Load(ctx context.Context) (*config.SafetyPolicy, string, error) {
-	basePolicy, baseSnapshot, err := loadPolicyBundle(l.source)
-	if err != nil {
-		return nil, "", err
+func (l *policyLoader) currentEntitlements() licensing.Entitlements {
+	if l != nil && l.entitlements != nil {
+		return l.entitlements.Entitlements()
 	}
-	fragmentPolicy, fragmentSnapshot, err := l.loadFragments(ctx)
-	if err != nil {
-		return nil, "", err
-	}
-	merged := mergePolicies(basePolicy, fragmentPolicy)
-	return merged, combineSnapshots(baseSnapshot, fragmentSnapshot), nil
+	return licensing.DefaultEntitlements(licensing.PlanCommunity)
 }
 
-func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy, string, error) {
+func (l *policyLoader) resolvedPlan() licensing.Plan {
+	if l != nil && l.entitlements != nil {
+		return l.entitlements.ResolvedPlan()
+	}
+	return licensing.PlanCommunity
+}
+
+func (l *policyLoader) policyBundleLimit() int64 {
+	entitlements := l.currentEntitlements()
+	if limit := entitlements.MaxPolicyBundles; limit != 0 {
+		return limit
+	}
+	if entitlements.Limits != nil {
+		if limit, ok := entitlements.Limits["max_policy_bundles"]; ok {
+			return limit
+		}
+	}
+	if l.resolvedPlan() == licensing.PlanCommunity {
+		return 0
+	}
+	return licensing.Unlimited
+}
+
+func (l *policyLoader) Load(ctx context.Context) (*config.SafetyPolicy, string, int, error) {
+	basePolicy, baseSnapshot, err := loadPolicyBundle(l.source)
+	if err != nil {
+		return nil, "", 0, err
+	}
+	fragmentPolicy, fragmentSnapshot, customBundleCount, err := l.loadFragments(ctx)
+	if err != nil {
+		return nil, "", 0, err
+	}
+	merged := mergePolicies(basePolicy, fragmentPolicy)
+	return merged, combineSnapshots(baseSnapshot, fragmentSnapshot), customBundleCount, nil
+}
+
+func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy, string, int, error) {
 	if l == nil || l.configSvc == nil {
-		return nil, "", nil
+		return nil, "", 0, nil
 	}
 	doc, err := l.configSvc.Get(ctx, l.configScope, l.configID)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			return nil, "", nil
+			return nil, "", 0, nil
 		}
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	if doc.Data == nil {
-		return nil, "", nil
+		return nil, "", 0, nil
 	}
 	rawBundles, ok := doc.Data[l.configKey].(map[string]any)
 	if !ok || len(rawBundles) == 0 {
-		return nil, "", nil
+		return nil, "", 0, nil
 	}
 	keys := make([]string, 0, len(rawBundles))
 	for key := range rawBundles {
@@ -989,10 +1085,26 @@ func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy,
 	hasher := sha256.New()
 	var merged *config.SafetyPolicy
 	var skippedCount int
+	customBundleCount := 0
+	bundleLimit := l.policyBundleLimit()
 	for _, key := range keys {
 		content, ok := extractPolicyFragment(rawBundles[key])
 		if !ok || strings.TrimSpace(content) == "" {
 			continue
+		}
+		isCustomBundle := strings.HasPrefix(key, customPolicyBundlePrefix)
+		if isCustomBundle && bundleLimit != licensing.Unlimited {
+			projected := int64(customBundleCount + 1)
+			if bundleLimit == 0 || projected > bundleLimit {
+				slog.Warn("safety-kernel: custom policy bundle skipped by tier limit",
+					"bundle_id", key,
+					"allowed", bundleLimit,
+					"plan", l.resolvedPlan(),
+					"upgrade_url", licensing.DefaultUpgradeURL,
+				)
+				skippedCount++
+				continue
+			}
 		}
 		policy, err := config.ParseSafetyPolicy([]byte(content))
 		if err != nil {
@@ -1007,6 +1119,9 @@ func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy,
 		hasher.Write([]byte{0})
 		hasher.Write([]byte(content))
 		merged = mergePolicies(merged, policy)
+		if isCustomBundle {
+			customBundleCount++
+		}
 	}
 	if skippedCount > 0 {
 		slog.Warn("policy fragments skipped due to errors",
@@ -1015,10 +1130,10 @@ func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy,
 		)
 	}
 	if merged == nil {
-		return nil, "", nil
+		return nil, "", customBundleCount, nil
 	}
 	hash := hex.EncodeToString(hasher.Sum(nil))
-	return merged, "cfg:" + hash, nil
+	return merged, "cfg:" + hash, customBundleCount, nil
 }
 
 func extractPolicyFragment(value any) (string, bool) {

@@ -29,6 +29,7 @@ import (
 	agentregistry "github.com/cordum/cordum/core/infra/registry"
 	"github.com/cordum/cordum/core/infra/schema"
 	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/licensing"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -334,6 +335,8 @@ func main() {
 	defer registry.Close()
 
 	workerCredentialCache := scheduler.NewWorkerCredentialCache(workercredentials.NewService(configSvc))
+	entitlementResolver := licensing.NewEntitlementResolver()
+	entitlementResolver.Init()
 
 	engine := scheduler.NewEngine(
 		natsBus,
@@ -346,6 +349,7 @@ func main() {
 		WithTopicRegistry(topicregistry.NewService(configSvc)).
 		WithWorkerCredentialCache(workerCredentialCache).
 		WithSchemaRegistry(schemaRegistry).
+		WithEntitlements(entitlementResolver).
 		WithContextClient(jobStore.Client()).
 		WithSaga(sagaManager)
 	if dlqStore != nil {

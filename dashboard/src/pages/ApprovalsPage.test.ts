@@ -237,7 +237,7 @@ describe("ApprovalsPage deny reason logic", () => {
       });
 
       expect(mutate).toHaveBeenCalledWith({
-        id: "approval-42",
+        jobId: "job-default",
         reason: "Violates compliance policy",
       });
       expect(clearTarget).toHaveBeenCalled();
@@ -251,7 +251,7 @@ describe("ApprovalsPage deny reason logic", () => {
       handleDenyConfirm(approval, "", { mutate, clearTarget });
 
       expect(mutate).toHaveBeenCalledWith({
-        id: "approval-99",
+        jobId: "job-default",
         reason: "Denied by operator",
       });
       expect(clearTarget).toHaveBeenCalled();
@@ -265,7 +265,7 @@ describe("ApprovalsPage deny reason logic", () => {
       handleDenyConfirm(approval, "   \t\n  ", { mutate, clearTarget });
 
       expect(mutate).toHaveBeenCalledWith({
-        id: "apr-default",
+        jobId: "job-default",
         reason: "Denied by operator",
       });
     });
@@ -407,7 +407,7 @@ describe("ApprovalsPage decision-first rendering", () => {
 
       click(approveButton);
       expect(hookState.approveMutate).toHaveBeenCalledWith(
-        { id: "apr-77" },
+        { jobId: "job-77" },
         expect.objectContaining({ onError: expect.any(Function) }),
       );
       expect(container.querySelector("#approval-drawer-title")).toBeNull();
@@ -549,6 +549,45 @@ describe("ApprovalsPage decision-first rendering", () => {
       expect(card?.textContent).toContain("Approve renewal for Example Corp");
       expect(findButtonByAriaLabelPrefix(container, "Approve ")).toBeNull();
       expect(findButtonByAriaLabelPrefix(container, "Deny ")).toBeNull();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("renders invalidated and repaired approvals as non-actionable lifecycle states", () => {
+    hookState.approvalsData = {
+      items: [
+        makeApproval({
+          id: "apr-invalidated",
+          jobId: "job-invalidated",
+          status: "invalidated",
+          actionability: "invalidated",
+          humanSummary: "Budget approval drifted",
+          reason: "Workflow input changed after approval request creation",
+        }),
+        makeApproval({
+          id: "apr-repaired",
+          jobId: "job-repaired",
+          status: "repaired",
+          actionability: "repaired",
+          humanSummary: "Legacy approval repaired",
+          reason: "Operator repaired an inconsistent approval row",
+        }),
+      ],
+    };
+
+    const { container, cleanup } = renderPage();
+    try {
+      click(findTabButton(container, "Invalidated"));
+
+      expect(container.textContent).toContain("Budget approval drifted");
+      expect(container.textContent).toContain("Invalidated");
+      expect(findButtonByAriaLabelPrefix(container, "Approve ")).toBeNull();
+      expect(findButtonByAriaLabelPrefix(container, "Deny ")).toBeNull();
+
+      click(findTabButton(container, "Repaired"));
+      expect(container.textContent).toContain("Legacy approval repaired");
+      expect(container.textContent).toContain("Repaired");
     } finally {
       cleanup();
     }
