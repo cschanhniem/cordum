@@ -51,6 +51,7 @@ const SettingsNotificationsPage = lazy(() => import("./pages/SettingsNotificatio
 const SettingsEnvironmentsPage = lazy(() => import("./pages/SettingsEnvironmentsPage"));
 const SettingsConfigPage = lazy(() => import("./pages/SettingsConfigPage"));
 const SettingsMcpPage = lazy(() => import("./pages/SettingsMcpPage"));
+const SettingsLicensePage = lazy(() => import("./pages/settings/LicensePage"));
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage"));
 const SettingsHubPage = lazy(() => import("./pages/SettingsHubPage"));
 const GovernPolicyOverviewPage = lazy(() => import("./pages/govern/PolicyOverviewPage"));
@@ -189,6 +190,7 @@ function ProtectedRoutes() {
           <Route path="/settings/environments" element={<SettingsEnvironmentsPage />} />
           <Route path="/settings/config" element={<SettingsConfigPage />} />
           <Route path="/settings/mcp" element={<SettingsMcpPage />} />
+          <Route path="/settings/license" element={<SettingsLicensePage />} />
 
           {/* Legacy redirects */}
           <Route path="/pools" element={<Navigate to="/agents" replace />} />

@@ -9,6 +9,7 @@ import (
 
 	"github.com/cordum/cordum/core/controlplane/gateway/pools"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
+	"github.com/cordum/cordum/core/licensing"
 )
 
 type createWorkerCredentialRequest struct {
@@ -104,6 +105,21 @@ func (s *server) handleCreateWorkerCredential(w http.ResponseWriter, r *http.Req
 	if err != nil {
 		writeInternalError(w, r, "get worker credential", err)
 		return
+	}
+	if existing == nil {
+		registeredWorkers, connectedWorkers, _, err := s.effectiveWorkerCount(r.Context())
+		if err != nil {
+			writeInternalError(w, r, "count workers", err)
+			return
+		}
+		projectedWorkers := connectedWorkers
+		if registeredWorkers+1 > projectedWorkers {
+			projectedWorkers = registeredWorkers + 1
+		}
+		if limitErr := licensing.CheckWorkerLimit(int64(projectedWorkers), s.currentEntitlements()); limitErr != nil {
+			writeTierLimitJSON(w, limitErr)
+			return
+		}
 	}
 
 	createdBy := strings.TrimSpace(policyActorID(r))

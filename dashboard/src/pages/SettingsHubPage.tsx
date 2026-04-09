@@ -1,7 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
-  Settings, Globe, Activity, Key, Server, Bell, Users, ShieldCheck, ShieldAlert,
+  Settings, Globe, Activity, Key, Server, Bell, Users, ShieldCheck, ShieldAlert, Sparkles,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 
@@ -13,6 +13,7 @@ const settingsCards = [
   { icon: Server, title: "MCP Server", description: "Configure MCP server connections", path: "/settings/mcp" },
   { icon: Bell, title: "Notifications", description: "Notification channels and preferences", path: "/settings/notifications" },
   { icon: Users, title: "Users & RBAC", description: "User management and role assignments", path: "/settings/users" },
+  { icon: Sparkles, title: "License & Limits", description: "Current plan, entitlements, telemetry mode, and capacity limits", path: "/settings/license" },
   { icon: ShieldCheck, title: "Input Safety", description: "Configure input safety policies", path: "/govern/overview?tab=input-rules" },
   { icon: ShieldAlert, title: "Output Safety", description: "Configure output quarantine settings", path: "/govern/overview?tab=output-rules" },
 ];

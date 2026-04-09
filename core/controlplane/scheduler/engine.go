@@ -21,6 +21,7 @@ import (
 	"github.com/cordum/cordum/core/infra/config"
 	infraSchema "github.com/cordum/cordum/core/infra/schema"
 	infraStore "github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/licensing"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/redis/go-redis/v9"
@@ -45,6 +46,8 @@ const (
 	safetyThrottleDelay = 5 * time.Second
 	safetyCheckTimeout  = 3 * time.Second
 	maxRenewalFailures  = 3
+	workerCountKey      = "cordum:workers:count"
+	workerCountTTL      = 2 * time.Minute
 
 	// maxSchedulingRetries caps the number of scheduling attempts before
 	// a job is moved to FAILED + DLQ. With exponential backoff (1s→30s max)
@@ -77,6 +80,7 @@ type Engine struct {
 	schemaRegistry          *infraSchema.Registry
 	schemaEnforcement       infraSchema.EnforcementMode
 	saga                    *SagaManager
+	entitlements            *licensing.EntitlementResolver
 	contextClient           redis.UniversalClient // optional, for loading payloads referenced by ContextPtr
 	counterClient           redis.UniversalClient // optional, for operational counters shared across services
 	stopped                 atomic.Bool
@@ -327,6 +331,64 @@ func (e *Engine) WithCounterClient(c redis.UniversalClient) *Engine {
 	return e
 }
 
+// WithEntitlements wires the shared runtime entitlement resolver used for
+// scheduler-side tier enforcement. Nil falls back to community defaults.
+func (e *Engine) WithEntitlements(resolver *licensing.EntitlementResolver) *Engine {
+	e.entitlements = resolver
+	return e
+}
+
+func (e *Engine) currentEntitlements() licensing.Entitlements {
+	if e != nil && e.entitlements != nil {
+		return e.entitlements.Entitlements()
+	}
+	return licensing.DefaultEntitlements(licensing.PlanCommunity)
+}
+
+func (e *Engine) currentWorkerCount(ctx context.Context) (int, error) {
+	if e == nil {
+		return 0, nil
+	}
+	if e.counterClient != nil {
+		count, err := e.counterClient.SCard(ctx, workerCountKey).Result()
+		if err == nil {
+			return int(count), nil
+		}
+		if !errors.Is(err, redis.Nil) {
+			slog.Warn("scheduler worker count read failed", "error", err)
+		}
+	}
+	if e.registry == nil {
+		return 0, nil
+	}
+	return len(e.registry.Snapshot()), nil
+}
+
+func (e *Engine) persistWorkerCount(ctx context.Context) {
+	if e == nil || e.counterClient == nil || e.registry == nil {
+		return
+	}
+	snapshot := e.registry.Snapshot()
+	pipe := e.counterClient.TxPipeline()
+	pipe.Del(ctx, workerCountKey)
+	if len(snapshot) > 0 {
+		members := make([]any, 0, len(snapshot))
+		for workerID := range snapshot {
+			workerID = strings.TrimSpace(workerID)
+			if workerID != "" {
+				members = append(members, workerID)
+			}
+		}
+		if len(members) > 0 {
+			pipe.SAdd(ctx, workerCountKey, members...)
+			pipe.Expire(ctx, workerCountKey, workerCountTTL)
+		}
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		slog.Warn("scheduler worker count persist failed", "error", err)
+	}
+}
+
 // WithAsyncFailMode sets the behavior when async output checks fail/timeout.
 // "closed" (default) quarantines on error; "open" allows on error with a warning.
 func (e *Engine) WithAsyncFailMode(mode string) *Engine {
@@ -463,6 +525,11 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
 			"pool", hb.Pool,
 		)
 		e.registry.UpdateHeartbeat(hb)
+		if e.counterClient != nil {
+			ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
+			e.persistWorkerCount(ctx)
+			cancel()
+		}
 		return nil
 	case *pb.BusPacket_JobRequest:
 		req := payload.JobRequest
@@ -629,56 +696,80 @@ func (e *Engine) workerAttestationMode() WorkerAttestationMode {
 }
 
 func (e *Engine) allowWorkerHeartbeat(packet *pb.BusPacket, hb *pb.Heartbeat) bool {
-	mode := e.workerAttestationMode()
-	if !mode.Enabled() || hb == nil {
+	if hb == nil {
 		return true
 	}
 
 	workerID := strings.TrimSpace(hb.GetWorkerId())
-	senderID := strings.TrimSpace(packet.GetSenderId())
-	token := authTokenFromPacket(packet)
+	mode := e.workerAttestationMode()
+	if mode.Enabled() {
+		senderID := safeSenderID(packet)
+		token := authTokenFromPacket(packet)
 
-	reject := func(reason string, record *workercredentials.Credential, err error) bool {
-		fields := []any{
-			"worker_id", workerID,
-			"sender_id", senderID,
-			"pool", strings.TrimSpace(hb.GetPool()),
-			"mode", mode,
-			"reason", reason,
+		reject := func(reason string, record *workercredentials.Credential, err error) bool {
+			fields := []any{
+				"worker_id", workerID,
+				"sender_id", senderID,
+				"pool", strings.TrimSpace(hb.GetPool()),
+				"mode", mode,
+				"reason", reason,
+			}
+			if record != nil {
+				fields = append(fields, "pack_id", record.PackID)
+			}
+			if err != nil {
+				fields = append(fields, "error", err)
+			}
+			if mode.Enforced() {
+				slog.Error("worker heartbeat rejected: attestation failed", fields...)
+				return false
+			}
+			slog.Warn("worker heartbeat accepted without attestation", fields...)
+			return true
 		}
-		if record != nil {
-			fields = append(fields, "pack_id", record.PackID)
+
+		if senderID == "" || senderID != workerID {
+			return reject("sender_id_mismatch", nil, nil)
 		}
+		if e.workerCredentialCache == nil {
+			return reject("credential_cache_unavailable", nil, nil)
+		}
+		if token == "" {
+			return reject("auth_token_missing", nil, nil)
+		}
+
+		record, ok, err := e.workerCredentialCache.Verify(workerID, token)
 		if err != nil {
-			fields = append(fields, "error", err)
+			return reject("credential_verify_error", nil, err)
 		}
-		if mode.Enforced() {
-			slog.Error("worker heartbeat rejected: attestation failed", fields...)
+		if !ok || record == nil {
+			return reject("credential_invalid", nil, nil)
+		}
+		if !poolAllowed(record.AllowedPools, strings.TrimSpace(hb.GetPool())) {
+			return reject("pool_not_allowed", record, nil)
+		}
+	}
+
+	if workerID != "" && e.registry != nil && !e.registry.IsAlive(workerID) {
+		countCtx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
+		defer cancel()
+		currentWorkers, err := e.currentWorkerCount(countCtx)
+		if err != nil {
+			slog.Warn("worker limit check skipped: count unavailable",
+				"worker_id", workerID,
+				"error", err,
+			)
+			return true
+		}
+		if limitErr := licensing.CheckWorkerLimit(int64(currentWorkers+1), e.currentEntitlements()); limitErr != nil {
+			slog.Warn("worker heartbeat rejected: tier worker limit exceeded",
+				"worker_id", workerID,
+				"current", currentWorkers,
+				"allowed", limitErr.Allowed,
+				"upgrade_url", limitErr.UpgradeURL,
+			)
 			return false
 		}
-		slog.Warn("worker heartbeat accepted without attestation", fields...)
-		return true
-	}
-
-	if senderID == "" || senderID != workerID {
-		return reject("sender_id_mismatch", nil, nil)
-	}
-	if e.workerCredentialCache == nil {
-		return reject("credential_cache_unavailable", nil, nil)
-	}
-	if token == "" {
-		return reject("auth_token_missing", nil, nil)
-	}
-
-	record, ok, err := e.workerCredentialCache.Verify(workerID, token)
-	if err != nil {
-		return reject("credential_verify_error", nil, err)
-	}
-	if !ok || record == nil {
-		return reject("credential_invalid", nil, nil)
-	}
-	if !poolAllowed(record.AllowedPools, strings.TrimSpace(hb.GetPool())) {
-		return reject("pool_not_allowed", record, nil)
 	}
 	return true
 }
@@ -1074,8 +1165,8 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 	if maxConcurrent := maxConcurrentFromConstraints(record.Constraints); maxConcurrent > 0 && e.jobStore != nil {
 		tenant := ExtractTenant(req)
 		ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
-		defer cancel()
 		active, err := e.jobStore.CountActiveByTenant(ctx, tenant)
+		cancel()
 		if err != nil {
 			return RetryAfter(err, retryDelayStore)
 		}
@@ -1087,6 +1178,27 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 				"limit", maxConcurrent,
 			)
 			return RetryAfter(ErrTenantLimit, retryDelayNoWorkers)
+		}
+	}
+	if e.jobStore != nil {
+		tenant := ExtractTenant(req)
+		if strings.TrimSpace(tenant) != "" {
+			ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
+			active, err := e.jobStore.CountActiveByTenant(ctx, tenant)
+			cancel()
+			if err != nil {
+				return RetryAfter(err, retryDelayStore)
+			}
+			if limitErr := licensing.CheckJobConcurrency(int64(active+1), e.currentEntitlements()); limitErr != nil {
+				slog.Info("tier concurrency limit reached",
+					"job_id", jobID,
+					"tenant", tenant,
+					"active", active,
+					"allowed", limitErr.Allowed,
+					"upgrade_url", limitErr.UpgradeURL,
+				)
+				return RetryAfter(limitErr, retryDelayNoWorkers)
+			}
 		}
 	}
 
@@ -1226,6 +1338,10 @@ func isRetryableSchedulingError(err error) bool {
 	if err == nil {
 		return false
 	}
+	var limitErr *licensing.TierLimitError
+	if errors.As(err, &limitErr) {
+		return true
+	}
 	if errors.Is(err, ErrNoWorkers) || errors.Is(err, ErrPoolOverloaded) || errors.Is(err, ErrTenantLimit) || errors.Is(err, ErrNoPoolMapping) {
 		return true
 	}
@@ -1237,7 +1353,10 @@ func reasonCodeForSchedulingError(err error) string {
 	if err == nil {
 		return ""
 	}
+	var limitErr *licensing.TierLimitError
 	switch {
+	case errors.As(err, &limitErr):
+		return "tier_limit_exceeded"
 	case errors.Is(err, ErrNoPoolMapping):
 		return "no_pool_mapping"
 	case errors.Is(err, ErrNoWorkers):
@@ -2189,6 +2308,54 @@ func (e *Engine) publishCancel(jobID, reason string) {
 		Payload:         &pb.BusPacket_JobCancel{JobCancel: cancelReq},
 	}
 	_ = e.bus.Publish(capsdk.SubjectCancel, packet)
+}
+
+func (e *Engine) replayApprovalPublish(traceID string, req *pb.JobRequest, approval ApprovalRecord) error {
+	if req == nil {
+		return fmt.Errorf("approval replay requires job request")
+	}
+	switch approval.PublishTarget {
+	case ApprovalPublishTargetSubmit:
+		return e.handleJobRequest(req, traceID)
+	case ApprovalPublishTargetDLQ, ApprovalPublishTargetDLQAndResult:
+		if e.bus == nil {
+			return nil
+		}
+		jobID := strings.TrimSpace(req.GetJobId())
+		if jobID == "" {
+			return fmt.Errorf("approval replay requires job id")
+		}
+		errorMessage := strings.TrimSpace(approval.Reason)
+		if errorMessage == "" {
+			errorMessage = "approval rejected"
+		}
+		packet := &pb.BusPacket{
+			TraceId:         traceID,
+			SenderId:        defaultSenderID,
+			CreatedAt:       timestamppb.Now(),
+			ProtocolVersion: protocolVersionV1,
+			Payload: &pb.BusPacket_JobResult{
+				JobResult: &pb.JobResult{
+					JobId:         jobID,
+					Status:        pb.JobStatus_JOB_STATUS_DENIED,
+					ErrorCode:     "approval_rejected",
+					ErrorCodeEnum: pb.ErrorCode_ERROR_CODE_SAFETY_DENIED,
+					ErrorMessage:  errorMessage,
+				},
+			},
+		}
+		if err := e.bus.Publish(capsdk.SubjectDLQ, packet); err != nil {
+			return fmt.Errorf("replay approval dlq publish: %w", err)
+		}
+		if approval.PublishTarget == ApprovalPublishTargetDLQAndResult {
+			if err := e.bus.Publish(capsdk.SubjectResult, packet); err != nil {
+				return fmt.Errorf("replay approval result publish: %w", err)
+			}
+		}
+		return nil
+	default:
+		return nil
+	}
 }
 
 func (e *Engine) emitDLQ(jobID, topic string, status pb.JobStatus, reason string, reasonCode string) error {

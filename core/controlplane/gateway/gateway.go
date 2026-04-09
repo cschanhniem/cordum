@@ -21,14 +21,13 @@ import (
 
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/topicregistry"
+	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	"github.com/cordum/cordum/core/infra/artifacts"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
-	// env helpers imported above for IntOr/DurationOr
-	"github.com/cordum/cordum/core/controlplane/topicregistry"
-	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	"github.com/cordum/cordum/core/infra/locks"
 	infraMetrics "github.com/cordum/cordum/core/infra/metrics"
 	"github.com/cordum/cordum/core/infra/redisutil"
@@ -36,8 +35,10 @@ import (
 	"github.com/cordum/cordum/core/infra/schema"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/tlsreload"
+	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/cordum/cordum/core/telemetry"
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
@@ -48,7 +49,7 @@ import (
 	wf "github.com/cordum/cordum/core/workflow"
 )
 
-var maxJobPayloadBytes = int64(env.IntOr("GATEWAY_MAX_JOB_PAYLOAD_BYTES", 2<<20))
+var defaultMaxJobPayloadBytes = int64(env.IntOr("GATEWAY_MAX_JOB_PAYLOAD_BYTES", 2<<20))
 
 const (
 	defaultGrpcAddr             = ":8080"
@@ -109,10 +110,12 @@ type server struct {
 	eventsCh      chan wsEvent
 	wsClientBufSz int
 
-	metrics infraMetrics.GatewayMetrics
-	tenant  string
-	started time.Time
-	auth    AuthProvider
+	metrics      infraMetrics.GatewayMetrics
+	tenant       string
+	started      time.Time
+	auth         AuthProvider
+	entitlements *licensing.EntitlementResolver
+	telemetry    *telemetry.Collector
 
 	workflowStore         *wf.RedisStore
 	workflowEng           *wf.Engine
@@ -224,6 +227,11 @@ func (s *server) Close() {
 			slog.Error("audit exporter close failed", "error", err)
 		}
 	}
+	if s.telemetry != nil {
+		if err := s.telemetry.Close(); err != nil {
+			slog.Error("telemetry collector close failed", "error", err)
+		}
+	}
 	if s.userStore != nil {
 		if err := s.userStore.Close(); err != nil {
 			slog.Error("user store close failed", "error", err)
@@ -244,10 +252,11 @@ func Run(cfg *config.Config) error {
 
 // RunWithAuth starts the gateway with a custom auth provider. When nil, a basic
 // single-tenant provider is used.
-func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
+func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers ...*licensing.EntitlementResolver) error {
 	if cfg == nil {
 		cfg = config.Load()
 	}
+	entitlementResolver := resolveEntitlementResolver(entitlementResolvers...)
 	grpcAddr := addrFromEnv(envGatewayGrpcAddr, defaultGrpcAddr)
 	httpAddr := addrFromEnv(envGatewayHTTPAddr, defaultHttpAddr)
 	metricsAddr := addrFromEnv(envGatewayMetricsAddr, defaultMetricsAddr)
@@ -426,7 +435,7 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 	}
 
 	var auditSender audit.AuditSender
-	bufExporter, err := audit.NewExporterFromEnv()
+	bufExporter, err := audit.NewExporterFromEnvWithEntitlements(entitlementResolver)
 	if err != nil {
 		return fmt.Errorf("init audit exporter: %w", err)
 	}
@@ -456,6 +465,7 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 		metrics:               gwMetrics,
 		tenant:                tenantID,
 		auth:                  provider,
+		entitlements:          entitlementResolver,
 		started:               time.Now().UTC(),
 		workflowStore:         workflowStore,
 		workflowEng:           workflowEng,
@@ -475,6 +485,24 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 		shutdownCh:            make(chan struct{}),
 	}
 	defer s.Close()
+	telemetryStore, err := telemetry.NewStore(cfg.RedisURL)
+	if err != nil {
+		return fmt.Errorf("connect telemetry store: %w", err)
+	}
+	s.telemetry = telemetry.NewCollector(telemetry.CollectorOptions{
+		Mode:              telemetry.NormalizeMode(cfg.TelemetryMode),
+		Store:             telemetryStore,
+		Reporter:          telemetry.NewReporter(cfg.TelemetryEndpoint, nil),
+		TierProvider:      func() string { return string(s.resolvedPlan()) },
+		JobStore:          jobStore,
+		WorkflowStore:     workflowStore,
+		ConfigSvc:         configSvc,
+		SchemaRegistry:    schemaRegistry,
+		TopicRegistry:     s.topicRegistry,
+		WorkerCredentials: s.workerCredentialStore,
+		TenantID:          tenantID,
+	})
+	s.telemetry.Start(context.Background())
 	if legacyPolicyBundlesMigrated {
 		s.publishConfigChanged(string(configsvc.ScopeSystem), "default")
 		s.publishConfigChanged(string(configsvc.ScopeSystem), policyConfigID)
@@ -488,15 +516,18 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider) error {
 	// Wire distributed rate limiters. Use Redis-backed counters by default;
 	// fall back to in-memory when REDIS_RATE_LIMIT=false or Redis unavailable.
 	redisRL := strings.ToLower(strings.TrimSpace(os.Getenv("REDIS_RATE_LIMIT")))
+	apiRPSDefault, apiBurstDefault := s.tierRateLimitDefaults()
+	tierEntitlements := s.currentEntitlements()
 	if redisRL != "false" && redisRL != "0" && redisRL != "no" && jobStore != nil {
 		redisClient := jobStore.Client()
-		apiRPS, apiBurst := rateLimitFromEnv("API_RATE_LIMIT_RPS", "API_RATE_LIMIT_BURST", defaultRateLimitRPS, defaultRateLimitBurst)
+		apiRPS, apiBurst := rateLimitFromEnv("API_RATE_LIMIT_RPS", "API_RATE_LIMIT_BURST", apiRPSDefault, apiBurstDefault)
+		apiRPS, apiBurst = clampRateLimitToEntitlements(apiRPS, apiBurst, tierEntitlements)
 		pubRPS, pubBurst := rateLimitFromEnv("API_PUBLIC_RATE_LIMIT_RPS", "API_PUBLIC_RATE_LIMIT_BURST", defaultPublicRateLimitRPS, defaultPublicRateLimitBurst)
 		s.apiRL = newRedisRateLimiter(redisClient, apiRPS, apiBurst)
 		s.publicRL = newRedisRateLimiter(redisClient, pubRPS, pubBurst)
 	} else {
-		s.apiRL = defaultAPILimiter
-		s.publicRL = defaultPublicLimiter
+		s.apiRL = newKeyedRateLimiterFromEnvWithDefaults(apiRPSDefault, apiBurstDefault)
+		s.publicRL = newPublicRateLimiterFromEnvWithDefaults(defaultPublicRateLimitRPS, defaultPublicRateLimitBurst)
 	}
 
 	// Instance registry: self-register this gateway replica in Redis.
@@ -658,6 +689,12 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 
 	// 2.5 Status snapshot (Redis/NATS/workers/uptime)
 	mux.HandleFunc("GET /api/v1/status", s.instrumented("/api/v1/status", s.handleStatus))
+	mux.HandleFunc("GET /api/v1/license", s.instrumented("/api/v1/license", s.handleGetLicense))
+	mux.HandleFunc("GET /api/v1/license/usage", s.instrumented("/api/v1/license/usage", s.handleGetLicenseUsage))
+	mux.HandleFunc("GET /api/v1/telemetry/status", s.instrumented("/api/v1/telemetry/status", s.handleGetTelemetryStatus))
+	mux.HandleFunc("GET /api/v1/telemetry/inspect", s.instrumented("/api/v1/telemetry/inspect", s.handleGetTelemetryInspect))
+	mux.HandleFunc("GET /api/v1/telemetry/export", s.instrumented("/api/v1/telemetry/export", s.handleGetTelemetryExport))
+	mux.HandleFunc("GET /api/v1/telemetry/usage", s.instrumented("/api/v1/telemetry/usage", s.handleGetTelemetryUsage))
 
 	// 2.6 Admin endpoints (read-only, admin auth required)
 	mux.HandleFunc("GET /api/v1/admin/locks", s.instrumented("/api/v1/admin/locks", s.handleAdminLocks))
@@ -740,6 +777,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("GET /api/v1/approvals", s.instrumented("/api/v1/approvals", s.handleListApprovals))
 	mux.HandleFunc("POST /api/v1/approvals/{job_id}/approve", s.instrumented("/api/v1/approvals/{job_id}/approve", s.handleApproveJob))
 	mux.HandleFunc("POST /api/v1/approvals/{job_id}/reject", s.instrumented("/api/v1/approvals/{job_id}/reject", s.handleRejectJob))
+	mux.HandleFunc("POST /api/v1/approvals/{job_id}/repair", s.instrumented("/api/v1/approvals/{job_id}/repair", s.handleRepairApproval))
 
 	// 12. Policy endpoints
 	mux.HandleFunc("POST /api/v1/policy/evaluate", s.instrumented("/api/v1/policy/evaluate", s.handlePolicyEvaluate))
@@ -780,7 +818,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	// brute-force attempts are rate-limited by IP. When auth context is
 	// absent, rateLimitKey falls back to IP-based keying automatically.
 	readAuditRate := parseFloatEnv("CORDUM_AUDIT_READ_SAMPLE_RATE", 0.0)
-	inner := auditReadMiddleware(s.auditExporter, readAuditRate, tenantMiddleware(s.auth, maxBodyMiddleware(mux)))
+	inner := auditReadMiddleware(s.auditExporter, readAuditRate, tenantMiddleware(s.auth, maxBodyMiddleware(mux, s.entitlements)))
 	handler := requestLoggingMiddleware(corsMiddleware(rateLimitMiddleware(s.auth, s.apiRL, s.publicRL, apiKeyMiddleware(s.auth, inner, s.auditExporter))))
 
 	httpTLSCert := strings.TrimSpace(os.Getenv(envGatewayHTTPTLSCert))
@@ -1031,22 +1069,6 @@ type AuditExporter interface {
 	ExportAudit(ctx context.Context, event AuditEvent) error
 }
 
-// LicenseInfo describes license metadata for the status endpoint.
-type LicenseInfo struct {
-	Mode           string           `json:"mode,omitempty"`
-	Status         string           `json:"status,omitempty"`
-	Plan           string           `json:"plan,omitempty"`
-	OrgID          string           `json:"org_id,omitempty"`
-	LicenseID      string           `json:"license_id,omitempty"`
-	DeploymentType string           `json:"deployment_type,omitempty"`
-	IssuedAt       string           `json:"issued_at,omitempty"`
-	NotBefore      string           `json:"not_before,omitempty"`
-	ExpiresAt      string           `json:"expires_at,omitempty"`
-	Features       []string         `json:"features,omitempty"`
-	Limits         map[string]int64 `json:"limits,omitempty"`
-}
+type LicenseInfo = licensing.LicenseInfo
 
-// LicenseInfoProvider optionally supplies license metadata for status responses.
-type LicenseInfoProvider interface {
-	LicenseInfo() *LicenseInfo
-}
+type LicenseInfoProvider = licensing.LicenseInfoProvider

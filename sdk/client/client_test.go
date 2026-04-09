@@ -732,6 +732,43 @@ func TestApproveJobEmptyID(t *testing.T) {
 	}
 }
 
+func TestRepairApprovalEmptyID(t *testing.T) {
+	client := newTestClient(nil)
+	if _, err := client.RepairApproval(context.Background(), "", false, ""); err == nil {
+		t.Fatal("expected error for empty job ID")
+	}
+}
+
+func TestRepairApprovalEncodesRequest(t *testing.T) {
+	client := newTestClient(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodPost {
+			t.Fatalf("expected POST, got %s", req.Method)
+		}
+		if req.URL.EscapedPath() != "/api/v1/approvals/job-1/repair" {
+			t.Fatalf("unexpected path %q", req.URL.EscapedPath())
+		}
+		var body map[string]any
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if apply, _ := body["apply"].(bool); !apply {
+			t.Fatalf("expected apply=true, got %#v", body)
+		}
+		if note, _ := body["note"].(string); note != "operator fix" {
+			t.Fatalf("expected note in request body, got %#v", body)
+		}
+		return jsonResponse(http.StatusOK, `{"job_id":"job-1","applied":true}`), nil
+	}))
+
+	resp, err := client.RepairApproval(context.Background(), "job-1", true, "operator fix")
+	if err != nil {
+		t.Fatalf("RepairApproval error: %v", err)
+	}
+	if applied, _ := resp["applied"].(bool); !applied {
+		t.Fatalf("expected applied response, got %#v", resp)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Regression: StartRunWithOptions sends input correctly
 // ---------------------------------------------------------------------------

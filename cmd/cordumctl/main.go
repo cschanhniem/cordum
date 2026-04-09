@@ -35,6 +35,8 @@ func main() {
 		runUpCmd(args)
 	case "status":
 		runStatusCmd(args)
+	case "license":
+		runLicenseCmd(args)
 	case "workflow":
 		runWorkflowCmd(args)
 	case "run":
@@ -188,6 +190,18 @@ func runApprovalCmd(args []string) {
 		}
 		client := newClientFromFlags(fs)
 		check(client.ApproveJob(context.Background(), fs.Arg(0), *approve))
+	case "repair":
+		fs := newFlagSet("approval repair")
+		apply := fs.Bool("apply", false, "apply the repair plan (default: dry-run)")
+		note := fs.String("note", "", "operator note stored with the repair")
+		fs.ParseArgs(args[1:])
+		if fs.NArg() < 1 {
+			fail("usage: approval repair <job_id>")
+		}
+		client := newClientFromFlags(fs)
+		resp, err := client.RepairApproval(context.Background(), fs.Arg(0), *apply, *note)
+		check(err)
+		printJSON(resp)
 	default:
 		usage()
 		os.Exit(1)
@@ -343,7 +357,9 @@ Usage:
   cordumctl generate-certs [--dir ./certs] [--force] [--days 365]
   cordumctl dev [--file docker-compose.yml] [--build] [--detach]
   cordumctl up [--file docker-compose.yml] [--build] [--detach]
-  cordumctl status
+  cordumctl status [--json]
+  cordumctl license install <path>
+  cordumctl license info [--json]
   cordumctl workflow create --file workflow.json
   cordumctl workflow delete <workflow_id>
   cordumctl run start <workflow_id> [--input input.json|'{...}'|-] [--dry-run] [--debug]
@@ -351,6 +367,7 @@ Usage:
   cordumctl run delete <run_id>
   cordumctl run timeline <run_id>
   cordumctl approval job <job_id> (--approve|--reject)
+  cordumctl approval repair <job_id> [--apply] [--note "text"]
   cordumctl dlq retry <job_id>
   cordumctl job submit --topic job.example --prompt \"hello\" [--input input.json]
   cordumctl job status <job_id>

@@ -117,6 +117,9 @@ cordumctl run delete <run-id>
 # Approval operations
 cordumctl approval job <job-id> --approve
 cordumctl approval job <job-id> --reject
+cordumctl approval repair <job-id>                # dry-run inspection
+cordumctl approval repair <job-id> --apply
+cordumctl approval repair <job-id> --apply --note "operator repair note"
 
 # DLQ operations
 cordumctl dlq retry <job-id>

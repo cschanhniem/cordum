@@ -477,6 +477,24 @@ func (c *Client) ApproveJob(ctx context.Context, jobID string, approved bool) er
 	return c.doJSON(ctx, http.MethodPost, path, nil, nil)
 }
 
+// RepairApproval inspects or applies a safe repair plan for a stuck approval.
+func (c *Client) RepairApproval(ctx context.Context, jobID string, apply bool, note string) (map[string]any, error) {
+	if jobID == "" {
+		return nil, fmt.Errorf("job id required")
+	}
+	body := map[string]any{
+		"apply": apply,
+	}
+	if trimmed := strings.TrimSpace(note); trimmed != "" {
+		body["note"] = trimmed
+	}
+	var out map[string]any
+	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/approvals/"+escapePathSegment(jobID)+"/repair", body, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RetryDLQ requeues a job from the DLQ.
 func (c *Client) RetryDLQ(ctx context.Context, jobID string) error {
 	if jobID == "" {

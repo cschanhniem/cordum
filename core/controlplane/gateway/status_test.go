@@ -12,6 +12,7 @@ import (
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/registry"
+	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
@@ -37,7 +38,7 @@ func TestHandleStatusAndWorkers(t *testing.T) {
 		t.Fatalf("unexpected workers list")
 	}
 
-	s.auth = stubLicenseAuth{info: &LicenseInfo{Mode: "enterprise", Status: "active", Plan: "Enterprise"}}
+	setTestEntitlements(t, s, licensing.PlanEnterprise, nil)
 
 	statusReq := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
 	statusReq.Header.Set("X-Tenant-ID", "default")

@@ -55,11 +55,14 @@ function approvalStatusVariant(status: string): BadgeVariant {
       return "warning";
     case "approved":
       return "healthy";
-    case "denied":
     case "rejected":
       return "governance";
     case "expired":
       return "muted";
+    case "invalidated":
+      return "danger";
+    case "repaired":
+      return "info";
     default:
       return "muted";
   }
@@ -70,6 +73,49 @@ function compactValue(value?: string, max = 16): string | undefined {
   const trimmed = value.trim();
   if (trimmed.length <= max) return trimmed;
   return `${trimmed.slice(0, max)}…`;
+}
+
+function formatApprovalStatusLabel(status: string): string {
+  switch (status) {
+    case "rejected":
+      return "Denied";
+    case "invalidated":
+      return "Invalidated";
+    case "repaired":
+      return "Repaired";
+    case "approved":
+      return "Approved";
+    case "expired":
+      return "Expired";
+    case "pending":
+      return "Pending";
+    default:
+      return status.replace(/_/g, " ");
+  }
+}
+
+function isApprovalActionable(approval: Approval): boolean {
+  if (approval.actionability) {
+    return approval.actionability === "actionable";
+  }
+  return approval.status === "pending";
+}
+
+function getApprovalLifecycleNote(approval: Approval): string | undefined {
+  switch (approval.status) {
+    case "approved":
+      return "Decision recorded. Review the audit detail for who approved it and when.";
+    case "rejected":
+      return "Decision recorded. Review the denial reason and workflow impact before retrying the request.";
+    case "expired":
+      return "This approval timed out before a decision was recorded.";
+    case "invalidated":
+      return "This approval is no longer valid because the workflow or request changed after it was created.";
+    case "repaired":
+      return "This approval was repaired from an inconsistent legacy state. Review the audit trail before taking follow-up action.";
+    default:
+      return undefined;
+  }
 }
 
 export function formatApprovalAmount(
@@ -444,12 +490,12 @@ export function handleDenyConfirm(
   target: Approval | null,
   rawReason: string,
   deps: {
-    mutate: (input: { id: string; reason: string }) => void;
+    mutate: (input: { jobId: string; reason: string }) => void;
     clearTarget: () => void;
   },
 ): void {
   if (!target) return;
-  deps.mutate({ id: target.id, reason: resolveDenyReason(rawReason) });
+  deps.mutate({ jobId: target.jobId, reason: resolveDenyReason(rawReason) });
   deps.clearTarget();
 }
 
@@ -481,7 +527,7 @@ export default function ApprovalsPage() {
   const handleApprove = (approval: Approval) => {
     if (approveMutation.isPending) return;
     approveMutation.mutate(
-      { id: approval.id },
+      { jobId: approval.jobId },
       {
         onError: (err) => {
           const friendly = friendlyError(err, "approve approval");
@@ -494,7 +540,7 @@ export default function ApprovalsPage() {
   const handleDeny = (approval: Approval, reason: string) => {
     if (rejectMutation.isPending) return;
     rejectMutation.mutate(
-      { id: approval.id, reason },
+      { jobId: approval.jobId, reason },
       {
         onSuccess: () => {
           setDenyTarget(null);
@@ -511,8 +557,10 @@ export default function ApprovalsPage() {
   const all = approvals ?? [];
   const pending = all.filter((a) => a.status === "pending");
   const approved = all.filter((a) => a.status === "approved");
-  const denied = all.filter((a) => a.status === "denied");
+  const denied = all.filter((a) => a.status === "rejected");
   const expired = all.filter((a) => a.status === "expired");
+  const invalidated = all.filter((a) => a.status === "invalidated");
+  const repaired = all.filter((a) => a.status === "repaired");
 
   const filtered = useMemo(
     () =>
@@ -526,6 +574,10 @@ export default function ApprovalsPage() {
           );
         })
         .sort((a, b) => {
+          const aActionable = isApprovalActionable(a);
+          const bActionable = isApprovalActionable(b);
+          if (aActionable && !bActionable) return -1;
+          if (bActionable && !aActionable) return 1;
           if (a.status === "pending" && b.status !== "pending") return -1;
           if (b.status === "pending" && a.status !== "pending") return 1;
           return (
@@ -554,10 +606,10 @@ export default function ApprovalsPage() {
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3 }}
-        className="grid gap-4 md:grid-cols-4"
+        className="grid gap-4 md:grid-cols-3 xl:grid-cols-6"
       >
         {isLoading ? (
-          Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
+          Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)
         ) : (
           <>
             <InstrumentCard accent={pending.length > 0 ? "warning" : "muted"}>
@@ -611,6 +663,40 @@ export default function ApprovalsPage() {
                 icon={<Timer className="h-4 w-4 text-muted-foreground" />}
               />
             </InstrumentCard>
+
+            <InstrumentCard accent={invalidated.length > 0 ? "danger" : "muted"}>
+              <MetricValue
+                label="Invalidated"
+                value={invalidated.length}
+                icon={
+                  <XCircle
+                    className={cn(
+                      "h-4 w-4",
+                      invalidated.length > 0
+                        ? "text-destructive"
+                        : "text-muted-foreground",
+                    )}
+                  />
+                }
+              />
+            </InstrumentCard>
+
+            <InstrumentCard accent={repaired.length > 0 ? "cordum" : "muted"}>
+              <MetricValue
+                label="Repaired"
+                value={repaired.length}
+                icon={
+                  <RefreshCw
+                    className={cn(
+                      "h-4 w-4",
+                      repaired.length > 0
+                        ? "text-cordum"
+                        : "text-muted-foreground",
+                    )}
+                  />
+                }
+              />
+            </InstrumentCard>
           </>
         )}
       </motion.div>
@@ -631,8 +717,10 @@ export default function ApprovalsPage() {
           {[
             { id: "pending", label: "Pending", count: pending.length },
             { id: "approved", label: "Approved", count: approved.length },
-            { id: "denied", label: "Denied", count: denied.length },
+            { id: "rejected", label: "Denied", count: denied.length },
             { id: "expired", label: "Expired", count: expired.length },
+            { id: "invalidated", label: "Invalidated", count: invalidated.length },
+            { id: "repaired", label: "Repaired", count: repaired.length },
             { id: "all", label: "All", count: all.length },
           ].map((tab) => (
             <button
@@ -707,6 +795,8 @@ export default function ApprovalsPage() {
               const source = getApprovalSourceMeta(approval);
               const title = getApprovalPrimaryTitle(approval);
               const impact = getApprovalImpactText(approval);
+              const actionable = isApprovalActionable(approval);
+              const lifecycleNote = getApprovalLifecycleNote(approval);
 
               return (
                 <motion.article
@@ -726,8 +816,12 @@ export default function ApprovalsPage() {
                     "instrument-card group cursor-pointer overflow-hidden border-border/70 bg-surface-1/95 focus:outline-none focus:ring-1 focus:ring-cordum",
                     approval.status === "pending" &&
                       "border-[var(--color-warning)]/30",
-                    approval.status === "denied" &&
+                    approval.status === "rejected" &&
                       "border-[var(--color-governance)]/30",
+                    approval.status === "invalidated" &&
+                      "border-destructive/30",
+                    approval.status === "repaired" &&
+                      "border-cordum/30",
                   )}
                   role="button"
                   tabIndex={0}
@@ -747,13 +841,18 @@ export default function ApprovalsPage() {
                           <StatusBadge
                             variant={approvalStatusVariant(approval.status)}
                             dot
-                            pulse={approval.status === "pending"}
+                            pulse={actionable}
                           >
-                            {approval.status}
+                            {formatApprovalStatusLabel(approval.status)}
                           </StatusBadge>
                           <StatusBadge variant={source.variant}>
                             {source.label}
                           </StatusBadge>
+                          {approval.actionability && !actionable && (
+                            <StatusBadge variant="muted">
+                              {approval.actionability.replace(/_/g, " ")}
+                            </StatusBadge>
+                          )}
                           <span className="text-xs text-muted-foreground">
                             {approval.requestedAt
                               ? formatRelativeTime(approval.requestedAt)
@@ -765,9 +864,14 @@ export default function ApprovalsPage() {
                         <p className="text-xs text-muted-foreground">
                           {impact}
                         </p>
+                        {lifecycleNote && (
+                          <p className="text-xs text-muted-foreground">
+                            {lifecycleNote}
+                          </p>
+                        )}
                       </div>
 
-                      {approval.status === "pending" ? (
+                      {actionable ? (
                         <div className="flex shrink-0 flex-wrap gap-2 xl:flex-col xl:items-stretch">
                           <Button
                             size="sm"
@@ -894,15 +998,21 @@ export default function ApprovalsPage() {
                   <StatusBadge
                     variant={approvalStatusVariant(selectedApproval.status)}
                     dot
-                    pulse={selectedApproval.status === "pending"}
+                    pulse={isApprovalActionable(selectedApproval)}
                   >
-                    {selectedApproval.status}
+                    {formatApprovalStatusLabel(selectedApproval.status)}
                   </StatusBadge>
                   <StatusBadge
                     variant={getApprovalSourceMeta(selectedApproval).variant}
                   >
                     {getApprovalSourceMeta(selectedApproval).label}
                   </StatusBadge>
+                  {selectedApproval.actionability &&
+                    !isApprovalActionable(selectedApproval) && (
+                      <StatusBadge variant="muted">
+                        {selectedApproval.actionability.replace(/_/g, " ")}
+                      </StatusBadge>
+                    )}
                 </div>
                 <div>
                   <h2
@@ -937,6 +1047,11 @@ export default function ApprovalsPage() {
                   Decision summary
                 </p>
                 <DecisionSummaryBlock approval={selectedApproval} />
+                {getApprovalLifecycleNote(selectedApproval) && (
+                  <div className="rounded-2xl border border-border bg-surface-2/70 px-3 py-2 text-xs text-muted-foreground">
+                    {getApprovalLifecycleNote(selectedApproval)}
+                  </div>
+                )}
               </section>
 
               <section className="rounded-3xl border border-border bg-surface-2/60 p-4">
@@ -1013,7 +1128,7 @@ export default function ApprovalsPage() {
                   data={selectedApproval.jobInput}
                 />
               </section>
-              {selectedApproval.status === "pending" && (
+              {isApprovalActionable(selectedApproval) && (
                 <section
                   aria-label="Approval actions"
                   className="rounded-3xl border border-border bg-surface-2/40 p-4"
