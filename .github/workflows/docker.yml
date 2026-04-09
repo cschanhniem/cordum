@@ -1,13 +1,14 @@
-# Build and push Docker images to GHCR and Docker Hub.
-# Triggered automatically on git tag push: git tag v0.9.2 && git push --tags
+# Build and push Docker images + Helm chart to GHCR and Docker Hub.
+# Triggered automatically on git tag push: git tag v0.9.3 && git push --tags
 #
 # Required GitHub Secrets:
 #   DOCKERHUB_USERNAME  — Docker Hub username
 #   DOCKERHUB_TOKEN     — Docker Hub access token (PAT)
 #
-# Image naming (follows Istio/HashiCorp/Temporal convention):
-#   Docker Hub: cordum/api-gateway:0.9.2, cordum/scheduler:0.9.2, ...
-#   GHCR:       ghcr.io/cordum-io/cordum/api-gateway:0.9.2, ...
+# Published artifacts:
+#   Docker Hub: cordum/api-gateway:0.9.3, cordum/scheduler:0.9.3, ...
+#   GHCR:       ghcr.io/cordum-io/cordum/api-gateway:0.9.3, ...
+#   Helm (OCI): ghcr.io/cordum-io/cordum/charts/cordum:0.9.3
 
 name: Build and Push Docker Images
 
@@ -207,3 +208,43 @@ jobs:
         run: |
           cosign sign --yes ghcr.io/cordum-io/cordum/dashboard@${DIGEST}
           cosign sign --yes docker.io/cordum/dashboard@${DIGEST}
+
+  helm-chart:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Login to GHCR (OCI)
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Update chart version from git tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/^version:.*/version: ${VERSION}/" cordum-helm/Chart.yaml
+          sed -i "s/^appVersion:.*/appVersion: \"${VERSION}\"/" cordum-helm/Chart.yaml
+          echo "Chart version set to ${VERSION}"
+          grep -E '^(version|appVersion):' cordum-helm/Chart.yaml
+
+      - name: Update image tags in Artifact Hub annotations
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/v0\.[0-9]*\.[0-9]*/${VERSION}/g" cordum-helm/Chart.yaml
+          echo "Image tags updated to ${VERSION}"
+
+      - name: Lint chart
+        run: helm lint cordum-helm/
+
+      - name: Package chart
+        run: |
+          helm package cordum-helm/ --destination /tmp/charts
+          ls -la /tmp/charts/
+
+      - name: Push chart to GHCR (OCI)
+        run: |
+          helm push /tmp/charts/cordum-*.tgz oci://ghcr.io/cordum-io/cordum/charts
+          echo "Helm chart pushed to oci://ghcr.io/cordum-io/cordum/charts/cordum"
