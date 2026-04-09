@@ -123,8 +123,7 @@ open http://localhost:8082
 ### Deploy to Kubernetes
 
 ```bash
-helm repo add cordum https://charts.cordum.io
-helm install cordum cordum/cordum \
+helm install cordum oci://ghcr.io/cordum-io/cordum/charts/cordum \
   --namespace cordum --create-namespace \
   --set secrets.apiKey=$(openssl rand -hex 32) \
   --set redis.auth.password=$(openssl rand -hex 32) \
@@ -134,7 +133,7 @@ helm install cordum cordum/cordum \
   --set ingress.dashboard.host=cordum.example.com
 ```
 
-See [cordum-helm/](cordum-helm/) for the full Helm chart reference.
+See [cordum-helm/](cordum-helm/) for the full Helm chart reference. Chart also available on [Artifact Hub](https://artifacthub.io/packages/helm/cordum/cordum).
 
 **Container images** (multi-arch: amd64 + arm64):
 
