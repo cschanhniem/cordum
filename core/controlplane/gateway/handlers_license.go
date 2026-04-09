@@ -26,6 +26,30 @@ func (s *server) handleGetLicense(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, resp)
 }
 
+func (s *server) handleReloadLicense(w http.ResponseWriter, r *http.Request) {
+	if err := s.requireRole(r, "admin"); err != nil {
+		writeForbidden(w, r, err)
+		return
+	}
+
+	resolver := s.entitlementResolver()
+	if resolver == nil {
+		writeErrorJSON(w, http.StatusServiceUnavailable, "license resolver unavailable")
+		return
+	}
+
+	plan, _ := resolver.Reload()
+	info := s.currentLicenseInfo()
+	resp := map[string]any{
+		"status":  "reloaded",
+		"plan":    string(plan),
+		"license": info,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	writeJSON(w, resp)
+}
+
 func (s *server) handleGetLicenseUsage(w http.ResponseWriter, r *http.Request) {
 	if err := s.requireRole(r, "admin"); err != nil {
 		writeForbidden(w, r, err)

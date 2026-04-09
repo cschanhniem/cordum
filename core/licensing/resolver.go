@@ -75,6 +75,18 @@ func (r *EntitlementResolver) Init() {
 	r.state.Store(buildResolverSnapshot(plan, entitlements, license, licenseStatus(license)))
 }
 
+// Reload re-reads the license from env/file, re-validates, and atomically
+// updates the cached snapshot. Safe to call concurrently from any goroutine.
+// Returns the new resolved plan and any load/verify error (community fallback
+// is applied on error, so the resolver always remains usable).
+func (r *EntitlementResolver) Reload() (Plan, error) {
+	if r == nil {
+		return PlanCommunity, nil
+	}
+	r.Init()
+	return r.ResolvedPlan(), nil
+}
+
 func (r *EntitlementResolver) ResolvedPlan() Plan {
 	return r.snapshot().Plan
 }

@@ -1,5 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
-import { get } from "../api/client";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { get, post } from "../api/client";
+import { useToastStore } from "../state/toast";
 import type {
   LicenseEntitlements,
   LicenseInfo,
@@ -242,6 +243,28 @@ export function useLicenseOverview() {
     isLoading: license.isLoading || usage.isLoading,
     isError: license.isError || usage.isError,
   };
+}
+
+export function useReloadLicense() {
+  const queryClient = useQueryClient();
+  return useMutation<{ status: string; plan: string }, Error>({
+    mutationKey: ["license", "reload"],
+    mutationFn: () => post<{ status: string; plan: string }>("/license/reload"),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["license"] });
+      useToastStore.getState().addToast({
+        type: "success",
+        title: `License reloaded — ${data.plan ?? "community"} plan active`,
+      });
+    },
+    onError: (err) => {
+      useToastStore.getState().addToast({
+        type: "error",
+        title: "License reload failed",
+        description: err.message,
+      });
+    },
+  });
 }
 
 /** @internal exported for unit tests */

@@ -691,6 +691,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("GET /api/v1/status", s.instrumented("/api/v1/status", s.handleStatus))
 	mux.HandleFunc("GET /api/v1/license", s.instrumented("/api/v1/license", s.handleGetLicense))
 	mux.HandleFunc("GET /api/v1/license/usage", s.instrumented("/api/v1/license/usage", s.handleGetLicenseUsage))
+	mux.HandleFunc("POST /api/v1/license/reload", s.instrumented("/api/v1/license/reload", s.handleReloadLicense))
 	mux.HandleFunc("GET /api/v1/telemetry/status", s.instrumented("/api/v1/telemetry/status", s.handleGetTelemetryStatus))
 	mux.HandleFunc("GET /api/v1/telemetry/inspect", s.instrumented("/api/v1/telemetry/inspect", s.handleGetTelemetryInspect))
 	mux.HandleFunc("GET /api/v1/telemetry/export", s.instrumented("/api/v1/telemetry/export", s.handleGetTelemetryExport))

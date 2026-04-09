@@ -22,6 +22,7 @@ vi.mock("@/api/client", () => ({
 
 vi.mock("@/hooks/useLicense", () => ({
   useLicenseOverview: () => hookState.overview,
+  useReloadLicense: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 function createTestQueryClient() {

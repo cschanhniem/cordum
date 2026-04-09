@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -27,6 +29,8 @@ func runLicenseCmd(args []string) {
 		err = runLicenseInstallE(args[1:])
 	case "info":
 		err = runLicenseInfoE(args[1:])
+	case "reload":
+		err = runLicenseReloadE(args[1:])
 	default:
 		licenseUsage()
 		os.Exit(1)
@@ -41,7 +45,8 @@ func licenseUsage() {
 
 Commands:
   install <path>                                  Copy a signed license into the standard config location
-  info [--json]                                   Show plan, entitlements, rights, and expiry metadata`)
+  info [--json]                                   Show plan, entitlements, rights, and expiry metadata
+  reload                                          Hot-reload the license on a running gateway (no restart)`)
 }
 
 func runLicenseInstallE(args []string) error {
@@ -104,6 +109,33 @@ func runLicenseInfoE(args []string) error {
 	}
 
 	printLicenseInfo(os.Stdout, license)
+	return nil
+}
+
+func runLicenseReloadE(args []string) error {
+	fs := newFlagSet("license reload")
+	fs.ParseArgs(args)
+
+	client := restClientFromFlags(fs)
+	ctx := context.Background()
+
+	var result map[string]any
+	if err := client.doJSON(ctx, http.MethodPost, "/api/v1/license/reload", nil, &result); err != nil {
+		return err
+	}
+
+	plan, _ := result["plan"].(string)
+	status, _ := result["status"].(string)
+	fmt.Printf("License reloaded: plan=%s status=%s\n", plan, status)
+
+	if licenseInfo, ok := result["license"].(map[string]any); ok {
+		if expiresAt, _ := licenseInfo["expires_at"].(string); expiresAt != "" {
+			fmt.Printf("Expires: %s\n", expiresAt)
+		}
+		if licStatus, _ := licenseInfo["status"].(string); licStatus != "" {
+			fmt.Printf("License status: %s\n", licStatus)
+		}
+	}
 	return nil
 }
 

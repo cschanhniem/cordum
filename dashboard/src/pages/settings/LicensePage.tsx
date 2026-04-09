@@ -5,6 +5,7 @@ import {
   Activity,
   ArrowUpRight,
   CheckCircle2,
+  RefreshCw,
   FileUp,
   Gauge,
   KeyRound,
@@ -23,7 +24,7 @@ import { Button } from "@/components/ui/Button";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { InfoBanner } from "@/components/ui/InfoBanner";
 import { SkeletonCard } from "@/components/ui/Skeleton";
-import { useLicenseOverview } from "@/hooks/useLicense";
+import { useLicenseOverview, useReloadLicense } from "@/hooks/useLicense";
 import { cn } from "@/lib/utils";
 
 type BackendTelemetryStatus = {
@@ -178,6 +179,8 @@ export default function LicensePage() {
     retry: 1,
   });
 
+  const reloadLicense = useReloadLicense();
+
   const error = (license.error ?? usage.error) as Error | null;
   const licenseSummary = license.data;
   const usageSummary = usage.data;
@@ -243,14 +246,25 @@ export default function LicensePage() {
         title="License & Limits"
         subtitle="Review the active tier, runtime ceilings, and telemetry mode for this Cordum deployment."
         actions={
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => window.open("https://cordum.io/pricing", "_blank", "noopener,noreferrer")}
-          >
-            Compare tiers
-            <ArrowUpRight className="ml-1 h-3.5 w-3.5" />
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => reloadLicense.mutate()}
+              disabled={reloadLicense.isPending}
+            >
+              <RefreshCw className={cn("mr-1 h-3.5 w-3.5", reloadLicense.isPending && "animate-spin")} />
+              {reloadLicense.isPending ? "Reloading..." : "Reload license"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => window.open("https://cordum.io/pricing", "_blank", "noopener,noreferrer")}
+            >
+              Compare tiers
+              <ArrowUpRight className="ml-1 h-3.5 w-3.5" />
+            </Button>
+          </div>
         }
       />
 
