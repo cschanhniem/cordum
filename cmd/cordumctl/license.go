@@ -160,21 +160,21 @@ func printLicenseInfo(w *os.File, license *licensing.License) {
 	}
 	_ = tw.Flush()
 
-	fmt.Fprintln(w, "\nEntitlements")
+	_, _ = fmt.Fprintln(w, "\nEntitlements")
 	entitlements := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	for _, row := range licenseEntitlementRows(license.Payload.Entitlements) {
 		_, _ = fmt.Fprintf(entitlements, "%s\t%s\n", row.label, row.value)
 	}
 	_ = entitlements.Flush()
 
-	fmt.Fprintln(w, "\nCapabilities")
+	_, _ = fmt.Fprintln(w, "\nCapabilities")
 	capabilities := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	for _, row := range licenseCapabilityRows(license.Payload.Entitlements) {
 		_, _ = fmt.Fprintf(capabilities, "%s\t%s\n", row.label, row.value)
 	}
 	_ = capabilities.Flush()
 
-	fmt.Fprintln(w, "\nCommercial rights")
+	_, _ = fmt.Fprintln(w, "\nCommercial rights")
 	rights := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	for _, row := range licenseRightsRows(license.Payload.Rights) {
 		_, _ = fmt.Fprintf(rights, "%s\t%s\n", row.label, row.value)

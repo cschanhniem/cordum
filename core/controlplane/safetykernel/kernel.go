@@ -321,22 +321,6 @@ func (s *server) resolvedPlan() licensing.Plan {
 	return licensing.PlanCommunity
 }
 
-func (s *server) policyBundleLimit() int64 {
-	entitlements := s.currentEntitlements()
-	if limit := entitlements.MaxPolicyBundles; limit != 0 {
-		return limit
-	}
-	if entitlements.Limits != nil {
-		if limit, ok := entitlements.Limits["max_policy_bundles"]; ok {
-			return limit
-		}
-	}
-	if s.resolvedPlan() == licensing.PlanCommunity {
-		return 0
-	}
-	return licensing.Unlimited
-}
-
 func (s *server) velocityRuleLimit() int64 {
 	if entitlements := s.currentEntitlements(); entitlements.Limits != nil {
 		for _, key := range []string{"velocity_rule_count", "velocity_rules"} {

@@ -77,17 +77,9 @@ func newKeyedRateLimiterFromEnvWithDefaults(defaultRPS, defaultBurst int) *keyed
 	return newKeyedRateLimiter(rps, burst)
 }
 
-func newKeyedRateLimiterFromEnv() *keyedRateLimiter {
-	return newKeyedRateLimiterFromEnvWithDefaults(defaultRateLimitRPS, defaultRateLimitBurst)
-}
-
 func newPublicRateLimiterFromEnvWithDefaults(defaultRPS, defaultBurst int) *keyedRateLimiter {
 	rps, burst := rateLimitFromEnv("API_PUBLIC_RATE_LIMIT_RPS", "API_PUBLIC_RATE_LIMIT_BURST", defaultRPS, defaultBurst)
 	return newKeyedRateLimiter(rps, burst)
-}
-
-func newPublicRateLimiterFromEnv() *keyedRateLimiter {
-	return newPublicRateLimiterFromEnvWithDefaults(defaultPublicRateLimitRPS, defaultPublicRateLimitBurst)
 }
 
 func (rl *keyedRateLimiter) Allow(key string) bool {
@@ -198,12 +190,6 @@ func (rl *redisRateLimiter) Allow(key string) bool {
 type rateLimiter interface {
 	Allow(key string) bool
 }
-
-// defaultAPILimiter and defaultPublicLimiter are in-memory fallbacks used when
-// Redis-backed rate limiting is not wired up (e.g. during tests or before
-// RunWithAuth completes).
-var defaultAPILimiter rateLimiter = newKeyedRateLimiterFromEnv()
-var defaultPublicLimiter rateLimiter = newPublicRateLimiterFromEnv()
 
 func entitlementBodyBytesLimit(resolvers ...*licensing.EntitlementResolver) int64 {
 	for _, resolver := range resolvers {

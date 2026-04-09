@@ -1138,10 +1138,11 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 			s.appendAuditEntryNamed(ctx, "reject_failed", "job", jobID, "", policyActorID(r), policyRole(r), "job not awaiting approval (state="+string(state)+")")
 			conflictCode := model.ApprovalConflictNotActionable
 			conflictMessage := "job not awaiting approval"
-			if state == model.JobStateDenied {
+			switch state {
+			case model.JobStateDenied:
 				conflictCode = model.ApprovalConflictAlreadyResolved
 				conflictMessage = "approval already resolved"
-			} else if state == model.JobStateTimeout {
+			case model.JobStateTimeout:
 				conflictMessage = "approval expired"
 			}
 			result = handlerResult{http.StatusConflict, approvalConflictPayload(http.StatusConflict, conflictCode, conflictMessage)}

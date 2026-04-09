@@ -378,32 +378,6 @@ func (e *errorMemStore) GetResult(context.Context, string) ([]byte, error) {
 }
 func (e *errorMemStore) Close() error { return nil }
 
-type stubLicenseAuth struct {
-	info *LicenseInfo
-}
-
-func (s stubLicenseAuth) AuthenticateHTTP(*http.Request) (*AuthContext, error) {
-	return &AuthContext{}, nil
-}
-
-func (s stubLicenseAuth) AuthenticateGRPC(context.Context) (*AuthContext, error) {
-	return &AuthContext{}, nil
-}
-
-func (s stubLicenseAuth) RequireRole(*http.Request, ...string) error { return nil }
-
-func (s stubLicenseAuth) ResolveTenant(_ *http.Request, requested, _ string) (string, error) {
-	return requested, nil
-}
-
-func (s stubLicenseAuth) RequireTenantAccess(*http.Request, string) error { return nil }
-
-func (s stubLicenseAuth) ResolvePrincipal(_ *http.Request, requested string) (string, error) {
-	return requested, nil
-}
-
-func (s stubLicenseAuth) LicenseInfo() *LicenseInfo { return s.info }
-
 func TestHandleStatusHAFields(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	s.instanceID = "gw-test-123"

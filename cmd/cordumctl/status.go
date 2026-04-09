@@ -110,7 +110,7 @@ func runStatusCmdE(args []string) error {
 
 	printStatusOverview(os.Stdout, strings.TrimRight(*fs.gateway, "/"), status, chooseStatusLicense(status, usage, usageErr))
 	if usageErr != nil {
-		fmt.Fprintf(os.Stdout, "\nUsage vs limits unavailable: %v\n", usageErr)
+		_, _ = fmt.Fprintf(os.Stdout, "\nUsage vs limits unavailable: %v\n", usageErr)
 		return nil
 	}
 
@@ -141,7 +141,7 @@ func printStatusOverview(w *os.File, gateway string, status gatewayStatusRespons
 }
 
 func printStatusUsage(w *os.File, summary licenseUsageSummary) {
-	fmt.Fprintf(w, "\nUsage vs limits (tenant: %s)\n", valueOrDash(summary.TenantID))
+	_, _ = fmt.Fprintf(w, "\nUsage vs limits (tenant: %s)\n", valueOrDash(summary.TenantID))
 
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "METRIC\tCURRENT\tLIMIT\tDETAILS")
