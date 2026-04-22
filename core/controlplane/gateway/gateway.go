@@ -975,6 +975,12 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("GET /api/v1/audit/export/config", s.instrumented("/api/v1/audit/export/config", s.handleAuditExportConfig))
 	mux.HandleFunc("POST /api/v1/audit/export/test", s.instrumented("/api/v1/audit/export/test", s.handleAuditExportTest))
 
+	// 2.7.1 Audit chain verify (admin only) — handler lives in
+	// handlers_audit_verify.go; missing this line was a wire-up regression
+	// that had /api/v1/audit/verify 404ing on fresh deploys despite the
+	// handler being fully implemented and unit-tested.
+	mux.HandleFunc("GET /api/v1/audit/verify", s.instrumented("/api/v1/audit/verify", s.handleAuditVerify))
+
 	// 2.8 Legal hold management (admin only, entitlement-gated)
 	mux.HandleFunc("POST /api/v1/audit/legal-hold", s.instrumented("/api/v1/audit/legal-hold", s.handleCreateLegalHold))
 	mux.HandleFunc("GET /api/v1/audit/legal-holds", s.instrumented("/api/v1/audit/legal-holds", s.handleListLegalHolds))
