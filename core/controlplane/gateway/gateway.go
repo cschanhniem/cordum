@@ -971,6 +971,11 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("GET /api/v1/admin/locks", s.instrumented("/api/v1/admin/locks", s.handleAdminLocks))
 
 	// 2.7 Audit export management (admin only, entitlement-gated)
+	// 2.7 Audit export — main endpoint plus operational sub-routes.
+	// The top-level GET /api/v1/audit/export was missing despite the
+	// handler being fully implemented in handlers_audit_compliance.go:61
+	// (same wire-up gap class as /api/v1/audit/verify below).
+	mux.HandleFunc("GET /api/v1/audit/export", s.instrumented("/api/v1/audit/export", s.handleAuditExport))
 	mux.HandleFunc("GET /api/v1/audit/export/health", s.instrumented("/api/v1/audit/export/health", s.handleAuditExportHealth))
 	mux.HandleFunc("GET /api/v1/audit/export/config", s.instrumented("/api/v1/audit/export/config", s.handleAuditExportConfig))
 	mux.HandleFunc("POST /api/v1/audit/export/test", s.instrumented("/api/v1/audit/export/test", s.handleAuditExportTest))
