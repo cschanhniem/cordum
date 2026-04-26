@@ -34,14 +34,15 @@ const (
 // Hash field names for the metadata key. Pinned wire format; the admin
 // session viewer (phase 5) reads these by name.
 const (
-	sessionFieldID             = "id"
-	sessionFieldUserPrincipal  = "user_principal"
-	sessionFieldTenant         = "tenant"
-	sessionFieldAgentID        = "agent_id"
-	sessionFieldDelegationJTI  = "delegation_jti"
-	sessionFieldDelegationJSON = "delegation_json"
-	sessionFieldCreatedAt      = "created_at_unix_nano"
-	sessionFieldLastActiveAt   = "last_active_at_unix_nano"
+	sessionFieldID                 = "id"
+	sessionFieldUserPrincipal      = "user_principal"
+	sessionFieldTenant             = "tenant"
+	sessionFieldAgentID            = "agent_id"
+	sessionFieldDelegationJTI      = "delegation_jti"
+	sessionFieldDelegationJSON     = "delegation_json"
+	sessionFieldCreatedAt          = "created_at_unix_nano"
+	sessionFieldLastActiveAt       = "last_active_at_unix_nano"
+	sessionFieldPendingToolCallSON = "pending_tool_call_json"
 )
 
 // Session is the persisted chat-assistant session record. Pinned shape;
@@ -56,15 +57,16 @@ const (
 // meta) and SetDelegation HSET-touches only the delegation fields,
 // never clobbering activity timestamps or other concurrent writes.
 type Session struct {
-	ID            string             `json:"id"`
-	UserPrincipal string             `json:"user_principal"`
-	Tenant        string             `json:"tenant"`
-	AgentID       string             `json:"agent_id"`
-	DelegationJTI string             `json:"delegation_jti"`
-	Delegation    *SessionDelegation `json:"delegation,omitempty"`
-	Messages      []SessionMessage   `json:"messages"`
-	CreatedAt     time.Time          `json:"created_at"`
-	LastActiveAt  time.Time          `json:"last_active_at"`
+	ID              string             `json:"id"`
+	UserPrincipal   string             `json:"user_principal"`
+	Tenant          string             `json:"tenant"`
+	AgentID         string             `json:"agent_id"`
+	DelegationJTI   string             `json:"delegation_jti"`
+	Delegation      *SessionDelegation `json:"delegation,omitempty"`
+	Messages        []SessionMessage   `json:"messages"`
+	CreatedAt       time.Time          `json:"created_at"`
+	LastActiveAt    time.Time          `json:"last_active_at"`
+	PendingToolCall *ToolCallRef       `json:"pending_tool_call,omitempty"`
 }
 
 // SessionMessage is one transcript entry. Distinct from the provider-side
@@ -280,6 +282,42 @@ func (s *SessionStore) SetDelegation(ctx context.Context, id string, delegation 
 	return nil
 }
 
+// SetPendingToolCall persists (or clears) the in-flight tool call that
+// is awaiting human approval on a session's metadata HASH. Atomic
+// field-only update — does NOT touch CreatedAt, LastActiveAt, the
+// messages list, or other metadata. Phase-5 WS handler resumes the
+// agent loop after approval by reading this field via Get.
+//
+// Pass nil to clear the field (after the human approves and the loop
+// resumes, or after a session-cancel).
+func (s *SessionStore) SetPendingToolCall(ctx context.Context, id string, ref *ToolCallRef) error {
+	if s == nil || s.client == nil {
+		return errors.New("chat session: store not configured")
+	}
+	metaKey := sessionKey(id)
+	if exists, err := s.client.Exists(ctx, metaKey).Result(); err != nil {
+		return fmt.Errorf("chat session: set pending tool call exists check: %w", err)
+	} else if exists == 0 {
+		return fmt.Errorf("chat session: set pending tool call: session %s not found", id)
+	}
+
+	pipe := s.client.Pipeline()
+	if ref == nil {
+		pipe.HDel(ctx, metaKey, sessionFieldPendingToolCallSON)
+	} else {
+		raw, err := json.Marshal(ref)
+		if err != nil {
+			return fmt.Errorf("chat session: set pending tool call marshal: %w", err)
+		}
+		pipe.HSet(ctx, metaKey, sessionFieldPendingToolCallSON, string(raw))
+	}
+	pipe.Expire(ctx, metaKey, SessionTTL)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("chat session: set pending tool call persist: %w", err)
+	}
+	return nil
+}
+
 // decodeSessionFields converts a HGETALL result into a Session. The
 // hash schema is internal — wire shape is the JSON projection of
 // Session, not the field-by-field hash.
@@ -311,6 +349,13 @@ func decodeSessionFields(fields map[string]string) (*Session, error) {
 			return nil, fmt.Errorf("chat session: decode delegation: %w", err)
 		}
 		sess.Delegation = &d
+	}
+	if raw, ok := fields[sessionFieldPendingToolCallSON]; ok && raw != "" {
+		var ref ToolCallRef
+		if err := json.Unmarshal([]byte(raw), &ref); err != nil {
+			return nil, fmt.Errorf("chat session: decode pending tool call: %w", err)
+		}
+		sess.PendingToolCall = &ref
 	}
 	return sess, nil
 }
