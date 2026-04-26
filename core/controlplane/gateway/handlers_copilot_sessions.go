@@ -71,6 +71,12 @@ func (s *server) handleGetCopilotSession(w http.ResponseWriter, r *http.Request)
 	if !s.requirePermissionOrRole(w, r, auth.PermJobsRead) {
 		return
 	}
+	// Custom RBAC roles can grant jobs.read without governance.read. Without a
+	// separate gate the response would leak DecisionLogRecord data behind only
+	// the jobs.read permission, bypassing the existing /api/v1/governance/decisions
+	// gate (auth.PermGovernanceRead). Compute the gate once here; jobs.read-only
+	// callers still get the timeline + linked jobs but with decisions:[].
+	canReadGovernance := s.hasPermissionSilent(r, auth.PermGovernanceRead)
 
 	tenant, err := s.resolveTenant(r, "")
 	if err != nil {
@@ -83,6 +89,7 @@ func (s *server) handleGetCopilotSession(w http.ResponseWriter, r *http.Request)
 		"session_id", sessionID,
 		"principal", copilotLogPrincipal(userID),
 		"tenant", tenant,
+		"governance_read", canReadGovernance,
 	)
 
 	store := s.copilotStore
@@ -104,10 +111,24 @@ func (s *server) handleGetCopilotSession(w http.ResponseWriter, r *http.Request)
 		writeInternalError(w, r, "get copilot session jobs", err)
 		return
 	}
-	decisions, decisionsTruncated, err := s.collectCopilotSessionDecisions(r.Context(), tenant, jobIDs)
-	if err != nil {
-		writeInternalError(w, r, "get copilot session decisions", err)
-		return
+	var (
+		decisions          []copilotSessionDecisionView
+		decisionsTruncated bool
+	)
+	if canReadGovernance {
+		decisions, decisionsTruncated, err = s.collectCopilotSessionDecisions(r.Context(), tenant, jobIDs)
+		if err != nil {
+			writeInternalError(w, r, "get copilot session decisions", err)
+			return
+		}
+	} else {
+		decisions = []copilotSessionDecisionView{}
+		slog.Info("copilot session decisions omitted",
+			"session_id", sessionID,
+			"principal", copilotLogPrincipal(userID),
+			"tenant", tenant,
+			"reason", "missing governance.read",
+		)
 	}
 	truncated := jobsTruncated || decisionsTruncated
 	if truncated {
