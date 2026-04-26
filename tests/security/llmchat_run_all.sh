@@ -38,6 +38,7 @@ fi
 pass=0
 fail=0
 skip=0
+live_missing=0
 
 for probe in "${PROBES[@]}"; do
   path="${SECURITY_DIR}/${probe}"
@@ -76,7 +77,14 @@ for probe in "${PROBES[@]}"; do
   printf '[%s] %s (exit=%s, duration=%ss)\n' "${name}" "${status}" "${code}" "${duration}"
 done
 
-${PYTHON_BIN} - "${RESULTS_TSV}" "${RESULTS_JSON}" "${pass}" "${fail}" "${skip}" <<'PY'
+: >"${SECURITY_OUT_DIR}/live-missing-evidence.txt"
+while IFS=$'\t' read -r probe status code duration evidence stdout stderr; do
+  if [ -f "${evidence}" ] && grep -nE '=(not_run|not_asserted)([[:space:]]|$)' "${evidence}" >>"${SECURITY_OUT_DIR}/live-missing-evidence.txt" 2>&1; then
+    live_missing=$((live_missing + 1))
+  fi
+done <"${RESULTS_TSV}"
+
+${PYTHON_BIN} - "${RESULTS_TSV}" "${RESULTS_JSON}" "${pass}" "${fail}" "${skip}" "${live_missing}" <<'PY'
 import csv, json, sys
 rows = []
 with open(sys.argv[1], newline='', encoding='utf-8') as f:
@@ -97,6 +105,7 @@ summary = {
     "pass": int(sys.argv[3]),
     "fail": int(sys.argv[4]),
     "skip": int(sys.argv[5]),
+    "live_missing": int(sys.argv[6]),
     "total": len(rows),
     "live_required": bool(__import__('os').environ.get('LLMCHAT_SECURITY_REQUIRE_LIVE') == '1'),
 }
@@ -112,6 +121,10 @@ if [ "${fail}" -gt 0 ]; then
 fi
 if [ "${LLMCHAT_SECURITY_REQUIRE_LIVE:-0}" = "1" ] && [ "${skip}" -gt 0 ]; then
   echo "[llmchat_run_all] FAILED: live required but ${skip} probe(s) skipped; see ${RESULTS_JSON}" >&2
+  exit 1
+fi
+if [ "${LLMCHAT_SECURITY_REQUIRE_LIVE:-0}" = "1" ] && [ "${live_missing}" -gt 0 ]; then
+  echo "[llmchat_run_all] FAILED: live required but ${live_missing} probe evidence file(s) still contain not_run/not_asserted markers; see ${SECURITY_OUT_DIR}/live-missing-evidence.txt" >&2
   exit 1
 fi
 

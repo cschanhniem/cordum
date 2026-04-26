@@ -68,7 +68,7 @@ if [ "${LLMCHAT_SECURITY_LIVE:-0}" = "1" ]; then
     fi
   done <"${PROBE_OUT_DIR}/payloads.txt"
 else
-  log_evidence "live_prompt_injection=not_run reason=set LLMCHAT_SECURITY_LIVE=1 after clean compose-up with local inference"
+  live_evidence_not_run "live_prompt_injection" "set LLMCHAT_SECURITY_LIVE=1 after clean compose-up with local inference"
 fi
 
 probe_pass "prompt injection payloads are backed by prompt, approval, and redaction defense-layer tests"

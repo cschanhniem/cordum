@@ -25,7 +25,7 @@ run_go_test "go test gateway chat entitlement proxy" ./core/controlplane/gateway
 if command -v npm >/dev/null 2>&1; then
   run_capture "dashboard chat availability/header tests" npm --prefix dashboard test -- src/hooks/useChatAssistantAvailability.test.ts src/components/chat-assistant/ChatHeaderButton.test.tsx || probe_fail "dashboard chat availability/header tests failed"
 else
-  log_evidence "dashboard_tests=not_run reason=npm not found in bash PATH"
+  live_evidence_not_run "dashboard_tests" "npm not found in bash PATH"
 fi
 
 if [ "${LLMCHAT_SECURITY_LIVE:-0}" = "1" ]; then
@@ -37,7 +37,7 @@ if [ "${LLMCHAT_SECURITY_LIVE:-0}" = "1" ]; then
     assert_text_contains "${body}" 'feature_unavailable|tier_limit_exceeded|llm_chat_assistant' "disabled-entitlement response must name the entitlement defense"
   fi
 else
-  log_evidence "live_entitlement=not_run reason=set LLMCHAT_SECURITY_LIVE=1 after clean compose-up; set LLMCHAT_SECURITY_EXPECT_DISABLED=1 after flipping license false"
+  live_evidence_not_run "live_entitlement" "set LLMCHAT_SECURITY_LIVE=1 after clean compose-up; set LLMCHAT_SECURITY_EXPECT_DISABLED=1 after flipping license false"
 fi
 
 probe_pass "entitlement gate and dashboard hide behavior tests passed"

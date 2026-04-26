@@ -20,7 +20,7 @@ if [ "${LLMCHAT_SECURITY_LIVE:-0}" = "1" ]; then
   status=$(curl_status_body "non-admin GET chat sessions" "${body}" -X GET "${GATEWAY_URL}/api/v1/chat/sessions" -H "X-Tenant-ID: ${LLMCHAT_SECURITY_TENANT:-default}" -H "X-Principal-Role: user") || true
   assert_http_status_in "${status}" "401,403" "non-admin/non-chat.read_all caller must not list all chat sessions"
 else
-  log_evidence "live_admin_authz=not_run reason=set LLMCHAT_SECURITY_LIVE=1 with a clean stack to exercise gateway auth paths"
+  live_evidence_not_run "live_admin_authz" "set LLMCHAT_SECURITY_LIVE=1 with a clean stack to exercise gateway auth paths"
 fi
 
 probe_pass "admin chat sessions are gated by chat.read_all and fail closed"

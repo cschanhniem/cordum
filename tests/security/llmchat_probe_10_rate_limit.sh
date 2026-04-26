@@ -48,7 +48,7 @@ PY
   sed -e 's/^/flood_statuses: /' "${PROBE_OUT_DIR}/ws-flood.json" >>"${EVIDENCE_FILE}"
   assert_text_contains "${PROBE_OUT_DIR}/ws-flood.json" '429|401|403|503' "live flood must be bounded before unbounded chat processing"
 else
-  log_evidence "live_rate_limit=not_run reason=set LLMCHAT_SECURITY_LIVE=1 LLMCHAT_SECURITY_RUN_FLOOD=1 for 60s/100rps clean-stack flood"
+  live_evidence_not_run "live_rate_limit" "set LLMCHAT_SECURITY_LIVE=1 LLMCHAT_SECURITY_RUN_FLOOD=1 for 60s/100rps clean-stack flood"
 fi
 
 probe_pass "rate-limit/backpressure guard tests passed"

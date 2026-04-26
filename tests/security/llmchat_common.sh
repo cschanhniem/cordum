@@ -88,6 +88,26 @@ probe_skip() {
   exit 77
 }
 
+live_evidence_not_run() {
+  local key="$1"
+  shift
+  local reason="$*"
+  log_evidence "${key}=not_run reason=${reason}"
+  if [ "${LLMCHAT_SECURITY_REQUIRE_LIVE:-0}" = "1" ]; then
+    probe_skip "live evidence required but ${key} was not run: ${reason}"
+  fi
+}
+
+live_evidence_inconclusive() {
+  local key="$1"
+  shift
+  local reason="$*"
+  log_evidence "${key}=not_asserted reason=${reason}"
+  if [ "${LLMCHAT_SECURITY_REQUIRE_LIVE:-0}" = "1" ]; then
+    probe_fail "live evidence required but ${key} was inconclusive: ${reason}"
+  fi
+}
+
 require_cmd() {
   local cmd="$1"
   command -v "${cmd}" >/dev/null 2>&1 || probe_skip "required command '${cmd}' not found"

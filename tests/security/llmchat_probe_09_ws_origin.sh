@@ -23,7 +23,7 @@ if [ "${LLMCHAT_SECURITY_LIVE:-0}" = "1" ]; then
   assert_http_status_in "${status}" "403" "malicious WS Origin must be rejected"
   assert_text_contains "${body}" 'origin not allowed|Forbidden|forbidden' "origin rejection body must identify defense layer"
 else
-  log_evidence "live_ws_origin=not_run reason=set LLMCHAT_SECURITY_LIVE=1 after clean compose-up to exercise actual upgrade path"
+  live_evidence_not_run "live_ws_origin" "set LLMCHAT_SECURITY_LIVE=1 after clean compose-up to exercise actual upgrade path"
 fi
 
 probe_pass "WS origin defense is enforced at gateway origin allowlist"

@@ -31,10 +31,10 @@ if [ "${LLMCHAT_SECURITY_LIVE:-0}" = "1" ]; then
   if [ "${status}" = "200" ]; then
     assert_text_contains "${body}" 'approval_required' "non-preapproved mutator must surface approval_required frame"
   else
-    log_evidence "live_preapproved_mutation_not_asserted status=${status} reason=stack/auth not ready"
+    live_evidence_inconclusive "live_preapproved_mutation" "status=${status}; stack/auth not ready"
   fi
 else
-  log_evidence "live_preapproved_mutation=not_run reason=set LLMCHAT_SECURITY_LIVE=1 after clean compose-up"
+  live_evidence_not_run "live_preapproved_mutation" "set LLMCHAT_SECURITY_LIVE=1 after clean compose-up"
 fi
 
 probe_pass "preapproved mutation scope and approval/audit regression tests passed"

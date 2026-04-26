@@ -39,7 +39,7 @@ if [ -n "${LLMCHAT_SECURITY_DELEGATION_TOKEN:-}" ]; then
   status=$(curl_status_body "delegation token against non-chat mutating endpoint" "${body}" -X POST "${GATEWAY_URL}/api/v1/policy/bundles" -H "Authorization: Bearer ${LLMCHAT_SECURITY_DELEGATION_TOKEN}" -H "Content-Type: application/json" -d '{"name":"evil.test","rules":[]}') || true
   assert_http_status_in "${status}" "401,403" "delegation token must not authorize direct policy-bundle mutation"
 else
-  log_evidence "live_token_decode=not_run reason=LLMCHAT_SECURITY_DELEGATION_TOKEN not provided; production chat service does not expose delegation bearer to browser frames"
+  live_evidence_not_run "live_token_decode" "LLMCHAT_SECURITY_DELEGATION_TOKEN not provided; production chat service does not expose delegation bearer to browser frames"
 fi
 
 probe_pass "delegation scope is pinned by client body and TokenService monotonicity tests"

@@ -24,7 +24,7 @@ if [ "${LLMCHAT_SECURITY_LIVE:-0}" = "1" ] && [ -n "${LLMCHAT_SECURITY_MCP_URL:-
   assert_http_status_in "${status}" "200,400" "MCP endpoint must respond deterministically"
   assert_text_contains "${body}" '(-32601|method not found)' "crafted tool must be rejected as method-not-found"
 else
-  log_evidence "live_mcp_call=not_run reason=set LLMCHAT_SECURITY_LIVE=1 LLMCHAT_SECURITY_MCP_URL and LLMCHAT_SECURITY_DELEGATION_TOKEN to exercise a clean compose stack"
+  live_evidence_not_run "live_mcp_call" "set LLMCHAT_SECURITY_LIVE=1 LLMCHAT_SECURITY_MCP_URL and LLMCHAT_SECURITY_DELEGATION_TOKEN to exercise a clean compose stack"
 fi
 
 probe_pass "agent identity scope is enforced by FilterForIdentity and -32601 mapping"

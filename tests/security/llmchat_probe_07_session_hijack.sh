@@ -22,7 +22,7 @@ if [ "${LLMCHAT_SECURITY_LIVE:-0}" = "1" ] && [ -n "${LLMCHAT_SECURITY_STOLEN_SE
   status=$(curl_status_body "stolen session resume as different principal" "${body}" -X POST "${GATEWAY_URL}/api/v1/chat" -H "X-Chat-Session-Id: ${LLMCHAT_SECURITY_STOLEN_SESSION_ID}" -H "X-Principal-Id: mallory" -H "X-Tenant-ID: evil.test" -H "Content-Type: application/json" -d '{"message":"resume stolen session"}') || true
   assert_http_status_in "${status}" "401,403,404" "stolen session must not resume under different identity"
 else
-  log_evidence "live_hijack=not_run reason=set LLMCHAT_SECURITY_LIVE=1 and LLMCHAT_SECURITY_STOLEN_SESSION_ID to run against clean stack"
+  live_evidence_not_run "live_hijack" "set LLMCHAT_SECURITY_LIVE=1 and LLMCHAT_SECURITY_STOLEN_SESSION_ID to run against clean stack"
 fi
 
 probe_pass "session hijack defenses bind session IDs to trusted principal+tenant"

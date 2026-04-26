@@ -23,6 +23,9 @@ if [ -n "${LLMCHAT_SECURITY_LOG_DIR:-}" ]; then
   assert_no_secret_patterns_in_dir "${LLMCHAT_SECURITY_LOG_DIR}" "provided log directory must not contain probe secret patterns"
 else
   log_evidence "log_dir_scan=not_run reason=LLMCHAT_SECURITY_LOG_DIR not provided"
+  if [ "${LLMCHAT_SECURITY_REQUIRE_LIVE:-0}" = "1" ] && { [ "${LLMCHAT_SECURITY_LIVE:-0}" != "1" ] || [ "${LLMCHAT_SECURITY_RUN_LOAD:-0}" != "1" ]; }; then
+    probe_skip "live evidence required but no log directory was provided and live load/docker-log collection is disabled"
+  fi
 fi
 
 if [ "${LLMCHAT_SECURITY_LIVE:-0}" = "1" ] && [ "${LLMCHAT_SECURITY_RUN_LOAD:-0}" = "1" ]; then
@@ -48,7 +51,7 @@ if [ "${LLMCHAT_SECURITY_LIVE:-0}" = "1" ] && [ "${LLMCHAT_SECURITY_RUN_LOAD:-0}
   done
   assert_no_secret_patterns_in_dir "${logs_dir}" "live docker logs must not contain synthetic secrets"
 else
-  log_evidence "live_log_load=not_run reason=set LLMCHAT_SECURITY_LIVE=1 LLMCHAT_SECURITY_RUN_LOAD=1 to run 1h/50tpm clean-stack load"
+  live_evidence_not_run "live_log_load" "set LLMCHAT_SECURITY_LIVE=1 LLMCHAT_SECURITY_RUN_LOAD=1 to run 1h/50tpm clean-stack load"
 fi
 
 probe_pass "log redaction static gates and redactor/provider tests passed"

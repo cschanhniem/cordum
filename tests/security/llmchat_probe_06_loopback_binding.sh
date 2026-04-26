@@ -37,7 +37,7 @@ if [ "${LLMCHAT_SECURITY_LIVE:-0}" = "1" ]; then
   ext_status=$(curl_status_body "external interface vLLM should refuse" "${ext_body}" "http://${ext_host}:8000/v1/models") || true
   assert_http_status_in "${ext_status}" "000,403,404" "external interface must not expose vLLM models"
 else
-  log_evidence "live_loopback=not_run reason=set LLMCHAT_SECURITY_LIVE=1 after clean compose-up to curl host/external/intra-network paths"
+  live_evidence_not_run "live_loopback" "set LLMCHAT_SECURITY_LIVE=1 after clean compose-up to curl host/external/intra-network paths"
 fi
 
 probe_pass "loopback/ClusterIP exposure checks passed"
