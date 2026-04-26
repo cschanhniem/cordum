@@ -43,7 +43,9 @@ describe("JobsPage agent_id column and filtering (task-f13505cc)", () => {
     mockJobs([backendJob()]);
     renderJobs();
 
-    const agentHeader = await screen.findByRole("columnheader", { name: /agent/i });
+    const agentHeader = await screen.findByRole("columnheader", {
+      name: /agent/i,
+    });
     expect(agentHeader).not.toBeNull();
   });
 
@@ -54,12 +56,16 @@ describe("JobsPage agent_id column and filtering (task-f13505cc)", () => {
     await screen.findByRole("columnheader", { name: /agent/i });
     const agentCell = screen.getByLabelText("chat-assistant@tenant-default");
     expect(agentCell).not.toBeNull();
-    expect(agentCell.getAttribute("title")).toBe("chat-assistant@tenant-default");
+    expect(agentCell.getAttribute("title")).toBe(
+      "chat-assistant@tenant-default",
+    );
     expect(within(agentCell).queryByText("chat-assistant")).not.toBeNull();
   });
 
   it("renders an em dash when actor_id is missing", async () => {
-    mockJobs([backendJob({ id: "job-system", actor_id: undefined, tenant: undefined })]);
+    mockJobs([
+      backendJob({ id: "job-system", actor_id: undefined, tenant: undefined }),
+    ]);
     renderJobs();
 
     await screen.findByRole("columnheader", { name: /agent/i });
@@ -72,7 +78,10 @@ describe("JobsPage agent_id column and filtering (task-f13505cc)", () => {
   it("adds a copilot badge only for chat-assistant identities", async () => {
     mockJobs([
       backendJob({ id: "job-chat", actor_id: "chat-assistant@tenant-default" }),
-      backendJob({ id: "job-other", actor_id: "chat-assistant-malicious@tenant-default" }),
+      backendJob({
+        id: "job-other",
+        actor_id: "chat-assistant-malicious@tenant-default",
+      }),
     ]);
     renderJobs();
 
@@ -83,7 +92,10 @@ describe("JobsPage agent_id column and filtering (task-f13505cc)", () => {
   it("filters by agentId from the URL", async () => {
     mockJobs([
       backendJob({ id: "job-chat", actor_id: "chat-assistant@tenant-default" }),
-      backendJob({ id: "job-workflow", actor_id: "workflow-runner@tenant-default" }),
+      backendJob({
+        id: "job-workflow",
+        actor_id: "workflow-runner@tenant-default",
+      }),
     ]);
     renderJobs("/jobs?agentId=chat-assistant");
 
@@ -93,6 +105,32 @@ describe("JobsPage agent_id column and filtering (task-f13505cc)", () => {
     expect(screen.queryByText("job-workflow")).toBeNull();
   });
 
+  it("filters by agentId typed after jobs are visible", async () => {
+    mockJobs([
+      backendJob({ id: "job-chat", actor_id: "chat-assistant@tenant-default" }),
+      backendJob({
+        id: "job-workflow",
+        actor_id: "workflow-runner@tenant-default",
+      }),
+    ]);
+    renderJobs();
+
+    await screen.findByText("job-chat");
+    await screen.findByText("job-workflow");
+
+    fireEvent.change(screen.getByPlaceholderText("Agent ID"), {
+      target: { value: "chat-assistant" },
+    });
+
+    await waitFor(
+      () => {
+        expect(screen.queryByText("job-chat")).not.toBeNull();
+        expect(screen.queryByText("job-workflow")).toBeNull();
+      },
+      { timeout: 1500 },
+    );
+  });
+
   it("sorts by Agent column on repeated header clicks", async () => {
     mockJobs([
       backendJob({ id: "job-b", actor_id: "zeta-agent@tenant-default" }),
@@ -100,7 +138,9 @@ describe("JobsPage agent_id column and filtering (task-f13505cc)", () => {
     ]);
     const { container } = renderJobs();
 
-    const agentHeader = await screen.findByRole("columnheader", { name: /agent/i });
+    const agentHeader = await screen.findByRole("columnheader", {
+      name: /agent/i,
+    });
     expect(agentHeader.getAttribute("aria-sort")).toBe("none");
 
     fireEvent.click(agentHeader);
@@ -108,6 +148,26 @@ describe("JobsPage agent_id column and filtering (task-f13505cc)", () => {
 
     fireEvent.click(agentHeader);
     expect(agentHeader.getAttribute("aria-sort")).toBe("ascending");
+
+    await waitFor(() => {
+      const bodyRows = Array.from(container.querySelectorAll("tbody tr"));
+      expect(bodyRows[0]?.textContent).toContain("job-a");
+    });
+  });
+
+  it("uses Job ID as a deterministic tie breaker when Agent values are empty", async () => {
+    mockJobs([
+      backendJob({ id: "job-b", actor_id: undefined, updated_at: 100 }),
+      backendJob({ id: "job-a", actor_id: undefined, updated_at: 100 }),
+    ]);
+    const { container } = renderJobs();
+
+    const agentHeader = await screen.findByRole("columnheader", {
+      name: /agent/i,
+    });
+
+    fireEvent.click(agentHeader);
+    fireEvent.click(agentHeader);
 
     await waitFor(() => {
       const bodyRows = Array.from(container.querySelectorAll("tbody tr"));

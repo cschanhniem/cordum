@@ -89,7 +89,10 @@ export interface AttachedToolCall {
   tool: string;
   args: Record<string, unknown>;
   result?: { ok: boolean; resultPreview: string };
-  approval?: { approvalId: string; status: "pending" | "resolved" | "rejected" };
+  approval?: {
+    approvalId: string;
+    status: "pending" | "resolved" | "rejected";
+  };
 }
 
 export interface ChatAssistantSessionSummary {

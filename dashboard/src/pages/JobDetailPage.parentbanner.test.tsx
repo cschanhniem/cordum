@@ -13,16 +13,19 @@ vi.mock("react-router-dom", () => ({
 
 vi.mock("framer-motion", () => {
   const passthrough = (tag: string) =>
-    React.forwardRef<HTMLElement, Record<string, unknown> & { children?: React.ReactNode }>(
-      ({ children, ...props }, ref) =>
-        React.createElement(tag, { ...props, ref }, children as React.ReactNode),
+    React.forwardRef<
+      HTMLElement,
+      Record<string, unknown> & { children?: React.ReactNode }
+    >(({ children, ...props }, ref) =>
+      React.createElement(tag, { ...props, ref }, children as React.ReactNode),
     );
   return {
     motion: { div: passthrough("div") },
   };
 });
 
-const { ParentContextBanner, SubmittedByBanner } = await import("./JobDetailPage");
+const { ParentContextBanner, SubmittedByBanner } =
+  await import("./JobDetailPage");
 
 function makeJob(overrides: Partial<Job> = {}): Job {
   return {
@@ -41,7 +44,10 @@ function makeJob(overrides: Partial<Job> = {}): Job {
   } as Job;
 }
 
-function renderBanner(job: Job): { container: HTMLDivElement; cleanup: () => void } {
+function renderBanner(job: Job): {
+  container: HTMLDivElement;
+  cleanup: () => void;
+} {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -57,13 +63,18 @@ function renderBanner(job: Job): { container: HTMLDivElement; cleanup: () => voi
   };
 }
 
-function findViewParentButton(container: HTMLElement): HTMLButtonElement | null {
+function findViewParentButton(
+  container: HTMLElement,
+): HTMLButtonElement | null {
   return Array.from(container.querySelectorAll("button")).find((b) =>
     b.textContent?.includes("View Parent"),
   ) as HTMLButtonElement | null;
 }
 
-function renderSubmittedBy(job: Job): { container: HTMLDivElement; cleanup: () => void } {
+function renderSubmittedBy(job: Job): {
+  container: HTMLDivElement;
+  cleanup: () => void;
+} {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -105,7 +116,9 @@ describe("ParentContextBanner — workflowId guard against /workflows/all/runs/X
       act(() => {
         btn?.click();
       });
-      expect(navigateMock).toHaveBeenCalledWith("/workflows/wf-1/runs/wfr-abc123xy");
+      expect(navigateMock).toHaveBeenCalledWith(
+        "/workflows/wf-1/runs/wfr-abc123xy",
+      );
     } finally {
       cleanup();
     }
@@ -155,7 +168,10 @@ describe("ParentContextBanner — workflowId guard against /workflows/all/runs/X
 describe("SubmittedByBanner — chat-assistant lineage (task-f13505cc)", () => {
   it("renders a chat-assistant Submitted by banner with the full actor identity", () => {
     const { container, cleanup } = renderSubmittedBy(
-      makeJob({ actorId: "chat-assistant@tenant-default", tenant: "tenant-default" }),
+      makeJob({
+        actorId: "chat-assistant@tenant-default",
+        tenant: "tenant-default",
+      }),
     );
     try {
       expect(container.textContent).toContain("Submitted by");
@@ -166,7 +182,9 @@ describe("SubmittedByBanner — chat-assistant lineage (task-f13505cc)", () => {
   });
 
   it("does not render the chat-assistant banner for jobs without an actor identity", () => {
-    const { container, cleanup } = renderSubmittedBy(makeJob({ actorId: undefined }));
+    const { container, cleanup } = renderSubmittedBy(
+      makeJob({ actorId: undefined }),
+    );
     try {
       expect(container.textContent).not.toContain("Submitted by");
     } finally {

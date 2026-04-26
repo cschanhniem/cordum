@@ -46,7 +46,10 @@ import { useSubmitJob } from "@/hooks/useJobs";
 import { SafetyDecisionBadge } from "@/components/ui/SafetyDecisionBadge";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { safeLocalStorage } from "@/lib/storage";
-import { JobFiltersBar, type JobFilterValues } from "@/components/jobs/JobFiltersBar";
+import {
+  JobFiltersBar,
+  type JobFilterValues,
+} from "@/components/jobs/JobFiltersBar";
 
 export function OriginPill({ job }: { job: Job }) {
   const navigate = useNavigate();
@@ -102,9 +105,11 @@ function AgentCell({ actorId, tenant }: { actorId?: string; tenant?: string }) {
   if (!actorId) {
     return <span className="text-xs text-muted-foreground">—</span>;
   }
-  const isCopilot = actorId === "chat-assistant" || actorId.startsWith("chat-assistant@");
+  const isCopilot =
+    actorId === "chat-assistant" || actorId.startsWith("chat-assistant@");
   const displayName = actorId.split("@")[0] || actorId;
-  const tooltip = actorId.includes("@") || !tenant ? actorId : `${actorId}@${tenant}`;
+  const tooltip =
+    actorId.includes("@") || !tenant ? actorId : `${actorId}@${tenant}`;
   return (
     <span
       className="inline-flex items-center gap-1.5 text-xs text-foreground"
@@ -144,7 +149,14 @@ function jobStatusVariant(status: string) {
   }
 }
 
-type SortKey = "status" | "id" | "topic" | "agent" | "safety" | "attempts" | "updatedAt";
+type SortKey =
+  | "status"
+  | "id"
+  | "topic"
+  | "agent"
+  | "safety"
+  | "attempts"
+  | "updatedAt";
 type SortDir = "asc" | "desc";
 
 const statusOrder: Record<string, number> = {
@@ -246,7 +258,8 @@ export function SubmitJobDialog({
               Submit Job
             </h2>
             <p className="mt-1 text-xs text-muted-foreground">
-              Dispatch a new job to the control plane with a topic, prompt, and priority.
+              Dispatch a new job to the control plane with a topic, prompt, and
+              priority.
             </p>
           </div>
           <Button
@@ -460,7 +473,11 @@ export default function JobsPage() {
         if (!jobFilters.state.includes(j.status)) return false;
       }
       if (jobFilters.decision && jobFilters.decision.length > 0) {
-        if (!j._safetyDecision || !jobFilters.decision.includes(j._safetyDecision)) return false;
+        if (
+          !j._safetyDecision ||
+          !jobFilters.decision.includes(j._safetyDecision)
+        )
+          return false;
       }
       // Agent ID filter — case-insensitive substring match against the
       // submitting agent identity. Surfaces the chat-assistant copilot
@@ -512,11 +529,22 @@ export default function JobsPage() {
             new Date(b.updatedAt ?? 0).getTime();
           break;
       }
+      if (cmp === 0) {
+        cmp = a.id.localeCompare(b.id);
+      }
       return sortDir === "asc" ? cmp : -cmp;
     });
 
     return result;
-  }, [enrichedJobs, activeTab, safetyFilter, search, sortKey, sortDir]);
+  }, [
+    enrichedJobs,
+    activeTab,
+    safetyFilter,
+    search,
+    jobFilters,
+    sortKey,
+    sortDir,
+  ]);
 
   // Pagination — clamp page if filtered set shrinks
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
@@ -697,12 +725,18 @@ export default function JobsPage() {
           icon={<ListChecks className="w-5 h-5" />}
           title="No jobs found"
           description={
-            search || activeTab !== "all" || safetyFilter !== "all" || Object.keys(jobFilters).length > 0
+            search ||
+            activeTab !== "all" ||
+            safetyFilter !== "all" ||
+            Object.keys(jobFilters).length > 0
               ? "Try adjusting your search or filters"
               : "No jobs have been submitted yet"
           }
           action={
-            search || activeTab !== "all" || safetyFilter !== "all" || Object.keys(jobFilters).length > 0 ? (
+            search ||
+            activeTab !== "all" ||
+            safetyFilter !== "all" ||
+            Object.keys(jobFilters).length > 0 ? (
               <Button
                 variant="ghost"
                 size="sm"
@@ -801,7 +835,11 @@ export default function JobsPage() {
                   <th className="px-5 py-3"></th>
                 </tr>
               </thead>
-              <motion.tbody initial="hidden" animate="visible" variants={tableBodyVariants}>
+              <motion.tbody
+                initial="hidden"
+                animate="visible"
+                variants={tableBodyVariants}
+              >
                 {paginatedJobs.map((job) => (
                   <motion.tr
                     key={job.id}
@@ -818,10 +856,7 @@ export default function JobsPage() {
                         {job.status}
                       </StatusBadge>
                       {job.labels?.safety_bypassed === "true" && (
-                        <StatusBadge
-                          variant="warning"
-                          className="ml-1.5"
-                        >
+                        <StatusBadge variant="warning" className="ml-1.5">
                           Bypassed
                         </StatusBadge>
                       )}

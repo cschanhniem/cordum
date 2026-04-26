@@ -141,8 +141,10 @@ export function JobFiltersBar({
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Parse from URL
-  const stateFilter = (searchParams.get("state")?.split(",").filter(Boolean) ?? []) as JobStatus[];
-  const decisionFilter = searchParams.get("decision")?.split(",").filter(Boolean) ?? [];
+  const stateFilter = (searchParams.get("state")?.split(",").filter(Boolean) ??
+    []) as JobStatus[];
+  const decisionFilter =
+    searchParams.get("decision")?.split(",").filter(Boolean) ?? [];
   const topicFilter = searchParams.get("topic") ?? "";
   const poolFilter = searchParams.get("pool") ?? "";
   const timeRangeFilter = searchParams.get("timeRange") ?? "";
@@ -164,20 +166,46 @@ export function JobFiltersBar({
   // Re-sync local inputs when URL changes externally (back/forward
   // navigation, deep links). Without this, the local debounced state can
   // drift from the URL state and silently restore stale filters.
-  useEffect(() => { setTopicLocal(topicFilter); }, [topicFilter]);
-  useEffect(() => { setPoolLocal(poolFilter); }, [poolFilter]);
-  useEffect(() => { setTenantLocal(tenantFilter); }, [tenantFilter]);
-  useEffect(() => { setSessionIdLocal(sessionIdFilter); }, [sessionIdFilter]);
-  useEffect(() => { setRunIdLocal(runIdFilter); }, [runIdFilter]);
-  useEffect(() => { setAgentIdLocal(agentIdFilter); }, [agentIdFilter]);
+  useEffect(() => {
+    setTopicLocal(topicFilter);
+  }, [topicFilter]);
+  useEffect(() => {
+    setPoolLocal(poolFilter);
+  }, [poolFilter]);
+  useEffect(() => {
+    setTenantLocal(tenantFilter);
+  }, [tenantFilter]);
+  useEffect(() => {
+    setSessionIdLocal(sessionIdFilter);
+  }, [sessionIdFilter]);
+  useEffect(() => {
+    setRunIdLocal(runIdFilter);
+  }, [runIdFilter]);
+  useEffect(() => {
+    setAgentIdLocal(agentIdFilter);
+  }, [agentIdFilter]);
 
-  const [showCustomRange, setShowCustomRange] = useState(timeRangeFilter === "custom");
-  const topicTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const poolTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const tenantTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const sessionIdTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const runIdTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const agentIdTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const [showCustomRange, setShowCustomRange] = useState(
+    timeRangeFilter === "custom",
+  );
+  const topicTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
+  const poolTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
+  const tenantTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
+  const sessionIdTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
+  const runIdTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
+  const agentIdTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
 
   // Clear pending debounce timers on unmount
   useEffect(() => {
@@ -238,7 +266,19 @@ export function JobFiltersBar({
       runId: runIdFilter || undefined,
       agentId: agentIdFilter || undefined,
     });
-  }, [stateFilter.join(","), decisionFilter.join(","), topicFilter, poolFilter, timeRangeFilter, updatedAfterFilter, updatedBeforeFilter, tenantFilter, sessionIdFilter, runIdFilter, agentIdFilter]);
+  }, [
+    stateFilter.join(","),
+    decisionFilter.join(","),
+    topicFilter,
+    poolFilter,
+    timeRangeFilter,
+    updatedAfterFilter,
+    updatedBeforeFilter,
+    tenantFilter,
+    sessionIdFilter,
+    runIdFilter,
+    agentIdFilter,
+  ]);
 
   // Handlers
   const handleStateChange = useCallback(
@@ -286,7 +326,10 @@ export function JobFiltersBar({
       const val = e.target.value;
       setSessionIdLocal(val);
       clearTimeout(sessionIdTimer.current);
-      sessionIdTimer.current = setTimeout(() => setFilters({ sessionId: val }), 400);
+      sessionIdTimer.current = setTimeout(
+        () => setFilters({ sessionId: val }),
+        400,
+      );
     },
     [setFilters],
   );
@@ -306,7 +349,10 @@ export function JobFiltersBar({
       const val = e.target.value;
       setAgentIdLocal(val);
       clearTimeout(agentIdTimer.current);
-      agentIdTimer.current = setTimeout(() => setFilters({ agentId: val }), 400);
+      agentIdTimer.current = setTimeout(
+        () => setFilters({ agentId: val }),
+        400,
+      );
     },
     [setFilters],
   );
@@ -492,7 +538,9 @@ export function JobFiltersBar({
       {/* Active count + clear */}
       {activeCount > 0 && (
         <>
-          <Badge variant="info">{activeCount} filter{activeCount !== 1 ? "s" : ""}</Badge>
+          <Badge variant="info">
+            {activeCount} filter{activeCount !== 1 ? "s" : ""}
+          </Badge>
           <Button variant="ghost" size="sm" onClick={clearAll}>
             Clear all
           </Button>
@@ -501,4 +549,3 @@ export function JobFiltersBar({
     </div>
   );
 }
-
