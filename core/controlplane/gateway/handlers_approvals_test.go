@@ -64,7 +64,7 @@ func setupApprovalJobWithHash(t *testing.T, s *server, jobID, tenant string) {
 	// Recompute the hash from the stored request so it matches at approve time.
 	jobReq, err := s.jobStore.GetJobRequest(ctx, jobID)
 	require.NoError(t, err)
-	hash, err := scheduler.HashJobRequest(jobReq)
+	hash, err := reqhash.Hash(jobReq)
 	require.NoError(t, err)
 	sd.JobHash = hash
 	require.NoError(t, s.jobStore.SetSafetyDecision(ctx, jobID, sd))
@@ -227,7 +227,7 @@ func TestApproveWorkflowGateByTopicWithoutGateLabel(t *testing.T) {
 	require.NoError(t, s.jobStore.SetJobRequest(ctx, jobReq))
 	require.NoError(t, s.jobStore.SetState(ctx, jobID, model.JobStateApproval))
 	require.NoError(t, s.jobStore.SetTenant(ctx, jobID, "default"))
-	hash, err := scheduler.HashJobRequest(jobReq)
+	hash, err := reqhash.Hash(jobReq)
 	require.NoError(t, err)
 	require.NoError(t, s.jobStore.SetSafetyDecision(ctx, jobID, model.SafetyDecisionRecord{
 		Decision:         model.SafetyRequireApproval,

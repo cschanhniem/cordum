@@ -9,9 +9,9 @@ import (
 	"testing"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
-	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/cordum/cordum/core/protocol/reqhash"
 	"github.com/google/uuid"
 )
 
@@ -39,7 +39,7 @@ func seedApprovalJob(t *testing.T, s *server, submittedBy string) string {
 			t.Fatalf("set submitted_by: %v", err)
 		}
 	}
-	hash, err := scheduler.HashJobRequest(req)
+	hash, err := reqhash.Hash(req)
 	if err != nil {
 		t.Fatalf("hash job: %v", err)
 	}
