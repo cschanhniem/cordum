@@ -323,6 +323,7 @@ Other useful contributor commands:
 | `make build SERVICE=cordumctl` | Build a single service. |
 | `make test` | Run the full Go test suite. |
 | `make smoke` | Quick post-deploy smoke against a running stack. |
+| `go test -tags=eval ./tests/eval/...` | Run the LLM-chat tool-call eval harness against `EVAL_VLLM_URL`. See [`docs/llmchat/model-version-bump.md`](docs/llmchat/model-version-bump.md) before bumping `qwenInference.model`. |
 
 ## Key Features
 

@@ -49,6 +49,7 @@ This is a code-level gate; Compose / Helm feature flags only control resource pr
 - **Default policy bundle**: see [`policy-bundle-default.md`](policy-bundle-default.md) for how to import / widen / narrow `config/llmchat/policy-default.yaml`.
 - **Hardware tiers**: see [`hardware-tiers.md`](hardware-tiers.md) for the H100 / RTX 5090 (preview) / A100 matrix.
 - **Helm + Docker Compose**: see [`helm.md`](helm.md) for deployment.
+- **Tool-call eval harness**: see [`model-version-bump.md`](model-version-bump.md) for the model-bump protocol and [`../../tests/eval/cases/SCHEMA.md`](../../tests/eval/cases/SCHEMA.md) for the YAML golden-case format. The harness lives under `tests/eval/` (build tag `eval`) and runs against any vLLM endpoint via `EVAL_VLLM_URL`.
 - **Troubleshooting**: see [`troubleshooting.md`](troubleshooting.md). The `!!!!!!!!` infinite-stream entry is the most-Googled failure mode for this model.
 
 The full design is captured in `C:/Users/yaron/.claude/plans/ok-cordum-have-mcp-moonlit-meerkat.md`.
