@@ -1,0 +1,84 @@
+name: vllm-config-lint
+
+# Hard gate against vLLM configuration drift in docker-compose +
+# Helm chart. Fails the PR build when any of the rules encoded in
+# tools/scripts/vllm_config_lint.sh or vllm_helm_lint.sh are violated.
+#
+# Phase-7 originally shipped with `--tool-call-parser hermes` (wrong
+# parser, produces malformed tool-call deltas) + missing
+# `--kv-cache-dtype fp8` (memory-budget bust on H100). This gate
+# exists to make that class of bug impossible to re-introduce.
+#
+# Branch-protection promotion to required check is a follow-up after
+# 7 successful runs (per task-d8000ffb Phase 8 step (e)).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docker-compose.yml'
+      - 'docker-compose.release.yml'
+      - 'docker-compose.dev.yml'
+      - 'cordum-helm/**'
+      - 'tools/scripts/vllm_*.sh'
+      - '.github/workflows/vllm-config-lint.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'docker-compose.yml'
+      - 'docker-compose.release.yml'
+      - 'docker-compose.dev.yml'
+      - 'cordum-helm/**'
+      - 'tools/scripts/vllm_*.sh'
+      - '.github/workflows/vllm-config-lint.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vllm-config-lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  vllm-config-lint:
+    name: vllm-config-lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.20.1
+
+      - name: Install yq
+        run: |
+          # mikefarah/yq v4 — Go-based, single binary, ~3MB.
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+
+      - name: Run negative-case test driver
+        # Confirms the lint correctly rejects each known bad pattern.
+        # Builds tiny fixture composes with each violation injected.
+        run: bash tools/scripts/vllm_config_lint_test.sh
+
+      - name: Lint docker-compose.yml + docker-compose.release.yml
+        run: bash tools/scripts/vllm_config_lint.sh
+
+      - name: Lint Helm chart (default values)
+        run: bash tools/scripts/vllm_helm_lint.sh
+
+      - name: Lint Helm chart (Tier-2 AWQ values)
+        env:
+          CORDUM_LLMCHAT_TIER: '2'
+        # Tier 2 expects QuantTrio/...-AWQ; this run will fail unless
+        # the operator has overridden values.qwenInference.model.
+        # Until a Tier-2 values fixture lands, this step soft-skips
+        # via continue-on-error: true so the workflow stays green.
+        # Promote to hard-fail once test-values/llmchat-tier2.yaml ships.
+        continue-on-error: true
+        run: bash tools/scripts/vllm_helm_lint.sh
