@@ -181,10 +181,14 @@ Each probe section follows this template:
 2. Drive chat query that maps to a pii-classified tool.
 3. Capture MCP error + audit row classification field.
 
-**Actual:** _tbd_
-**Verdict:** _tbd_
-**Evidence:** _tbd_
-**P0/P1 task filed:** _tbd_
+**Actual (worker-e2a9, 2026-04-26T17:30Z):** BLOCKED on mock-LLM + F8.
+- The chat-assistant agent record from `/api/v1/agents` does NOT include a `data_classifications` field in the JSON response (only id/name/description/owner/team/risk_tier/allowed_tools shown). The classification metadata may be set elsewhere (CAP scope) — needs separate verification.
+- Driving a chat query that maps to a pii-classified tool requires real LLM (mock blocks).
+- Audit row capture blocked by F8.
+
+**Verdict:** BLOCKED on mock-LLM + F8 + classification metadata not surfaced in /api/v1/agents response.
+**Evidence:** Agent JSON shape verified — no `data_classifications` key.
+**P0/P1 task filed:** F8 (P0); P2 follow-up to surface DataClassifications in /api/v1/agents API response.
 
 ---
 
@@ -198,10 +202,13 @@ Each probe section follows this template:
 4. Reuse token on a write endpoint; expect 401 + `reason=delegation_revoked`.
 5. **Adversarial extension (per step-10 self-review):** restart Redis after step 3, repeat step 4 — confirm revocation persists.
 
-**Actual:** _tbd_
-**Verdict:** _tbd_
-**Evidence:** _tbd_
-**P0/P1 task filed:** _tbd_
+**Actual (worker-e2a9, 2026-04-26T17:30Z):** PARTIAL PASS by code-path verification, runtime BLOCKED.
+- Static evidence: revocation API at `core/auth/delegation/revocation.go:47` `(s *RedisRevocationStore) Revoke(ctx, jti, expiresAt)`. Redis key pattern `delegation:revoked:{jti}` confirmed at `revocation.go:14, 84`.
+- Runtime tests blocked: (i) Redis TLS client access from container fails with `Invalid CA Certificate File/Directory` (TLS cert path mismatch); (ii) opening + closing a chat session requires a WS client tied to the dashboard's session_id flow (out of scope without a browser/JS client); (iii) adversarial Redis restart in shared dev stack would disrupt other workers.
+
+**Verdict:** PARTIAL PASS (static); runtime BLOCKED on env (Redis TLS) + shared-stack risk.
+**Evidence:** Code refs above.
+**P0/P1 task filed:** P2 doc — Redis TLS client path inside cordum-redis-1 needs operator-runbook clarity (the TLS files are referenced but the in-container path mapping is broken in this dev env).
 
 ---
 
@@ -215,10 +222,14 @@ Each probe section follows this template:
 4. Assert tenant-B response does NOT contain job-A.
 5. **Adversarial extension:** repeat with concurrent submit + list to test race.
 
-**Actual:** _tbd_
-**Verdict:** _tbd_
-**Evidence:** _tbd_
-**P0/P1 task filed:** _tbd_
+**Actual (worker-e2a9, 2026-04-26T17:30Z):** BLOCKED on mock-LLM + tenant-fixture absence.
+- `cordumctl tenant` subcommand existence not verified (likely via `cordumctl users` or organizations API). Step-7 plan assumed CLI shape; needs CLI inventory like F1.
+- Driving "list jobs" via chat requires real LLM emitting `cordum_list_jobs` (mock blocks).
+- The tenant-scoping code path itself is verified by gateway middleware at `core/controlplane/gateway/gateway.go:1498-1509` (tenant route prefixes including `/api/v1/jobs`); MCP scope filter for tenant likely at `core/mcp/registry.go` near the existing scope-filter call.
+
+**Verdict:** BLOCKED on mock-LLM + tenant-CLI inventory gap.
+**Evidence:** Tenant route prefixes confirmed in gateway.
+**P0/P1 task filed:** Mock-LLM follow-up (P2); audit cordumctl for `tenant` subcommand existence (P2 doc).
 
 ---
 
