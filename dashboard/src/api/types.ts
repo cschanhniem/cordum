@@ -220,83 +220,8 @@ export interface Job {
   approvalDecision?: "approve" | "reject" | "expire" | "invalidate" | "repair";
 }
 
-// ---------------------------------------------------------------------------
-// ErrorCode enum (matches CAP v2.5.2 protobuf ErrorCode)
-// ---------------------------------------------------------------------------
 
-export enum ErrorCode {
-  UNSPECIFIED = 0,
-  // Protocol (100-104)
-  PROTOCOL_VERSION_MISMATCH = 100,
-  PROTOCOL_INVALID_PACKET = 101,
-  PROTOCOL_SIGNATURE_INVALID = 102,
-  PROTOCOL_TIMEOUT = 103,
-  PROTOCOL_RATE_LIMITED = 104,
-  // Job (200-206)
-  JOB_NOT_FOUND = 200,
-  JOB_ALREADY_COMPLETED = 201,
-  JOB_TIMEOUT = 202,
-  JOB_CANCELLED = 203,
-  JOB_PERMISSION_DENIED = 204,
-  JOB_RESOURCE_EXHAUSTED = 205,
-  JOB_INVALID_INPUT = 206,
-  // Safety (300-302)
-  SAFETY_DENIED = 300,
-  SAFETY_POLICY_VIOLATION = 301,
-  SAFETY_OUTPUT_QUARANTINED = 302,
-  // Transport (400-402)
-  TRANSPORT_UNAVAILABLE = 400,
-  TRANSPORT_POOL_EXHAUSTED = 401,
-  TRANSPORT_DELIVERY_FAILED = 402,
-}
-
-/** Human-readable label for an ErrorCode value. */
-export function errorCodeLabel(code: number): string {
-  switch (code) {
-    case ErrorCode.PROTOCOL_VERSION_MISMATCH: return "Protocol: Version Mismatch";
-    case ErrorCode.PROTOCOL_INVALID_PACKET: return "Protocol: Invalid Packet";
-    case ErrorCode.PROTOCOL_SIGNATURE_INVALID: return "Protocol: Signature Invalid";
-    case ErrorCode.PROTOCOL_TIMEOUT: return "Protocol: Timeout";
-    case ErrorCode.PROTOCOL_RATE_LIMITED: return "Protocol: Rate Limited";
-    case ErrorCode.JOB_NOT_FOUND: return "Job: Not Found";
-    case ErrorCode.JOB_ALREADY_COMPLETED: return "Job: Already Completed";
-    case ErrorCode.JOB_TIMEOUT: return "Job: Timeout";
-    case ErrorCode.JOB_CANCELLED: return "Job: Cancelled";
-    case ErrorCode.JOB_PERMISSION_DENIED: return "Job: Permission Denied";
-    case ErrorCode.JOB_RESOURCE_EXHAUSTED: return "Job: Resource Exhausted";
-    case ErrorCode.JOB_INVALID_INPUT: return "Job: Invalid Input";
-    case ErrorCode.SAFETY_DENIED: return "Safety: Denied";
-    case ErrorCode.SAFETY_POLICY_VIOLATION: return "Safety: Policy Violation";
-    case ErrorCode.SAFETY_OUTPUT_QUARANTINED: return "Safety: Output Quarantined";
-    case ErrorCode.TRANSPORT_UNAVAILABLE: return "Transport: Unavailable";
-    case ErrorCode.TRANSPORT_POOL_EXHAUSTED: return "Transport: Pool Exhausted";
-    case ErrorCode.TRANSPORT_DELIVERY_FAILED: return "Transport: Delivery Failed";
-    default: return `Error ${code}`;
-  }
-}
-
-/** Category for an ErrorCode — used to pick badge color. */
-export function errorCodeCategory(code: number): "safety" | "job" | "protocol" | "transport" | "unknown" {
-  if (code >= 300 && code < 400) return "safety";
-  if (code >= 200 && code < 300) return "job";
-  if (code >= 100 && code < 200) return "protocol";
-  if (code >= 400 && code < 500) return "transport";
-  return "unknown";
-}
-
-// ---------------------------------------------------------------------------
-// AlertSeverity enum (matches CAP v2.5.2 protobuf AlertSeverity)
-// ---------------------------------------------------------------------------
-
-export enum AlertSeverity {
-  UNSPECIFIED = 0,
-  INFO = 1,
-  WARNING = 2,
-  ERROR = 3,
-  CRITICAL = 4,
-}
-
-export type JobPriority = "low" | "normal" | "high" | "critical";
+type JobPriority = "low" | "normal" | "high" | "critical";
 
 export interface RemediateJobInput {
   topic?: string;
@@ -340,7 +265,7 @@ export interface SubmitJobResponse {
 // Memory + Artifacts
 // ---------------------------------------------------------------------------
 
-export type MemoryEntryRole =
+type MemoryEntryRole =
   | "system"
   | "user"
   | "assistant"
@@ -367,7 +292,7 @@ export interface MemoryPayload {
   entries?: MemoryEntry[];
 }
 
-export interface ArtifactMetadata {
+interface ArtifactMetadata {
   content_type?: string;
   size_bytes?: number;
   retention?: string;
@@ -490,7 +415,7 @@ export interface WorkflowRun {
 // Policies
 // ---------------------------------------------------------------------------
 
-export interface McpMatchConfig {
+interface McpMatchConfig {
   allow_servers?: string[];
   deny_servers?: string[];
   allow_tools?: string[];
@@ -517,7 +442,7 @@ export interface PolicyRuleMatch {
   mcp?: McpMatchConfig;
 }
 
-export interface VelocityConfig {
+interface VelocityConfig {
   max_requests: number;
   window_seconds: number;
   key: string;
@@ -552,9 +477,9 @@ export interface PolicyRule {
   source?: Record<string, unknown>;
 }
 
-export type BundleStatus = "published" | "draft" | "archived";
+type BundleStatus = "published" | "draft" | "archived";
 
-export interface BundleSnapshot {
+interface BundleSnapshot {
   snapshot_id: string;
   bundle_id: string;
   note: string;
@@ -607,34 +532,12 @@ export interface PolicyBundle {
   signature?: PolicyBundleSignature;
 }
 
-export interface PolicyPublishRequest {
-  note?: string;
-  dry_run?: boolean;
-}
-
-export interface PolicyPublishResult {
-  version: number;
-  published_at: string;
-  published_by: string;
-  rule_count: number;
-  bundle_count: number;
-  diff?: {
-    added: number;
-    removed: number;
-    modified: number;
-  };
-}
-
-export interface PolicyRollbackRequest {
-  target_version: number;
-  note?: string;
-}
 
 // ---------------------------------------------------------------------------
 // Policy Replay
 // ---------------------------------------------------------------------------
 
-export interface PolicyReplayFilter {
+interface PolicyReplayFilter {
   tenant?: string;
   topic_pattern?: string;
   original_decision?: string;
@@ -650,6 +553,7 @@ export interface PolicyReplayRequest {
   max_jobs?: number;
 }
 
+// KEEP(ts-unused-exports): imported by ReplayPage tests; test paths are intentionally excluded from the report.
 export interface PolicyReplaySummary {
   total_jobs: number;
   evaluated: number;
@@ -659,12 +563,14 @@ export interface PolicyReplaySummary {
   errored: number;
 }
 
+// KEEP(ts-unused-exports): imported by pages/govern/ReplayPage via @/api/types; path alias is a known false-positive for this tool.
 export interface PolicyReplayRuleHit {
   rule_id: string;
   decision: string;
   count: number;
 }
 
+// KEEP(ts-unused-exports): imported by pages/govern/ReplayPage via @/api/types; path alias is a known false-positive for this tool.
 export interface PolicyReplayChange {
   job_id: string;
   topic: string;
@@ -676,7 +582,7 @@ export interface PolicyReplayChange {
   direction: "escalated" | "relaxed" | "unchanged";
 }
 
-export interface PolicyReplayTimeRange {
+interface PolicyReplayTimeRange {
   from: string;
   to: string;
 }
@@ -702,6 +608,7 @@ export interface PolicyAnalyticsRequest {
   rule_filter?: string;
 }
 
+// KEEP(ts-unused-exports): imported by pages/govern/PolicyAnalyticsPage via @/api/types; path alias is a known false-positive for this tool.
 export interface RuleAnalytics {
   rule_id: string;
   hit_count: number;
@@ -712,7 +619,7 @@ export interface RuleAnalytics {
   daily_hits: number[];
 }
 
-export interface PolicyAnalyticsSummary {
+interface PolicyAnalyticsSummary {
   total_rules: number;
   total_hits: number;
   total_overrides: number;
@@ -791,6 +698,7 @@ export interface Worker {
  * WorkerSessionState mirrors the scheduler TrustReason* constants.
  * Surfaced on /api/v1/workers for dashboards + external consumers.
  */
+// KEEP(ts-unused-exports): imported by components/agents/WorkerSessionBadge via @/api/types; path alias is a known false-positive for this tool.
 export type WorkerSessionState =
   | "valid"
   | "no_session"
@@ -812,6 +720,7 @@ export interface Pool {
 // Topics
 // ---------------------------------------------------------------------------
 
+// KEEP(ts-unused-exports): imported by pages/TopicsPage via @/api/types; path alias is a known false-positive for this tool.
 export interface TopicRegistration {
   name: string;
   pool: string;
@@ -868,7 +777,7 @@ export interface AuditActor {
   role?: string;
 }
 
-export interface AuditResource {
+interface AuditResource {
   type: string;
   id: string;
   name?: string;
@@ -900,7 +809,7 @@ export interface AuditEntry {
 // DLQ
 // ---------------------------------------------------------------------------
 
-export interface RetryAttempt {
+interface RetryAttempt {
   attemptedAt: string;
   error: string;
 }
@@ -1031,6 +940,7 @@ export interface Approval {
 }
 
 // Enriched approval context types for decision-grade UX.
+// KEEP(ts-unused-exports): imported by pages/approvals/ApprovalDetailPage via @/api/types; path alias is a known false-positive for this tool.
 export interface BlastRadius {
   systems: string[];
   namespaces: string[];
@@ -1038,6 +948,7 @@ export interface BlastRadius {
   scopeDescription: string;
 }
 
+// KEEP(ts-unused-exports): imported by pages/approvals/ApprovalDetailPage via @/api/types; path alias is a known false-positive for this tool.
 export interface PriorApproval {
   jobId: string;
   topic: string;
@@ -1222,8 +1133,9 @@ export interface ResetUserPasswordPayload {
 // Licensing
 // ---------------------------------------------------------------------------
 
-export type LicensePlan = "community" | "team" | "enterprise";
-export type LicenseApprovalMode = "single" | "multi" | "custom";
+type LicensePlan = "community" | "team" | "enterprise";
+type LicenseApprovalMode = "single" | "multi" | "custom";
+// KEEP(ts-unused-exports): imported by pages/settings/LicensePage via @/api/types; path alias is a known false-positive for this tool.
 export type TelemetryMode = "off" | "local_only" | "anonymous";
 
 export interface LicenseRights {
@@ -1356,7 +1268,7 @@ export interface Environment {
 // MCP
 // ---------------------------------------------------------------------------
 
-export type McpTransport = "http" | "stdio" | "both";
+type McpTransport = "http" | "stdio" | "both";
 
 export interface McpConfig {
   enabled: boolean;
@@ -1384,7 +1296,7 @@ export interface McpResource {
   mimeType: string;
 }
 
-export interface McpPromptArgument {
+interface McpPromptArgument {
   name: string;
   description: string;
   required: boolean;
@@ -1488,64 +1400,11 @@ export interface StreamEvent {
 }
 
 // ---------------------------------------------------------------------------
-// Traces
-// ---------------------------------------------------------------------------
-
-export interface TraceSpan {
-  span_id: string;
-  parent_span_id?: string;
-  operation: string;
-  service: string;
-  start_time: string;
-  end_time?: string;
-  duration_ms?: number;
-  status: "ok" | "error" | "timeout";
-  attributes?: Record<string, unknown>;
-  safety_decision?: SafetyDecisionType;
-  error_message?: string;
-}
-
-export interface Trace {
-  trace_id: string;
-  job_id?: string;
-  agent_id?: string;
-  spans: TraceSpan[];
-  start_time: string;
-  end_time?: string;
-  total_duration_ms?: number;
-  service_count?: number;
-}
-
-// ---------------------------------------------------------------------------
-// Agent Registry
-// ---------------------------------------------------------------------------
-
-export interface AgentRegistryEntry {
-  agent_id: string;
-  name?: string;
-  total_jobs: number;
-  safety_breakdown: {
-    allow: number;
-    deny: number;
-    require_approval: number;
-    allow_with_constraints: number;
-    throttle: number;
-  };
-  active_policy_bindings?: string[];
-  last_activity?: string;
-  metadata?: Record<string, unknown>;
-}
-
-// ---------------------------------------------------------------------------
-// Setup Wizard
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
 // Governance health — Command Center composite score.
 // Matches core/governance.HealthScore / HealthFactor on the wire.
 // ---------------------------------------------------------------------------
 
-export type GovernanceGrade = "A" | "B" | "C" | "D" | "F";
+type GovernanceGrade = "A" | "B" | "C" | "D" | "F";
 
 export interface GovernanceHealthFactor {
   score: number;
@@ -1679,16 +1538,6 @@ export interface MCPOutboundResponse {
   truncated_at_max: boolean;
 }
 
-export interface SetupStatus {
-  setup_complete: boolean;
-  steps: {
-    admin_created: boolean;
-    api_key_configured: boolean;
-    safety_kernel_connected: boolean;
-    first_agent_registered: boolean;
-    first_job_submitted: boolean;
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Delegations
@@ -1748,16 +1597,6 @@ export interface EvalDataset {
   createdBy?: string;
 }
 
-export interface EvalEntry {
-  id: string;
-  input: Record<string, unknown>;
-  expectedDecision: SafetyDecisionType;
-  ruleId?: string;
-  metadata?: Record<string, unknown>;
-  source: string;
-  sourceRef?: string;
-  notes?: string;
-}
 
 export type EvalRunStatus = "pass" | "fail" | "regression" | "error";
 
@@ -1821,9 +1660,9 @@ export interface ExtractIncidentsPreview {
 // Copilot Sessions
 // ---------------------------------------------------------------------------
 
-export type CopilotMessageRole = "user" | "assistant" | "system";
+type CopilotMessageRole = "user" | "assistant" | "system";
 
-export interface CopilotMessage {
+interface CopilotMessage {
   id: string;
   role: CopilotMessageRole;
   content: string;
@@ -1831,7 +1670,7 @@ export interface CopilotMessage {
   jobIds?: string[]; // IDs of jobs spawned by this message/turn
 }
 
-export interface CopilotSession {
+interface CopilotSession {
   id: string;
   title?: string;
   userId: string;

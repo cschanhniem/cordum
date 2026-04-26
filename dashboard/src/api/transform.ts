@@ -1818,6 +1818,7 @@ export function mapEvalDataset(raw: BackendEvalDataset): EvalDataset {
 }
 
 
+// KEEP(ts-unused-exports): used by transform.test.ts; that path is intentionally excluded from the report.
 export function mapEvalEntryResult(raw: BackendEvalEntryResult): EvalEntryResult {
   const expected = normalizeSafetyDecisionType(raw.expected_decision);
   const actualRaw = typeof raw.actual_decision === "string" ? raw.actual_decision.toLowerCase() : "";
