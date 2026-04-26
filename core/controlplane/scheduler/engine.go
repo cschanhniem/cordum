@@ -2128,12 +2128,15 @@ func (e *Engine) checkSafetyDecision(ctx context.Context, req *pb.JobRequest) (S
 				existingHash = prev.JobHash
 			}
 		}
-		// Preserve the JobHash computed at gateway submit time — overwriting with
-		// the post-mutation hash here would cause the reconciler to classify this
-		// approval as invalidate_stale_request. See task-035cdc8e / commit 297937c7.
+		// Preserve the JobHash computed over the persisted submit-time request.
+		// The scheduler mutates the in-memory request after SetJobRequest
+		// (effective config env, workflow execution hints, constraints). The
+		// approval reconciler later re-hashes the persisted request, so approval
+		// admission must store the same canonical hash or fresh approvals are
+		// auto-invalidated as stale_request.
 		if existingHash != "" {
 			record.JobHash = existingHash
-		} else if hash, err := HashJobRequest(req); err == nil {
+		} else if hash, err := e.hashPersistedApprovalRequest(ctx, jobID, req); err == nil {
 			record.JobHash = hash
 		} else {
 			slog.Error("job hash failed", "job_id", jobID, "error", err)
@@ -2148,6 +2151,26 @@ func (e *Engine) checkSafetyDecision(ctx context.Context, req *pb.JobRequest) (S
 		e.appendDecisionLog(req, record)
 	}
 	return record, err
+}
+
+func (e *Engine) hashPersistedApprovalRequest(ctx context.Context, jobID string, req *pb.JobRequest) (string, error) {
+	if e != nil && e.jobStore != nil {
+		if store, ok := e.jobStore.(interface {
+			GetJobRequest(context.Context, string) (*pb.JobRequest, error)
+		}); ok {
+			stored, err := store.GetJobRequest(ctx, jobID)
+			if err == nil && stored != nil {
+				return HashJobRequest(stored)
+			}
+			if err != nil && !errors.Is(err, redis.Nil) {
+				slog.Warn("approval hash: persisted request unavailable, falling back to in-memory request",
+					"job_id", jobID,
+					"error", err,
+				)
+			}
+		}
+	}
+	return HashJobRequest(req)
 }
 
 func (e *Engine) appendDecisionLog(req *pb.JobRequest, record SafetyDecisionRecord) {

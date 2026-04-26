@@ -14,8 +14,9 @@ const { hookState, approveMutation, rejectMutation } = vi.hoisted(() => {
     data?: McpApproval[];
     isLoading: boolean;
     error: Error | null;
+    isMcpDisabled: boolean;
   };
-  const state: State = { data: undefined, isLoading: false, error: null };
+  const state: State = { data: undefined, isLoading: false, error: null, isMcpDisabled: false };
   const approveMutation = { mutate: vi.fn(), isPending: false };
   const rejectMutation = { mutate: vi.fn(), isPending: false };
   return { hookState: state, approveMutation, rejectMutation };
@@ -31,6 +32,7 @@ vi.mock("../../hooks/useMcpApprovals", async () => {
       data: hookState.data,
       isLoading: hookState.isLoading,
       error: hookState.error,
+      isMcpDisabled: hookState.isMcpDisabled,
     }),
     useMcpApproval: () => ({
       data: hookState.data?.[0],
@@ -80,6 +82,7 @@ describe("McpApprovalsSection", () => {
     hookState.data = undefined;
     hookState.isLoading = false;
     hookState.error = null;
+    hookState.isMcpDisabled = false;
     approveMutation.mutate.mockClear();
     rejectMutation.mutate.mockClear();
     approveMutation.isPending = false;
@@ -97,6 +100,14 @@ describe("McpApprovalsSection", () => {
     hookState.error = new Error("boom");
     const { container, root } = render(<McpApprovalsSection />);
     expect(container.querySelector('[data-testid="mcp-approvals-error"]')).not.toBeNull();
+    cleanup({ container, root });
+  });
+
+  it("renders a neutral disabled state when MCP approvals are not configured", () => {
+    hookState.isMcpDisabled = true;
+    const { container, root } = render(<McpApprovalsSection />);
+    expect(container.querySelector('[data-testid="mcp-approvals-disabled"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="mcp-approvals-error"]')).toBeNull();
     cleanup({ container, root });
   });
 

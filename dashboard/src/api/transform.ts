@@ -965,6 +965,22 @@ export function deriveApprovalStatus(
   explicitDecision?: string,
 ): ApprovalStatus {
   const normalizedExplicit = (explicitStatus || "").trim().toLowerCase();
+  const d = (explicitDecision || decision || "").toLowerCase();
+  const s = (jobState || "").toLowerCase();
+  // A previously persisted pending approval can become non-actionable if the
+  // job has already left APPROVAL_REQUIRED (for example via scheduler timeout
+  // or repair invalidation). Do not let stale explicit pending metadata mask a
+  // terminal job/decision; otherwise the dashboard renders an Approve button
+  // that the API correctly rejects as "no longer actionable".
+  if (normalizedExplicit === "pending") {
+    if (d === "approve" || d === "approved") return "approved";
+    if (d === "reject" || d === "rejected" || d === "deny") return "rejected";
+    if (d === "expire" || d === "expired") return "expired";
+    if (d === "invalidate" || d === "invalidated") return "invalidated";
+    if (d === "repair" || d === "repaired") return "repaired";
+    if (s === "timeout") return "expired";
+    if (s === "denied") return "rejected";
+  }
   if (
     normalizedExplicit === "pending" ||
     normalizedExplicit === "approved" ||
@@ -975,8 +991,6 @@ export function deriveApprovalStatus(
   ) {
     return normalizedExplicit;
   }
-  const d = (explicitDecision || decision || "").toLowerCase();
-  const s = (jobState || "").toLowerCase();
   if (d === "approve" || d === "approved") return "approved";
   if (d === "reject" || d === "rejected" || d === "deny")
     return "rejected";
@@ -1002,6 +1016,9 @@ export function deriveApprovalActionability(
   status: ApprovalStatus,
 ): ApprovalActionability {
   const normalizedExplicit = (explicitActionability || "").trim().toLowerCase();
+  if (normalizedExplicit === "actionable" && status !== "pending") {
+    return deriveApprovalActionability(undefined, status);
+  }
   if (
     normalizedExplicit === "actionable" ||
     normalizedExplicit === "resolved" ||
@@ -1110,8 +1127,8 @@ export function mapApprovalItem(item: BackendApprovalItem): Approval | null {
     actionability,
     revision: item.approval_revision,
     approvalDecision: item.approval_decision,
-    approval_status: item.approval_status ?? status,
-    approval_actionability: item.approval_actionability ?? actionability,
+    approval_status: status,
+    approval_actionability: actionability,
     approval_revision: item.approval_revision,
     approval_decision: item.approval_decision,
     blastRadius: item.blast_radius
@@ -1950,4 +1967,3 @@ export function mapDelegationListResponse(
     nextCursor: raw.next_cursor ?? raw.nextCursor ?? undefined,
   };
 }
-

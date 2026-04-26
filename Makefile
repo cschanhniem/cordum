@@ -5,7 +5,7 @@ PROTO_FILES = api.proto context.proto output_policy.proto
 OPENAPI_OUT = docs/api/openapi
 
 BIN_DIR ?= bin
-SERVICES = cordum-api-gateway cordum-scheduler cordum-safety-kernel cordum-workflow-engine cordum-context-engine cordum-mcp cordumctl
+SERVICES = cordum-api-gateway cordum-scheduler cordum-safety-kernel cordum-workflow-engine cordum-context-engine cordum-mcp cordum-llm-chat cordumctl
 
 VERSION ?= dev
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")

@@ -10,6 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { get, post, ApiError } from "../api/client";
 import { logger } from "../lib/logger";
 import { useToastStore } from "../state/toast";
+import { useMcpConfig } from "./useSettings";
 
 // MCP approval lifecycle status — matches core/model ApprovalStatus.
 export type McpApprovalStatus =
@@ -40,8 +41,8 @@ export interface McpApproval {
   args?: unknown;
 }
 
-const mcpApprovalsQueryKey = (status?: string) =>
-  ["mcp-approvals", status ?? "all"] as const;
+const mcpApprovalsQueryKey = (status?: string, runtimeSupported = true, transport = "http") =>
+  ["mcp-approvals", status ?? "all", { runtimeSupported, transport }] as const;
 
 // useMcpApprovals polls the list endpoint. 5-second interval matches
 // useApprovals so the two feeds stay visually in sync on the page.
@@ -49,17 +50,42 @@ const mcpApprovalsQueryKey = (status?: string) =>
 // tab stops polling — the original cadence burned battery and API
 // quota on tabs the operator was not actively watching.
 export function useMcpApprovals(status?: McpApprovalStatus) {
-  return useQuery<McpApproval[]>({
-    queryKey: mcpApprovalsQueryKey(status),
+  const { data: mcpConfig, isLoading: isMcpConfigLoading } = useMcpConfig();
+  const transport = String(mcpConfig?.transport ?? "http").toLowerCase();
+  const runtimeSupported =
+    Boolean(mcpConfig?.enabled) && (transport === "http" || transport === "both");
+  const runtimeDisabled = !isMcpConfigLoading && !runtimeSupported;
+
+  const query = useQuery<McpApproval[]>({
+    queryKey: mcpApprovalsQueryKey(status, runtimeSupported, transport),
+    enabled: !isMcpConfigLoading && runtimeSupported,
     queryFn: async () => {
-      const qs = status ? `?status=${encodeURIComponent(status)}` : "";
-      const res = await get<{ items?: McpApproval[] }>(`/mcp/approvals${qs}`);
-      return res.items ?? [];
+      try {
+        const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+        const res = await get<{ items?: McpApproval[] }>(`/mcp/approvals${qs}`);
+        return res.items ?? [];
+      } catch (err) {
+        if (isMcpApprovalsUnavailable(err)) {
+          logger.info("mcp-approvals", "runtime unavailable; treating queue as disabled", {
+            status: err.status,
+            code: apiErrorCode(err.body),
+          });
+          return [];
+        }
+        throw err;
+      }
     },
     staleTime: 5_000,
-    refetchInterval: 5_000,
+    refetchInterval: runtimeSupported ? 5_000 : false,
     refetchIntervalInBackground: false,
   });
+
+  return {
+    ...query,
+    data: query.data ?? [],
+    isLoading: isMcpConfigLoading || query.isLoading,
+    isMcpDisabled: runtimeDisabled,
+  };
 }
 
 // useMcpApproval fetches a single record — used by the args-review
@@ -136,12 +162,24 @@ export function useRejectMcp() {
 // errorCode safely pulls the `code` field from an ApiError body without
 // trusting the shape. Gateway errors always carry {error, code, status};
 // misbehaving servers may not — return "" when absent.
-function errorCode(body: unknown): string {
+function apiErrorCode(body: unknown): string {
   if (body && typeof body === "object" && "code" in body) {
     const c = (body as Record<string, unknown>).code;
     if (typeof c === "string") return c;
   }
   return "";
+}
+
+function errorCode(body: unknown): string {
+  return apiErrorCode(body);
+}
+
+export function isMcpApprovalsUnavailable(err: unknown): err is ApiError {
+  return (
+    err instanceof ApiError &&
+    err.status === 503 &&
+    apiErrorCode(err.body) === "mcp_approvals_unavailable"
+  );
 }
 
 // Shortened args hash for tabular display — 8-char prefix is enough

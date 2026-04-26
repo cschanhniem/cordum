@@ -519,6 +519,35 @@ func TestRedisJobStoreSeedsExplicitApprovalLifecycle(t *testing.T) {
 	}
 }
 
+func TestNormalizeApprovalRecordExpiresStalePendingTimeout(t *testing.T) {
+	safety := model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
+		ApprovalRequired: true,
+		ApprovalRef:      "approval-timeout",
+		JobHash:          "hash-timeout",
+		ApprovalRevision: 1,
+	}
+	record := ApprovalRecord{
+		Status:        model.ApprovalStatusPending,
+		Actionability: model.ApprovalActionabilityActionable,
+		Revision:      1,
+	}
+
+	normalized := NormalizeApprovalRecord(model.JobStateTimeout, safety, record)
+	if normalized.Status != model.ApprovalStatusExpired {
+		t.Fatalf("expected timed-out pending approval to normalize to expired, got %q", normalized.Status)
+	}
+	if normalized.Actionability != model.ApprovalActionabilityExpired {
+		t.Fatalf("expected timed-out pending approval to be non-actionable expired, got %q", normalized.Actionability)
+	}
+	if normalized.Decision != model.ApprovalDecisionExpire {
+		t.Fatalf("expected timed-out pending approval decision to normalize to expire, got %q", normalized.Decision)
+	}
+	if normalized.Revision != 1 {
+		t.Fatalf("expected revision to be preserved, got %d", normalized.Revision)
+	}
+}
+
 func TestRedisJobStoreResolveApprovalAtomically(t *testing.T) {
 	srv, err := miniredis.Run()
 	if err != nil {
@@ -2002,9 +2031,9 @@ func TestParseJobEvent(t *testing.T) {
 			wantOK: true, wantTS: 1700000000, wantSt: "PENDING",
 		},
 		{
-			name:    "valid JSON with context",
-			raw:     `{"ts":1700000001,"state":"SCHEDULED","ctx":{"rule":"r1","eval_ms":42}}`,
-			wantOK:  true, wantTS: 1700000001, wantSt: "SCHEDULED",
+			name:   "valid JSON with context",
+			raw:    `{"ts":1700000001,"state":"SCHEDULED","ctx":{"rule":"r1","eval_ms":42}}`,
+			wantOK: true, wantTS: 1700000001, wantSt: "SCHEDULED",
 			wantCtx: true,
 		},
 		{
@@ -2074,12 +2103,12 @@ func TestSetStateWithContext_RoundTrip(t *testing.T) {
 
 	// Set initial state with rich context
 	evtCtx := &model.StateEventContext{
-		Rule:   "safety-rule-1",
-		Reason: "PII detected",
-		EvalMs: 42,
+		Rule:     "safety-rule-1",
+		Reason:   "PII detected",
+		EvalMs:   42,
 		EvalPath: []string{"input_scan", "pii_check"},
-		Topic:  "job.default",
-		Extra:  map[string]string{"custom": "value"},
+		Topic:    "job.default",
+		Extra:    map[string]string{"custom": "value"},
 	}
 	if err := store.SetStateWithContext(ctx, jobID, model.JobStatePending, evtCtx); err != nil {
 		t.Fatalf("SetStateWithContext: %v", err)

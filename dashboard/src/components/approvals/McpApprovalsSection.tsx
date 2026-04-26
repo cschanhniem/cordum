@@ -10,7 +10,7 @@ interface Props {
 }
 
 export function McpApprovalsSection({ statusFilter = "pending" }: Props) {
-  const { data, isLoading, error } = useMcpApprovals(statusFilter);
+  const { data, isLoading, error, isMcpDisabled } = useMcpApprovals(statusFilter);
 
   return (
     <section
@@ -31,17 +31,22 @@ export function McpApprovalsSection({ statusFilter = "pending" }: Props) {
           Loading MCP approvals…
         </div>
       )}
-      {error && (
+      {isMcpDisabled && (
+        <div className="text-sm text-gray-500" data-testid="mcp-approvals-disabled">
+          MCP approval runtime is disabled. No MCP tool calls are waiting for review.
+        </div>
+      )}
+      {!isMcpDisabled && error && (
         <div className="text-sm text-red-600" data-testid="mcp-approvals-error">
           Failed to load MCP approvals.
         </div>
       )}
-      {!isLoading && !error && data && data.length === 0 && (
+      {!isLoading && !isMcpDisabled && !error && data && data.length === 0 && (
         <div className="text-sm text-gray-500" data-testid="mcp-approvals-empty">
           No {statusFilter} MCP approvals.
         </div>
       )}
-      {data && data.length > 0 && (
+      {!isMcpDisabled && data && data.length > 0 && (
         <div className="space-y-2">
           {data.map((approval) => (
             <McpApprovalCard key={approval.id} approval={approval} />

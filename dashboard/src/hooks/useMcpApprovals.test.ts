@@ -3,7 +3,13 @@
 // interaction (render → click Approve → server call → list refresh) is
 // covered by the integration tests in step 12.
 import { describe, expect, it } from "vitest";
-import { shortArgsHash, type McpApproval, type McpApprovalStatus } from "./useMcpApprovals";
+import { ApiError } from "../api/client";
+import {
+  isMcpApprovalsUnavailable,
+  shortArgsHash,
+  type McpApproval,
+  type McpApprovalStatus,
+} from "./useMcpApprovals";
 
 describe("shortArgsHash", () => {
   it("truncates long hashes with an ellipsis", () => {
@@ -47,5 +53,20 @@ describe("McpApproval type", () => {
       "invalidated",
     ];
     expect(statuses).toHaveLength(5);
+  });
+});
+
+describe("isMcpApprovalsUnavailable", () => {
+  it("matches the gateway disabled-runtime response", () => {
+    const err = new ApiError(503, "unavailable", {
+      code: "mcp_approvals_unavailable",
+      status: 503,
+    });
+    expect(isMcpApprovalsUnavailable(err)).toBe(true);
+  });
+
+  it("does not hide unrelated API errors", () => {
+    const err = new ApiError(503, "other", { code: "redis_unavailable" });
+    expect(isMcpApprovalsUnavailable(err)).toBe(false);
   });
 });

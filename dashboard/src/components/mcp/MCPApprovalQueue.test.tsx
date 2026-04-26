@@ -11,6 +11,7 @@ const { hookState } = vi.hoisted(() => ({
     items: [] as McpApproval[],
     isLoading: false,
     isError: false,
+    isMcpDisabled: false,
     refetchCalls: 0,
     approveMutate: vi.fn(),
     rejectMutate: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock("../../hooks/useMcp", async () => {
       data: hookState.items,
       isLoading: hookState.isLoading,
       isError: hookState.isError,
+      isMcpDisabled: hookState.isMcpDisabled,
       refetch: () => {
         hookState.refetchCalls += 1;
       },
@@ -73,6 +75,7 @@ beforeEach(() => {
   hookState.items = [];
   hookState.isLoading = false;
   hookState.isError = false;
+  hookState.isMcpDisabled = false;
   hookState.approvePending = false;
   hookState.rejectPending = false;
   hookState.approveMutate.mockReset();
@@ -199,6 +202,13 @@ describe("MCPApprovalQueue", () => {
       retry.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(hookState.refetchCalls).toBe(1);
+  });
+
+  it("renders a neutral disabled state when MCP runtime is disabled", () => {
+    hookState.isMcpDisabled = true;
+    render(<MCPApprovalQueue status="pending" />);
+    expect(container.querySelector('[data-testid="mcp-approval-queue-disabled"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="mcp-approval-queue-error"]')).toBeFalsy();
   });
 
   it("renders status-only cells (no actions) for resolved approvals", () => {

@@ -179,6 +179,7 @@ describe("api/transform mappings", () => {
     expect(deriveApprovalActionability(undefined, "approved")).toBe("resolved");
     expect(deriveApprovalActionability(undefined, "invalidated")).toBe("invalidated");
     expect(deriveApprovalActionability(undefined, "repaired")).toBe("repaired");
+    expect(deriveApprovalActionability("actionable", "expired")).toBe("expired");
   });
 
   it("maps approval items and handles missing job payload safely", () => {
@@ -200,6 +201,38 @@ describe("api/transform mappings", () => {
     expect(approval?.actionability).toBe("actionable");
     expect(approval?.humanSummary).toContain('Job on "job.review"');
     expect(approval?.urgencyLevel).toBeDefined();
+  });
+
+  it("does not render stale pending approval metadata as actionable after timeout", () => {
+    expect(
+      deriveApprovalStatus(
+        "TIMEOUT",
+        "REQUIRE_APPROVAL",
+        undefined,
+        "pending",
+        undefined,
+      ),
+    ).toBe("expired");
+
+    const approval = mapApprovalItem({
+      approval_ref: "approval-timeout",
+      approval_status: "pending",
+      approval_actionability: "actionable",
+      policy_reason: "manual review timed out",
+      decision: "REQUIRE_APPROVAL",
+      job: {
+        id: "job-timeout",
+        topic: "job.review",
+        state: "TIMEOUT",
+        updated_at: Date.now() * 1000,
+      },
+    });
+
+    expect(approval).not.toBeNull();
+    expect(approval?.status).toBe("expired");
+    expect(approval?.actionability).toBe("expired");
+    expect(approval?.approval_status).toBe("expired");
+    expect(approval?.approval_actionability).toBe("expired");
   });
 
   it("maps decision-first approval summaries into stable frontend fields", () => {

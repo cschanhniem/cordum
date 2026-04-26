@@ -290,7 +290,14 @@ type ApprovalRepairResult struct {
 }
 
 func derivedApprovalStatus(state model.JobState, safety model.SafetyDecisionRecord, record ApprovalRecord) model.ApprovalStatus {
-	if record.Status != "" {
+	// Preserve explicit terminal lifecycle statuses, but do not let an old
+	// persisted pending/actionable record mask the job's current terminal
+	// state. Approval rows are seeded as pending when the safety decision is
+	// written; if the scheduler later times the job out (or otherwise moves it
+	// out of APPROVAL_REQUIRED) before a human acts, list/detail endpoints must
+	// expose the derived non-actionable lifecycle instead of continuing to show
+	// an impossible pending approval.
+	if record.Status != "" && record.Status != model.ApprovalStatusPending {
 		return record.Status
 	}
 	switch record.Decision {
@@ -369,8 +376,8 @@ func derivedApprovalRevision(safety model.SafetyDecisionRecord, record ApprovalR
 func NormalizeApprovalRecord(state model.JobState, safety model.SafetyDecisionRecord, record ApprovalRecord) ApprovalRecord {
 	record.Status = derivedApprovalStatus(state, safety, record)
 	record.Decision = derivedApprovalDecision(record)
-	if record.Actionability == "" {
-		record.Actionability = record.Status.DefaultActionability()
+	if canonical := record.Status.DefaultActionability(); canonical != "" {
+		record.Actionability = canonical
 	}
 	record.Revision = derivedApprovalRevision(safety, record)
 	return record

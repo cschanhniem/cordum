@@ -61,7 +61,8 @@ export function MCPApprovalQueue(props: MCPApprovalQueueProps) {
   >(null);
 
   const isLoading = query.isLoading;
-  const isError = query.isError;
+  const isRuntimeDisabled = Boolean(query.isMcpDisabled);
+  const isError = query.isError && !isRuntimeDisabled;
 
   const sorted = useMemo(() => {
     const copy = [...items];
@@ -98,6 +99,15 @@ export function MCPApprovalQueue(props: MCPApprovalQueueProps) {
         </div>
       )}
 
+      {isRuntimeDisabled && (
+        <p
+          className="rounded-xl border border-dashed border-[color:var(--border-color,#27272a)] bg-[color:var(--surface,#0b0b0e)] p-6 text-center text-sm text-[color:var(--text-muted,#a1a1aa)]"
+          data-testid="mcp-approval-queue-disabled"
+        >
+          MCP approval runtime is disabled. No MCP tool calls are waiting for review.
+        </p>
+      )}
+
       {isError && (
         <div
           role="alert"
@@ -115,7 +125,7 @@ export function MCPApprovalQueue(props: MCPApprovalQueueProps) {
         </div>
       )}
 
-      {!isLoading && !isError && sorted.length === 0 && (
+      {!isLoading && !isRuntimeDisabled && !isError && sorted.length === 0 && (
         <p
           className="rounded-xl border border-dashed border-[color:var(--border-color,#27272a)] bg-[color:var(--surface,#0b0b0e)] p-6 text-center text-sm text-[color:var(--text-muted,#a1a1aa)]"
           data-testid="mcp-approval-queue-empty"
@@ -124,7 +134,7 @@ export function MCPApprovalQueue(props: MCPApprovalQueueProps) {
         </p>
       )}
 
-      {!isLoading && !isError && sorted.length > 0 && (
+      {!isLoading && !isRuntimeDisabled && !isError && sorted.length > 0 && (
         <div className="overflow-x-auto rounded-xl border border-[color:var(--border-color,#27272a)]">
           <table
             className="min-w-full divide-y divide-[color:var(--border-color,#27272a)] text-sm"
@@ -373,4 +383,3 @@ function formatRelative(unixSeconds: number): string {
 }
 
 export default MCPApprovalQueue;
-

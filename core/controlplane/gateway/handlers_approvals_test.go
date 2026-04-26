@@ -769,6 +769,9 @@ func TestListApprovalsIncludesTimedOutApprovals(t *testing.T) {
 	item := items[0].(map[string]any)
 	job := item["job"].(map[string]any)
 	assert.Equal(t, "TIMEOUT", job["state"])
+	assert.Equal(t, "expired", item["approval_status"])
+	assert.Equal(t, "expired", item["approval_actionability"])
+	assert.Equal(t, "expire", item["approval_decision"])
 }
 
 func TestListApprovalsExcludesNonApprovalTimeoutJobs(t *testing.T) {
