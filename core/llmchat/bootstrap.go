@@ -143,6 +143,32 @@ func (b *Bootstrapper) Boot(ctx context.Context) (string, error) {
 
 	id, err := b.register(ctx)
 	if err != nil {
+		// Replica-safety: when two instances race the lookup→register
+		// sequence, both can see "no agent" on lookup and both call
+		// register. The loser receives ErrAgentDuplicate from the
+		// agent registry; re-lookup, verify the winner's scope matches
+		// the canonical expectations, and reuse instead of failing
+		// boot. This makes Boot idempotent across concurrent replicas
+		// without requiring a distributed lock — the registry's
+		// server-side uniqueness check is the serialization point.
+		if errors.Is(err, capsdk.ErrAgentDuplicate) {
+			existing, lerr := b.lookupChatAssistant(ctx)
+			if lerr != nil {
+				return "", fmt.Errorf(
+					"llmchat/bootstrap: re-lookup after register-duplicate: %w", lerr)
+			}
+			if existing == nil {
+				return "", fmt.Errorf(
+					"llmchat/bootstrap: registry returned duplicate on register but "+
+						"re-lookup found no chat-assistant; admin must reconcile: %w", err)
+			}
+			if vErr := b.verifyScope(existing); vErr != nil {
+				return "", vErr
+			}
+			slog.Info("llmchat: chat-assistant duplicate-register lost race, reusing winner",
+				"agent_id", existing.ID, "tenant", b.tenant)
+			return existing.ID, nil
+		}
 		return "", fmt.Errorf("llmchat/bootstrap: register: %w", err)
 	}
 	if err := b.setScope(ctx, id); err != nil {
