@@ -388,6 +388,75 @@ func TestUpdateAgent(t *testing.T) {
 	}
 }
 
+// TestUpdateAgentPreapprovedMutatingTools asserts that PUT /api/v1/agents/{id}
+// persists and returns `preapproved_mutating_tools`. capsdk.AgentClient.SetScope
+// (cap/sdk/go/agent.go) and core/mcp/bridge_mutating.go both send this field;
+// the gateway used to silently drop it, breaking deterministic-revoke semantics
+// for the chat-assistant identity.
+func TestUpdateAgentPreapprovedMutatingTools(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
+
+	createBody := bytes.NewBufferString(`{"name":"chat-assistant","owner":"system","risk_tier":"medium"}`)
+	createReq := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents", createBody), &auth.AuthContext{
+		Tenant: "default",
+		Role:   "admin",
+	})
+	createReq.Header.Set("Content-Type", "application/json")
+	createRR := httptest.NewRecorder()
+	s.handleCreateAgent(createRR, createReq)
+
+	var created agentResponse
+	if err := json.NewDecoder(createRR.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create: %v", err)
+	}
+	if len(created.PreapprovedMutatingTools) != 0 {
+		t.Errorf("Create must not grant preapproved tools (got %v)", created.PreapprovedMutatingTools)
+	}
+
+	// Grant exactly cordum_submit_job via update (the canonical chat-assistant scope).
+	grantBody := bytes.NewBufferString(`{"preapproved_mutating_tools":["cordum_submit_job"]}`)
+	grantReq := withAuth(httptest.NewRequest(http.MethodPut, "/api/v1/agents/"+created.ID, grantBody), &auth.AuthContext{
+		Tenant:      "default",
+		Role:        "admin",
+		PrincipalID: "admin-user",
+	})
+	grantReq.Header.Set("Content-Type", "application/json")
+	grantReq.SetPathValue("id", created.ID)
+	grantRR := httptest.NewRecorder()
+	s.handleUpdateAgent(grantRR, grantReq)
+
+	if grantRR.Code != http.StatusOK {
+		t.Fatalf("grant: expected 200, got %d: %s", grantRR.Code, grantRR.Body.String())
+	}
+	var granted agentResponse
+	if err := json.NewDecoder(grantRR.Body).Decode(&granted); err != nil {
+		t.Fatalf("decode grant: %v", err)
+	}
+	if got := granted.PreapprovedMutatingTools; len(got) != 1 || got[0] != "cordum_submit_job" {
+		t.Errorf("preapproved_mutating_tools = %v, want [cordum_submit_job]", got)
+	}
+
+	// Re-read via GET to confirm persistence (not just response echo).
+	getReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents/"+created.ID, nil), &auth.AuthContext{
+		Tenant: "default",
+		Role:   "admin",
+	})
+	getReq.SetPathValue("id", created.ID)
+	getRR := httptest.NewRecorder()
+	s.handleGetAgent(getRR, getReq)
+	if getRR.Code != http.StatusOK {
+		t.Fatalf("get: expected 200, got %d: %s", getRR.Code, getRR.Body.String())
+	}
+	var fetched agentResponse
+	if err := json.NewDecoder(getRR.Body).Decode(&fetched); err != nil {
+		t.Fatalf("decode get: %v", err)
+	}
+	if got := fetched.PreapprovedMutatingTools; len(got) != 1 || got[0] != "cordum_submit_job" {
+		t.Errorf("after persistence: preapproved_mutating_tools = %v, want [cordum_submit_job]", got)
+	}
+}
+
 func TestAgentStatsHighVolume(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	enableAgentIdentityEntitlement(t, s)

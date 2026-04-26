@@ -4,13 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
 
 	miniredis "github.com/alicebob/miniredis/v2"
+	capsdk "github.com/cordum-io/cap/v2/sdk/go"
 	"github.com/cordum/cordum/core/audit"
-	"github.com/cordum/cordum/core/mcp"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -49,102 +50,117 @@ func (r *recordingEmitter) Events() []*audit.SIEMEvent {
 	return out
 }
 
-// fakeBootstrapClient scripts MCP CallTool responses for bootstrap.
-type fakeBootstrapClient struct {
-	mu    sync.Mutex
-	calls []bootstrapCall
-	// per-method scripted responses; indexed by tool name. The
-	// response is returned as the parsed Result; nil err = success.
-	respond map[string]func(args map[string]any) (*mcp.ToolCallResult, error)
+// fakeAgentRegistry implements AgentRegistry for tests. It scripts
+// per-method responses (Lookup / Register / SetScope) and records the
+// inputs every call received so test assertions can verify both the
+// shape (e.g. Register payload omits PreapprovedMutatingTools per
+// rail #2) and the count (idempotency: Register called once across
+// two Boot calls).
+type fakeAgentRegistry struct {
+	mu sync.Mutex
+
+	lookupCalls   []lookupCall
+	registerCalls []capsdk.AgentSpec
+	setScopeCalls []capsdk.AgentScopeUpdate
+
+	lookupFn   func(name, tenant string) (*capsdk.AgentIdentity, error)
+	registerFn func(spec capsdk.AgentSpec) (string, error)
+	setScopeFn func(update capsdk.AgentScopeUpdate) error
 }
 
-type bootstrapCall struct {
-	Name string
-	Args map[string]any
+type lookupCall struct {
+	Name   string
+	Tenant string
 }
 
-func newFakeBootstrapClient() *fakeBootstrapClient {
-	return &fakeBootstrapClient{
-		respond: map[string]func(map[string]any) (*mcp.ToolCallResult, error){},
+func newFakeAgentRegistry() *fakeAgentRegistry {
+	return &fakeAgentRegistry{}
+}
+
+func (f *fakeAgentRegistry) Lookup(_ context.Context, name, tenant string) (*capsdk.AgentIdentity, error) {
+	f.mu.Lock()
+	f.lookupCalls = append(f.lookupCalls, lookupCall{Name: name, Tenant: tenant})
+	fn := f.lookupFn
+	f.mu.Unlock()
+	if fn == nil {
+		return nil, capsdk.ErrAgentNotFound
 	}
+	return fn(name, tenant)
 }
 
-func (f *fakeBootstrapClient) CallTool(_ context.Context, name string, args map[string]any) (*mcp.ToolCallResult, error) {
+func (f *fakeAgentRegistry) Register(_ context.Context, spec capsdk.AgentSpec) (string, error) {
+	f.mu.Lock()
+	f.registerCalls = append(f.registerCalls, spec)
+	fn := f.registerFn
+	f.mu.Unlock()
+	if fn == nil {
+		return "", errors.New("fake registry: register not scripted")
+	}
+	return fn(spec)
+}
+
+func (f *fakeAgentRegistry) SetScope(_ context.Context, update capsdk.AgentScopeUpdate) error {
+	f.mu.Lock()
+	f.setScopeCalls = append(f.setScopeCalls, update)
+	fn := f.setScopeFn
+	f.mu.Unlock()
+	if fn == nil {
+		return nil
+	}
+	return fn(update)
+}
+
+func (f *fakeAgentRegistry) LookupCalls() []lookupCall {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, bootstrapCall{Name: name, Args: args})
-	if h, ok := f.respond[name]; ok {
-		return h(args)
-	}
-	return nil, errors.New("fake bootstrap: no handler for " + name)
-}
-
-func (f *fakeBootstrapClient) Calls() []bootstrapCall {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	out := make([]bootstrapCall, len(f.calls))
-	copy(out, f.calls)
+	out := make([]lookupCall, len(f.lookupCalls))
+	copy(out, f.lookupCalls)
 	return out
 }
 
-// listResult builds a fake cordum_list_agents response page.
-func listResult(items []map[string]any) *mcp.ToolCallResult {
-	page := map[string]any{"items": items}
-	raw, _ := json.Marshal(page)
-	return &mcp.ToolCallResult{
-		Content: []mcp.ContentItem{{Type: "text", Text: string(raw)}},
-	}
+func (f *fakeAgentRegistry) RegisterCalls() []capsdk.AgentSpec {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]capsdk.AgentSpec, len(f.registerCalls))
+	copy(out, f.registerCalls)
+	return out
 }
 
-func registerResult(id string) *mcp.ToolCallResult {
-	body := map[string]any{"id": id, "name": "chat-assistant"}
-	raw, _ := json.Marshal(body)
-	return &mcp.ToolCallResult{
-		Content: []mcp.ContentItem{{Type: "text", Text: string(raw)}},
-	}
+func (f *fakeAgentRegistry) SetScopeCalls() []capsdk.AgentScopeUpdate {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]capsdk.AgentScopeUpdate, len(f.setScopeCalls))
+	copy(out, f.setScopeCalls)
+	return out
 }
 
-func okResult() *mcp.ToolCallResult {
-	return &mcp.ToolCallResult{
-		Content: []mcp.ContentItem{{Type: "text", Text: `{"ok":true}`}},
-	}
-}
-
-// stringSlice normalises an args[key] value into []string regardless of
-// whether the caller produced []string, []any (as the JSON unmarshal
-// path would produce), or nil.
-func stringSlice(v any) []string {
-	switch s := v.(type) {
-	case []string:
-		return s
-	case []any:
-		out := make([]string, 0, len(s))
-		for _, x := range s {
-			if str, ok := x.(string); ok {
-				out = append(out, str)
-			}
-		}
-		return out
-	default:
-		return nil
+// existingChatAssistant returns a populated AgentIdentity matching the
+// canonical scope expected by verifyScope.
+func existingChatAssistant(id, tenant string) *capsdk.AgentIdentity {
+	return &capsdk.AgentIdentity{
+		ID:                       id,
+		Name:                     "chat-assistant",
+		Owner:                    "system",
+		Team:                     "system",
+		RiskTier:                 "medium",
+		AllowedTools:             expectedAllowedTools(),
+		PreapprovedMutatingTools: expectedPreapprovedMutatingTools(),
+		DataClassifications:      expectedDataClassifications(),
+		Status:                   "active",
 	}
 }
 
 func TestBootstrap_LookupHit_NoRegister(t *testing.T) {
 	t.Parallel()
-	f := newFakeBootstrapClient()
-	f.respond[mcp.ToolListAgents] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
-		return listResult([]map[string]any{
-			{
-				"id":                         "chat-assistant-existing",
-				"name":                       "chat-assistant",
-				"tenant_id":                  "tenant-a",
-				"risk_tier":                  "medium",
-				"allowed_tools":              expectedAllowedTools(),
-				"preapproved_mutating_tools": []string{"cordum_submit_job"},
-				"data_classifications":       []string{"public", "internal"},
-			},
-		}), nil
+	f := newFakeAgentRegistry()
+	f.lookupFn = func(name, tenant string) (*capsdk.AgentIdentity, error) {
+		if name != "chat-assistant" {
+			t.Errorf("Lookup name = %q, want chat-assistant", name)
+		}
+		if tenant != "tenant-a" {
+			t.Errorf("Lookup tenant = %q, want tenant-a", tenant)
+		}
+		return existingChatAssistant("chat-assistant-existing", tenant), nil
 	}
 	b := NewBootstrapper(f, "tenant-a", nil)
 	id, err := b.Boot(context.Background())
@@ -154,41 +170,54 @@ func TestBootstrap_LookupHit_NoRegister(t *testing.T) {
 	if id != "chat-assistant-existing" {
 		t.Errorf("agent id = %q, want chat-assistant-existing", id)
 	}
-	for _, c := range f.Calls() {
-		if c.Name == mcp.ToolRegisterAgent || c.Name == mcp.ToolSetAgentScope {
-			t.Errorf("unexpected mutating call %s on lookup-hit", c.Name)
-		}
+	if got := len(f.RegisterCalls()); got != 0 {
+		t.Errorf("Register called %d times on lookup-hit, want 0", got)
+	}
+	if got := len(f.SetScopeCalls()); got != 0 {
+		t.Errorf("SetScope called %d times on lookup-hit, want 0", got)
 	}
 }
 
 func TestBootstrap_LookupMiss_RegistersAndSetsScope(t *testing.T) {
 	t.Parallel()
-	f := newFakeBootstrapClient()
-	f.respond[mcp.ToolListAgents] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
-		return listResult(nil), nil
+	f := newFakeAgentRegistry()
+	f.lookupFn = func(string, string) (*capsdk.AgentIdentity, error) {
+		return nil, capsdk.ErrAgentNotFound
 	}
-	f.respond[mcp.ToolRegisterAgent] = func(args map[string]any) (*mcp.ToolCallResult, error) {
-		// PreapprovedMutatingTools must NOT be in the register call.
-		if _, ok := args["preapproved_mutating_tools"]; ok {
-			t.Errorf("register call MUST NOT include preapproved_mutating_tools (use set_agent_scope)")
+	f.registerFn = func(spec capsdk.AgentSpec) (string, error) {
+		if spec.Name != "chat-assistant" {
+			t.Errorf("Register name = %q, want chat-assistant", spec.Name)
 		}
-		if got, _ := args["name"].(string); got != "chat-assistant" {
-			t.Errorf("register name = %v, want chat-assistant", args["name"])
+		if spec.RiskTier != "medium" {
+			t.Errorf("Register risk_tier = %q, want medium", spec.RiskTier)
 		}
-		if got, _ := args["risk_tier"].(string); got != "medium" {
-			t.Errorf("register risk_tier = %v, want medium", args["risk_tier"])
+		// The Register payload MUST hit the AgentSpec shape, which
+		// has no PreapprovedMutatingTools field at all (rail #2: only
+		// SetScope grants the preapproved set). The struct-level
+		// guarantee replaces the prior MCP-shape field-omission check.
+		if !setsEqual(spec.AllowedTools, expectedAllowedTools()) {
+			t.Errorf("Register AllowedTools mismatch: got %v want %v",
+				spec.AllowedTools, expectedAllowedTools())
 		}
-		return registerResult("chat-assistant-new"), nil
+		if !setsEqual(spec.DataClassifications, expectedDataClassifications()) {
+			t.Errorf("Register DataClassifications mismatch: got %v want %v",
+				spec.DataClassifications, expectedDataClassifications())
+		}
+		return "chat-assistant-new", nil
 	}
-	f.respond[mcp.ToolSetAgentScope] = func(args map[string]any) (*mcp.ToolCallResult, error) {
-		// PreapprovedMutatingTools is what set_scope is for. The
-		// caller may pass []string or []any depending on construction;
-		// normalise both to []string for assertion.
-		got := stringSlice(args["preapproved_mutating_tools"])
-		if len(got) != 1 || got[0] != "cordum_submit_job" {
-			t.Errorf("set_scope preapproved_mutating_tools = %v, want [cordum_submit_job] only", got)
+	f.setScopeFn = func(update capsdk.AgentScopeUpdate) error {
+		if update.AgentID != "chat-assistant-new" {
+			t.Errorf("SetScope AgentID = %q, want chat-assistant-new", update.AgentID)
 		}
-		return okResult(), nil
+		if !setsEqual(update.PreapprovedMutatingTools, expectedPreapprovedMutatingTools()) {
+			t.Errorf("SetScope preapproved_mutating_tools = %v, want [cordum_submit_job] only",
+				update.PreapprovedMutatingTools)
+		}
+		if !setsEqual(update.AllowedTools, expectedAllowedTools()) {
+			t.Errorf("SetScope AllowedTools mismatch: got %v want %v",
+				update.AllowedTools, expectedAllowedTools())
+		}
+		return nil
 	}
 
 	b := NewBootstrapper(f, "tenant-a", nil)
@@ -199,46 +228,50 @@ func TestBootstrap_LookupMiss_RegistersAndSetsScope(t *testing.T) {
 	if id != "chat-assistant-new" {
 		t.Errorf("agent id = %q, want chat-assistant-new", id)
 	}
+	if got := len(f.RegisterCalls()); got != 1 {
+		t.Errorf("Register called %d times, want 1", got)
+	}
+	if got := len(f.SetScopeCalls()); got != 1 {
+		t.Errorf("SetScope called %d times, want 1", got)
+	}
 }
 
 func TestBootstrap_RegisterFailed_NoSetScope(t *testing.T) {
 	t.Parallel()
-	f := newFakeBootstrapClient()
-	f.respond[mcp.ToolListAgents] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
-		return listResult(nil), nil
+	f := newFakeAgentRegistry()
+	f.lookupFn = func(string, string) (*capsdk.AgentIdentity, error) {
+		return nil, capsdk.ErrAgentNotFound
 	}
-	f.respond[mcp.ToolRegisterAgent] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
-		return nil, errors.New("approval required")
+	f.registerFn = func(capsdk.AgentSpec) (string, error) {
+		return "", errors.New("approval required")
 	}
 	b := NewBootstrapper(f, "tenant-a", nil)
 	_, err := b.Boot(context.Background())
 	if err == nil {
-		t.Fatal("expected error when register fails")
+		t.Fatal("expected error when Register fails")
 	}
-	for _, c := range f.Calls() {
-		if c.Name == mcp.ToolSetAgentScope {
-			t.Error("set_agent_scope called despite register failure")
-		}
+	if got := len(f.SetScopeCalls()); got != 0 {
+		t.Errorf("SetScope called %d times despite Register failure", got)
 	}
 }
 
 func TestBootstrap_SetScopeFailed_PartialState(t *testing.T) {
 	t.Parallel()
-	f := newFakeBootstrapClient()
-	f.respond[mcp.ToolListAgents] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
-		return listResult(nil), nil
+	f := newFakeAgentRegistry()
+	f.lookupFn = func(string, string) (*capsdk.AgentIdentity, error) {
+		return nil, capsdk.ErrAgentNotFound
 	}
-	f.respond[mcp.ToolRegisterAgent] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
-		return registerResult("chat-assistant-partial"), nil
+	f.registerFn = func(capsdk.AgentSpec) (string, error) {
+		return "chat-assistant-partial", nil
 	}
-	f.respond[mcp.ToolSetAgentScope] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
-		return nil, errors.New("scope update failed")
+	f.setScopeFn = func(capsdk.AgentScopeUpdate) error {
+		return errors.New("scope update failed")
 	}
 
 	b := NewBootstrapper(f, "tenant-a", nil)
 	_, err := b.Boot(context.Background())
 	if err == nil {
-		t.Fatal("expected error on set_scope failure")
+		t.Fatal("expected error on SetScope failure")
 	}
 	if !strings.Contains(err.Error(), "chat-assistant-partial") {
 		t.Errorf("error %v should name the partially-registered agent for operator remediation", err)
@@ -247,30 +280,17 @@ func TestBootstrap_SetScopeFailed_PartialState(t *testing.T) {
 
 func TestBootstrap_Idempotent(t *testing.T) {
 	t.Parallel()
-	f := newFakeBootstrapClient()
-	calls := 0
-	f.respond[mcp.ToolListAgents] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
-		calls++
-		if calls == 1 {
-			return listResult(nil), nil
+	f := newFakeAgentRegistry()
+	registered := false
+	f.lookupFn = func(_, tenant string) (*capsdk.AgentIdentity, error) {
+		if !registered {
+			return nil, capsdk.ErrAgentNotFound
 		}
-		return listResult([]map[string]any{
-			{
-				"id":                         "chat-assistant-1",
-				"name":                       "chat-assistant",
-				"tenant_id":                  "tenant-a",
-				"risk_tier":                  "medium",
-				"allowed_tools":              expectedAllowedTools(),
-				"preapproved_mutating_tools": []string{"cordum_submit_job"},
-				"data_classifications":       []string{"public", "internal"},
-			},
-		}), nil
+		return existingChatAssistant("chat-assistant-1", tenant), nil
 	}
-	f.respond[mcp.ToolRegisterAgent] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
-		return registerResult("chat-assistant-1"), nil
-	}
-	f.respond[mcp.ToolSetAgentScope] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
-		return okResult(), nil
+	f.registerFn = func(capsdk.AgentSpec) (string, error) {
+		registered = true
+		return "chat-assistant-1", nil
 	}
 
 	b := NewBootstrapper(f, "tenant-a", nil)
@@ -280,32 +300,26 @@ func TestBootstrap_Idempotent(t *testing.T) {
 	if _, err := b.Boot(context.Background()); err != nil {
 		t.Fatalf("second Boot: %v", err)
 	}
-	registerCount := 0
-	for _, c := range f.Calls() {
-		if c.Name == mcp.ToolRegisterAgent {
-			registerCount++
-		}
+	if got := len(f.RegisterCalls()); got != 1 {
+		t.Errorf("Register called %d times across two Boot calls, want 1 (idempotent)", got)
 	}
-	if registerCount != 1 {
-		t.Errorf("register called %d times, want 1 (idempotent)", registerCount)
+	if got := len(f.SetScopeCalls()); got != 1 {
+		t.Errorf("SetScope called %d times across two Boot calls, want 1 (only on first-register)", got)
 	}
 }
 
 func TestBootstrap_DivergentScopeRejected(t *testing.T) {
 	t.Parallel()
-	f := newFakeBootstrapClient()
-	f.respond[mcp.ToolListAgents] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
-		return listResult([]map[string]any{
-			{
-				"id":                         "chat-assistant-bad",
-				"name":                       "chat-assistant",
-				"tenant_id":                  "tenant-a",
-				"risk_tier":                  "medium",
-				"allowed_tools":              []string{"cordum_list_jobs"}, // missing the rest
-				"preapproved_mutating_tools": []string{"cordum_submit_job", "cordum_approve_job"},
-				"data_classifications":       []string{"public"},
-			},
-		}), nil
+	f := newFakeAgentRegistry()
+	f.lookupFn = func(_, tenant string) (*capsdk.AgentIdentity, error) {
+		return &capsdk.AgentIdentity{
+			ID:                       "chat-assistant-bad",
+			Name:                     "chat-assistant",
+			RiskTier:                 "medium",
+			AllowedTools:             []string{"cordum_list_jobs"}, // missing the rest
+			PreapprovedMutatingTools: []string{"cordum_submit_job", "cordum_approve_job"},
+			DataClassifications:      []string{"public"},
+		}, nil
 	}
 	b := NewBootstrapper(f, "tenant-a", nil)
 	_, err := b.Boot(context.Background())
@@ -315,24 +329,22 @@ func TestBootstrap_DivergentScopeRejected(t *testing.T) {
 	if !strings.Contains(strings.ToLower(err.Error()), "divergent") {
 		t.Errorf("error %v should mention divergent scope", err)
 	}
+	if got := len(f.RegisterCalls()); got != 0 {
+		t.Errorf("Register called on divergent existing identity, want 0")
+	}
 }
 
 // TestBootstrap_AuditEventOnFirstBootRegister verifies that
 // `chat.bootstrap_registered` SIEMEvent is appended to the audit chain
-// when the chat-assistant identity is created on first boot. QA's
-// DoD requires the event presence be asserted — this test is the
-// canonical check.
+// when the chat-assistant identity is created on first boot.
 func TestBootstrap_AuditEventOnFirstBootRegister(t *testing.T) {
 	t.Parallel()
-	f := newFakeBootstrapClient()
-	f.respond[mcp.ToolListAgents] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
-		return listResult(nil), nil
+	f := newFakeAgentRegistry()
+	f.lookupFn = func(string, string) (*capsdk.AgentIdentity, error) {
+		return nil, capsdk.ErrAgentNotFound
 	}
-	f.respond[mcp.ToolRegisterAgent] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
-		return registerResult("chat-assistant-fresh"), nil
-	}
-	f.respond[mcp.ToolSetAgentScope] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
-		return okResult(), nil
+	f.registerFn = func(capsdk.AgentSpec) (string, error) {
+		return "chat-assistant-fresh", nil
 	}
 
 	emitter := &recordingEmitter{}
@@ -362,6 +374,9 @@ func TestBootstrap_AuditEventOnFirstBootRegister(t *testing.T) {
 	if ev.Decision != "registered" {
 		t.Errorf("Decision = %q, want registered", ev.Decision)
 	}
+	if !strings.Contains(ev.Reason, "CAP SDK") {
+		t.Errorf("Reason = %q, should mention CAP SDK control-plane wrappers", ev.Reason)
+	}
 }
 
 // TestBootstrap_AuditEmitFailureFailsBoot verifies QA's fail-or-retry
@@ -373,15 +388,12 @@ func TestBootstrap_AuditEmitFailureFailsBoot(t *testing.T) {
 
 	t.Run("permanent-failure-fails-boot", func(t *testing.T) {
 		t.Parallel()
-		f := newFakeBootstrapClient()
-		f.respond[mcp.ToolListAgents] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
-			return listResult(nil), nil
+		f := newFakeAgentRegistry()
+		f.lookupFn = func(string, string) (*capsdk.AgentIdentity, error) {
+			return nil, capsdk.ErrAgentNotFound
 		}
-		f.respond[mcp.ToolRegisterAgent] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
-			return registerResult("chat-assistant-fresh"), nil
-		}
-		f.respond[mcp.ToolSetAgentScope] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
-			return okResult(), nil
+		f.registerFn = func(capsdk.AgentSpec) (string, error) {
+			return "chat-assistant-fresh", nil
 		}
 		emitter := &recordingEmitter{failTimes: 99}
 		b := NewBootstrapper(f, "tenant-a", emitter)
@@ -396,15 +408,12 @@ func TestBootstrap_AuditEmitFailureFailsBoot(t *testing.T) {
 
 	t.Run("one-transient-failure-then-success", func(t *testing.T) {
 		t.Parallel()
-		f := newFakeBootstrapClient()
-		f.respond[mcp.ToolListAgents] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
-			return listResult(nil), nil
+		f := newFakeAgentRegistry()
+		f.lookupFn = func(string, string) (*capsdk.AgentIdentity, error) {
+			return nil, capsdk.ErrAgentNotFound
 		}
-		f.respond[mcp.ToolRegisterAgent] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
-			return registerResult("chat-assistant-resilient"), nil
-		}
-		f.respond[mcp.ToolSetAgentScope] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
-			return okResult(), nil
+		f.registerFn = func(capsdk.AgentSpec) (string, error) {
+			return "chat-assistant-resilient", nil
 		}
 		emitter := &recordingEmitter{failTimes: 1}
 		b := NewBootstrapper(f, "tenant-a", emitter)
@@ -423,11 +432,9 @@ func TestBootstrap_AuditEmitFailureFailsBoot(t *testing.T) {
 
 // TestBootstrap_AuditEventVisibleViaConcreteChainer verifies the
 // `chat.bootstrap_registered` event is appended to the canonical Redis-
-// backed audit chain (not just an in-memory recorder). QA's DoD
-// requires the event be assertable via the concrete audit pipeline
-// — the equivalent of the `/api/v1/audit/events` query path. This
-// test wires `audit.NewChainer` against a miniredis backend and
-// reads the resulting Redis Stream entry to prove the event landed.
+// backed audit chain (not just an in-memory recorder). Wires
+// `audit.NewChainer` against a miniredis backend and reads the
+// resulting Redis Stream entry to prove the event landed.
 func TestBootstrap_AuditEventVisibleViaConcreteChainer(t *testing.T) {
 	t.Parallel()
 	srv, err := miniredis.Run()
@@ -440,15 +447,12 @@ func TestBootstrap_AuditEventVisibleViaConcreteChainer(t *testing.T) {
 
 	chainer := audit.NewChainer(rdb, "audit:chain:")
 
-	f := newFakeBootstrapClient()
-	f.respond[mcp.ToolListAgents] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
-		return listResult(nil), nil
+	f := newFakeAgentRegistry()
+	f.lookupFn = func(string, string) (*capsdk.AgentIdentity, error) {
+		return nil, capsdk.ErrAgentNotFound
 	}
-	f.respond[mcp.ToolRegisterAgent] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
-		return registerResult("chat-assistant-int"), nil
-	}
-	f.respond[mcp.ToolSetAgentScope] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
-		return okResult(), nil
+	f.registerFn = func(capsdk.AgentSpec) (string, error) {
+		return "chat-assistant-int", nil
 	}
 
 	b := NewBootstrapper(f, "tenant-int", chainer)
@@ -457,8 +461,6 @@ func TestBootstrap_AuditEventVisibleViaConcreteChainer(t *testing.T) {
 		t.Fatalf("Boot via concrete chainer: %v", err)
 	}
 
-	// Read the tenant's audit stream directly — this is the same
-	// substrate /api/v1/audit/events queries.
 	streamKey := chainer.StreamKey("tenant-int")
 	entries, err := rdb.XRange(context.Background(), streamKey, "-", "+").Result()
 	if err != nil {
@@ -485,7 +487,7 @@ func TestBootstrap_AuditEventVisibleViaConcreteChainer(t *testing.T) {
 		t.Errorf("TenantID = %q, want tenant-int", ev.TenantID)
 	}
 	if ev.EventHash == "" || ev.Seq == 0 {
-		t.Errorf("chained event missing hash/seq: hash=%q seq=%d (the chainer is supposed to compute these)", ev.EventHash, ev.Seq)
+		t.Errorf("chained event missing hash/seq: hash=%q seq=%d", ev.EventHash, ev.Seq)
 	}
 }
 
@@ -495,19 +497,9 @@ func TestBootstrap_AuditEventVisibleViaConcreteChainer(t *testing.T) {
 // not service boot.
 func TestBootstrap_NoAuditEventOnLookupHit(t *testing.T) {
 	t.Parallel()
-	f := newFakeBootstrapClient()
-	f.respond[mcp.ToolListAgents] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
-		return listResult([]map[string]any{
-			{
-				"id":                         "chat-assistant-existing",
-				"name":                       "chat-assistant",
-				"tenant_id":                  "tenant-a",
-				"risk_tier":                  "medium",
-				"allowed_tools":              expectedAllowedTools(),
-				"preapproved_mutating_tools": []string{"cordum_submit_job"},
-				"data_classifications":       []string{"public", "internal"},
-			},
-		}), nil
+	f := newFakeAgentRegistry()
+	f.lookupFn = func(_, tenant string) (*capsdk.AgentIdentity, error) {
+		return existingChatAssistant("chat-assistant-existing", tenant), nil
 	}
 
 	emitter := &recordingEmitter{}
@@ -523,16 +515,12 @@ func TestBootstrap_NoAuditEventOnLookupHit(t *testing.T) {
 
 func TestBootstrap_MultipleQueuedRegistrationsRejected(t *testing.T) {
 	t.Parallel()
-	f := newFakeBootstrapClient()
-	f.respond[mcp.ToolListAgents] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
-		return listResult([]map[string]any{
-			{"id": "chat-assistant-1", "name": "chat-assistant", "tenant_id": "tenant-a", "risk_tier": "medium",
-				"allowed_tools": expectedAllowedTools(), "preapproved_mutating_tools": []string{"cordum_submit_job"},
-				"data_classifications": []string{"public", "internal"}},
-			{"id": "chat-assistant-2", "name": "chat-assistant", "tenant_id": "tenant-a", "risk_tier": "medium",
-				"allowed_tools": expectedAllowedTools(), "preapproved_mutating_tools": []string{"cordum_submit_job"},
-				"data_classifications": []string{"public", "internal"}},
-		}), nil
+	f := newFakeAgentRegistry()
+	f.lookupFn = func(string, string) (*capsdk.AgentIdentity, error) {
+		// Mirrors capsdk.AgentClient.Lookup, which surfaces a
+		// duplicate-aware sentinel when the gateway returns more
+		// than one match.
+		return nil, fmt.Errorf("multiple matches: %w", capsdk.ErrAgentDuplicate)
 	}
 	b := NewBootstrapper(f, "tenant-a", nil)
 	_, err := b.Boot(context.Background())
@@ -541,5 +529,23 @@ func TestBootstrap_MultipleQueuedRegistrationsRejected(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(err.Error()), "multiple") {
 		t.Errorf("error %v should mention multiple registrations", err)
+	}
+	if got := len(f.RegisterCalls()); got != 0 {
+		t.Errorf("Register called %d times despite duplicate lookup, want 0", got)
+	}
+}
+
+// TestBootstrap_NilRegistry_FailsBoot guards against accidental nil
+// registry wiring at service boot — the failure mode must be a clear
+// error, not a panic in lookupChatAssistant.
+func TestBootstrap_NilRegistry_FailsBoot(t *testing.T) {
+	t.Parallel()
+	b := NewBootstrapper(nil, "tenant-a", nil)
+	_, err := b.Boot(context.Background())
+	if err == nil {
+		t.Fatal("Boot must fail when registry is nil")
+	}
+	if !strings.Contains(err.Error(), "registry not configured") {
+		t.Errorf("error %v should mention registry not configured", err)
 	}
 }

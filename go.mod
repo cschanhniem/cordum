@@ -57,6 +57,15 @@ require (
 
 replace github.com/cordum/cordum/sdk => ./sdk
 
+// Workspace replace for the CAP module: cordum-llm-chat phase-3
+// bootstrap (task-cc03a68d) depends on capsdk.AgentClient which lands
+// in cap PR #44 (feat/sdk-go-agent-wrappers, commit aad9445). Until
+// that branch is merged + tagged (e.g. v2.10.0), cordum points at the
+// sibling cap repo via this replace. After the cap version tag bump,
+// drop this replace and bump the require line below from v2.9.3 to
+// the new tag.
+replace github.com/cordum-io/cap/v2 => ../cap
+
 // Use published CAP module
 require (
 	github.com/beorn7/perks v1.0.1 // indirect

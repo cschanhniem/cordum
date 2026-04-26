@@ -3,7 +3,8 @@
 // parsing + OpenAI-compat provider + /healthz + /readyz. Phase 3 wires
 // the identity + persistence layer: Redis session store, per-session
 // delegation tokens via the gateway, and idempotent chat-assistant
-// agent bootstrap via MCP. /api/v1/chat WS handlers land in phase 5.
+// agent bootstrap via the CAP SDK AgentClient (POST/GET/PUT
+// /api/v1/agents). /api/v1/chat WS handlers land in phase 5.
 package main
 
 import (
@@ -20,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	capsdk "github.com/cordum-io/cap/v2/sdk/go"
 	"github.com/cordum/cordum/core/audit"
 	gatewayauth "github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/buildinfo"
@@ -27,7 +29,6 @@ import (
 	"github.com/cordum/cordum/core/infra/logging"
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/llmchat"
-	"github.com/cordum/cordum/core/mcp"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -133,7 +134,23 @@ func main() {
 	defer mcpClient.Close()
 
 	auditChainer := audit.NewChainer(redisClient, "audit:chain:")
-	bootstrapper := llmchat.NewBootstrapper(mcpAdapter{client: mcpClient}, cfg.Tenant, auditChainer)
+
+	// chat-assistant bootstrap goes through the CAP SDK AgentClient,
+	// which wraps the gateway's /api/v1/agents endpoints (same audit
+	// chain + approval gate as any other Cordum agent identity). The
+	// service API key authenticates this trust path; per-session
+	// delegation tokens are issued separately by DelegationClient
+	// below.
+	agentRegistry, err := capsdk.NewAgentClient(capsdk.AgentClientConfig{
+		BaseURL: cfg.GatewayURL,
+		APIKey:  cfg.CordumAPIKey,
+		Tenant:  cfg.Tenant,
+	})
+	if err != nil {
+		slog.Error("cordum-llm-chat: cap agent client construction failed", "error", err)
+		os.Exit(1)
+	}
+	bootstrapper := llmchat.NewBootstrapper(agentRegistry, cfg.Tenant, auditChainer)
 	bootCtx, cancelBoot := context.WithTimeout(context.Background(), bootstrapTimeout)
 	resolvedAgentID, err := bootstrapper.Boot(bootCtx)
 	cancelBoot()
@@ -446,24 +463,6 @@ func envDurationOrDefault(getenv func(string) string, key string, fallback time.
 		return 0, fmt.Errorf("parse %s=%q: %w", key, raw, err)
 	}
 	return v, nil
-}
-
-// mcpAdapter bridges *llmchat.MCPClient (which takes json.RawMessage
-// args + a bearer token) to the llmchat.MCPCallToolClient interface
-// (which takes map[string]any). Bootstrap uses the service API key
-// (bearerToken=""), so the underlying MCP client falls through to the
-// X-API-Key header path — by design, since registration runs before
-// any per-session delegation could exist.
-type mcpAdapter struct {
-	client *llmchat.MCPClient
-}
-
-func (a mcpAdapter) CallTool(ctx context.Context, name string, args map[string]any) (*mcp.ToolCallResult, error) {
-	raw, err := json.Marshal(args)
-	if err != nil {
-		return nil, fmt.Errorf("mcpAdapter: marshal args: %w", err)
-	}
-	return a.client.CallTool(ctx, name, raw, "")
 }
 
 // requireTrustedForwarder builds the auth middleware for chat / admin
