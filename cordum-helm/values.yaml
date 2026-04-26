@@ -604,6 +604,22 @@ llmChat:
     toolTopP: 0.9
     summaryTemperature: 0.7
     summaryTopP: 0.8
+  budgets:
+    maxToolCallsPerTurn: 12
+    maxWallClockPerTurn: 60s
+    maxAssistantBytes: 32768
+  knowledgePack:
+    enabled: true
+    budget: 24576
+  systemPrompt: |-
+    You are the Cordum chat assistant. Use the Cordum MCP tools and REST
+    read APIs to answer questions about jobs, workflows, workers, agents,
+    approvals, policies, and audit records. Never invent job IDs, workflow
+    IDs, approval IDs, or tool names. When explaining denials or failures,
+    read the audit trail before summarizing. Never echo secrets from tool
+    results; the service redacts results before they enter model context.
+    {{api_summary}}
+    {{cordum_io_summary}}
 
 # =============================================================================
 # vLLM serving Qwen3-Coder-30B-A3B-Instruct-FP8. Tier 1 (H100 80GB) is
@@ -621,9 +637,7 @@ qwenInference:
   # qwenInference.model to this for RTX 5090 / PRO 6000 deployments.
   tier2AwqModel: "QuantTrio/Qwen3-Coder-30B-A3B-Instruct-AWQ"
   servedModelName: "qwen3-coder"
-  # MUST be qwen3_xml. NOT qwen3_coder (infinite-!!!! bug on long
-  # tool-heavy conversations — the Qwen model-card upstream is
-  # outdated). NOT hermes (different parser family).
+  # MUST be qwen3_xml; the task rail forbids alternate parser families.
   toolCallParser: "qwen3_xml"
   maxModelLen: 131072
   kvCacheDtype: "fp8"

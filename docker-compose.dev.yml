@@ -58,3 +58,21 @@ services:
     build:
       context: ./dashboard
       dockerfile: Dockerfile
+
+  llm-chat:
+    image: cordum/llm-chat:dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: cordum-llm-chat
+
+  qwen-inference:
+    # Dev machines often do not have an NVIDIA runtime. Keep the service
+    # profile-gated and remove the production deploy reservation from the
+    # local override; operators who want GPU enforcement can add it back in
+    # their own override.
+    deploy:
+      resources:
+        reservations:
+          devices: !reset []

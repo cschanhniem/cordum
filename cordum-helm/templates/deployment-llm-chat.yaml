@@ -34,21 +34,29 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.llmChat.service.port }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "cordum.fullname" . }}-llm-chat-config
           env:
             - name: CORDUM_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ include "cordum.fullname" . }}-secrets
                   key: apiKey
+            - name: CORDUM_GATEWAY_URL
+              {{- $gatewayScheme := ternary "https" "http" .Values.global.tls.enabled }}
+              value: {{ printf "%s://%s-api-gateway:%d" $gatewayScheme (include "cordum.fullname" .) (int .Values.gateway.service.httpPort) | quote }}
             - name: REDIS_URL
-              value: "rediss://:$(REDIS_PASSWORD)@{{ include "cordum.fullname" . }}-redis:{{ .Values.redis.service.port }}"
+              value: {{ include "cordum.redisUrl" . | quote }}
+            {{- if .Values.redis.auth.enabled }}
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "cordum.fullname" . }}-secrets
-                  key: redisPassword
+                  name: {{ include "cordum.redisSecretName" . }}
+                  key: {{ include "cordum.redisSecretKey" . }}
+            {{- end }}
             - name: NATS_URL
-              value: "tls://{{ include "cordum.fullname" . }}-nats:{{ .Values.nats.service.port }}"
+              value: {{ include "cordum.natsUrl" . | quote }}
             - name: LLMCHAT_BASE_URL
               {{- if .Values.qwenInference.enabled }}
               value: "http://{{ include "cordum.fullname" . }}-qwen-inference:8000/v1"
@@ -59,14 +67,6 @@ spec:
               value: {{ .Values.qwenInference.servedModelName | quote }}
             - name: LLMCHAT_PROVIDER
               value: "openai"
-            - name: LLMCHAT_TOOL_TEMPERATURE
-              value: {{ .Values.llmChat.sampling.toolTemperature | quote }}
-            - name: LLMCHAT_TOOL_TOP_P
-              value: {{ .Values.llmChat.sampling.toolTopP | quote }}
-            - name: LLMCHAT_SUMMARY_TEMPERATURE
-              value: {{ .Values.llmChat.sampling.summaryTemperature | quote }}
-            - name: LLMCHAT_SUMMARY_TOP_P
-              value: {{ .Values.llmChat.sampling.summaryTopP | quote }}
             {{- if .Values.global.tls.enabled }}
             - name: REDIS_TLS_CA
               value: /etc/cordum/tls/ca/ca.crt
@@ -87,33 +87,23 @@ spec:
             periodSeconds: 15
           resources:
             {{- toYaml .Values.llmChat.resources | nindent 12 }}
-          {{- if .Values.global.tls.enabled }}
           volumeMounts:
+            - name: llm-chat-config
+              mountPath: /etc/cordum/llmchat/system-prompt.md
+              subPath: system-prompt.md
+              readOnly: true
+            {{- if .Values.global.tls.enabled }}
             - name: tls-ca
               mountPath: /etc/cordum/tls/ca
               readOnly: true
-          {{- end }}
-      {{- if .Values.global.tls.enabled }}
+            {{- end }}
       volumes:
+        - name: llm-chat-config
+          configMap:
+            name: {{ include "cordum.fullname" . }}-llm-chat-config
+        {{- if .Values.global.tls.enabled }}
         - name: tls-ca
           secret:
             secretName: {{ .Values.global.tls.clientCertSecret | default (printf "%s-tls-client" (include "cordum.fullname" .)) }}
-      {{- end }}
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: {{ include "cordum.fullname" . }}-llm-chat
-  labels:
-    {{- include "cordum.labels" . | nindent 4 }}
-    app.kubernetes.io/component: llm-chat
-spec:
-  type: ClusterIP
-  ports:
-    - name: http
-      port: {{ .Values.llmChat.service.port }}
-      targetPort: http
-  selector:
-    {{- include "cordum.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: llm-chat
+        {{- end }}
 {{- end }}

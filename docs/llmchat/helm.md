@@ -32,6 +32,30 @@ cover the cold load. `llm-chat` uses `depends_on.qwen-inference.condition: servi
 its `/readyz` reports not-ready until vLLM is up — that gates the
 dashboard chat button automatically.
 
+For contributor rebuilds, layer the dev override:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+  --profile llmchat up --build
+```
+
+The dev override changes `llm-chat` to `cordum/llm-chat:dev` with
+`SERVICE=cordum-llm-chat` and resets the production NVIDIA reservation
+so laptops without the NVIDIA runtime can still validate Compose
+syntax. Add a local override if you want dev-mode GPU reservation
+enforcement.
+
+For production Compose deployments, use the TLS-mandatory release file:
+
+```bash
+export CORDUM_TLS_DIR=/path/to/tls
+export CORDUM_API_KEY="$(openssl rand -hex 32)"
+export REDIS_PASSWORD="$(openssl rand -hex 32)"
+export SAFETY_POLICY_PUBLIC_KEY=...
+export SAFETY_POLICY_SIGNATURE=...
+docker compose -f docker-compose.release.yml --profile llmchat up -d
+```
+
 ## Helm
 
 Install with the GPU-enabled defaults:
@@ -47,6 +71,8 @@ The `qwen-inference` Pod requires an NVIDIA GPU node; install the
 [nvidia-device-plugin](https://github.com/NVIDIA/k8s-device-plugin)
 DaemonSet on your GPU nodes first, and label the nodes to match
 `qwenInference.gpu.nodeSelector` (default: `accelerator: nvidia`).
+The chat-loop sampling, turn budgets, knowledge-pack settings, and
+stub system prompt render through `templates/configmap-llm-chat.yaml`.
 
 ### External vLLM mode
 

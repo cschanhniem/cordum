@@ -1,0 +1,5 @@
+llmChat:
+  enabled: false
+
+qwenInference:
+  enabled: false

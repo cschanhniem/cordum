@@ -530,9 +530,7 @@ services:
   # vLLM serving Qwen3-Coder-30B-A3B-Instruct-FP8 for the local LLM chat
   # assistant. Brought up only with `--profile llmchat` so the default
   # stack stays lean for users without a GPU. See docs/llmchat/helm.md
-  # for hardware-tier guidance and the qwen3_xml-vs-qwen3_coder parser
-  # rationale (the wrong parser emits `!!!!!!!!` infinite streams on
-  # long tool-heavy conversations — model-card upstream is outdated).
+  # for hardware-tier guidance and the qwen3_xml parser rationale.
   qwen-inference:
     profiles: [llmchat]
     image: vllm/vllm-openai:latest
@@ -553,7 +551,10 @@ services:
       - --gpu-memory-utilization
       - "0.9"
       - --host
-      - 127.0.0.1
+      # Bind to the container bridge so llm-chat can reach vLLM via
+      # http://qwen-inference:8000/v1. The host exposure boundary remains
+      # the loopback-only port mapping below.
+      - 0.0.0.0
       - --port
       - "8000"
     deploy:
@@ -564,9 +565,9 @@ services:
               count: all
               capabilities: [gpu]
     ports:
-      # Loopback ONLY. llm-chat is the sole legitimate client; binding
-      # to 0.0.0.0 here would expose the inference endpoint externally
-      # and is a P0 (see security review task-6cda949c).
+      # Loopback ONLY on the host. The vLLM process binds to the container
+      # bridge above for Docker DNS reachability, but the inference endpoint
+      # is not exposed off-host.
       - "127.0.0.1:8000:8000"
     volumes:
       - qwen_hf_cache:/root/.cache/huggingface
@@ -607,6 +608,8 @@ services:
       # accordingly.
       qwen-inference:
         condition: service_started
+      api-gateway:
+        condition: service_healthy
       redis:
         condition: service_healthy
       nats:
@@ -623,6 +626,7 @@ services:
       - NATS_TLS_CERT=/etc/cordum/tls/client/tls.crt
       - NATS_TLS_KEY=/etc/cordum/tls/client/tls.key
       - NATS_TLS_SERVER_NAME=nats
+      - CORDUM_GATEWAY_URL=${CORDUM_GATEWAY_URL:-https://api-gateway:8081}
       - LLMCHAT_BASE_URL=http://qwen-inference:8000/v1
       - LLMCHAT_MODEL=qwen3-coder
       - LLMCHAT_PROVIDER=openai

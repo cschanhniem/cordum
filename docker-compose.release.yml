@@ -299,6 +299,111 @@ services:
       retries: 3
       start_period: 10s
 
+  qwen-inference:
+    profiles: [llmchat]
+    image: vllm/vllm-openai:latest
+    restart: unless-stopped
+    command:
+      - --model
+      - Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8
+      - --served-model-name
+      - qwen3-coder
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_xml
+      - --max-model-len
+      - "131072"
+      - --kv-cache-dtype
+      - fp8
+      - --enable-prefix-caching
+      - --gpu-memory-utilization
+      - "0.9"
+      - --host
+      # Container-network reachability for llm-chat. Host exposure is still
+      # loopback-only via the port mapping below.
+      - 0.0.0.0
+      - --port
+      - "8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - qwen_hf_cache:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://127.0.0.1:8000/v1/models || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 300s
+
+  llm-chat:
+    profiles: [llmchat]
+    image: ghcr.io/cordum-io/cordum/llm-chat:${CORDUM_VERSION:-latest}
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    depends_on:
+      qwen-inference:
+        condition: service_started
+      api-gateway:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    environment:
+      CORDUM_ENV: production
+      CORDUM_API_KEY: "${CORDUM_API_KEY:?error: CORDUM_API_KEY is not set}"
+      CORDUM_GATEWAY_URL: "${CORDUM_GATEWAY_URL:-https://api-gateway:8081}"
+      CORDUM_LLM_CHAT_TLS_CERT_FILE: /etc/cordum/tls/server/tls.crt
+      CORDUM_LLM_CHAT_TLS_KEY_FILE: /etc/cordum/tls/server/tls.key
+      REDIS_URL: "rediss://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379"
+      REDIS_TLS_CA: /etc/cordum/tls/ca/ca.crt
+      REDIS_TLS_CERT: /etc/cordum/tls/client/tls.crt
+      REDIS_TLS_KEY: /etc/cordum/tls/client/tls.key
+      REDIS_TLS_SERVER_NAME: redis
+      NATS_URL: "tls://nats:4222"
+      NATS_TLS_CA: /etc/cordum/tls/ca/ca.crt
+      NATS_TLS_CERT: /etc/cordum/tls/client/tls.crt
+      NATS_TLS_KEY: /etc/cordum/tls/client/tls.key
+      NATS_TLS_SERVER_NAME: nats
+      LLMCHAT_BASE_URL: http://qwen-inference:8000/v1
+      LLMCHAT_MODEL: qwen3-coder
+      LLMCHAT_PROVIDER: openai
+      LLMCHAT_TOOL_TEMPERATURE: "${LLMCHAT_TOOL_TEMPERATURE:-0.3}"
+      LLMCHAT_TOOL_TOP_P: "${LLMCHAT_TOOL_TOP_P:-0.9}"
+      LLMCHAT_SUMMARY_TEMPERATURE: "${LLMCHAT_SUMMARY_TEMPERATURE:-0.7}"
+      LLMCHAT_SUMMARY_TOP_P: "${LLMCHAT_SUMMARY_TOP_P:-0.8}"
+      LLMCHAT_MAX_TOOL_CALLS_PER_TURN: "${LLMCHAT_MAX_TOOL_CALLS_PER_TURN:-12}"
+      LLMCHAT_MAX_WALL_CLOCK_PER_TURN: "${LLMCHAT_MAX_WALL_CLOCK_PER_TURN:-60s}"
+      LLMCHAT_MAX_ASSISTANT_BYTES: "${LLMCHAT_MAX_ASSISTANT_BYTES:-32768}"
+    volumes:
+      - "${CORDUM_TLS_DIR:?error: CORDUM_TLS_DIR is not set}:/etc/cordum/tls:ro"
+    ports:
+      - "8090:8090"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "--no-check-certificate", "https://127.0.0.1:8090/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+
 volumes:
   nats_data:
   redis_data:
+  qwen_hf_cache:

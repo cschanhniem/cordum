@@ -1,0 +1,6 @@
+llmChat:
+  enabled: true
+  externalBaseUrl: "http://external-vllm.example.internal:8000/v1"
+
+qwenInference:
+  enabled: false
