@@ -108,7 +108,7 @@ func TestLoadConfigFromEnv_AllOverridesRead(t *testing.T) {
 		t.Fatalf("HTTPAddr = %q, want :9090", cfg.HTTPAddr)
 	}
 	if cfg.TLSCertFile != "/tls/tls.crt" || cfg.TLSKeyFile != "/tls/tls.key" {
-		t.Fatalf("TLS = %q/%q, want /tls/tls.crt //tls/tls.key", cfg.TLSCertFile, cfg.TLSKeyFile)
+		t.Fatalf("TLS = %q/%q, want /tls/tls.crt /tls/tls.key", cfg.TLSCertFile, cfg.TLSKeyFile)
 	}
 	if cfg.CordumAPIKey != "sekret" {
 		t.Fatalf("CordumAPIKey = %q, want sekret", cfg.CordumAPIKey)

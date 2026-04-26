@@ -1174,7 +1174,7 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 	s.registerRoute(mux, "GET /api/v1/chat/stream", s.instrumented("/api/v1/chat/stream", s.handleLLMChatProxy))
 	s.registerRoute(mux, "GET /api/v1/chat/ws", s.instrumented("/api/v1/chat/ws", s.handleLLMChatProxy))
 	s.registerRoute(mux, "GET /api/v1/chat/sessions", s.instrumented("/api/v1/chat/sessions", s.handleLLMChatProxy))
-	s.registerRoute(mux, "GET /api/v1/chat/sessions/{sessionId}", s.instrumented("/api/v1/chat/sessions/:sessionId", s.handleLLMChatProxy))
+	s.registerRoute(mux, "GET /api/v1/chat/sessions/{sessionId}", s.instrumented("/api/v1/chat/sessions/{sessionId}", s.handleLLMChatProxy))
 	s.registerRoute(mux, "GET /api/v1/telemetry/status", s.instrumented("/api/v1/telemetry/status", s.handleGetTelemetryStatus))
 	s.registerRoute(mux, "GET /api/v1/telemetry/inspect", s.instrumented("/api/v1/telemetry/inspect", s.handleGetTelemetryInspect))
 	s.registerRoute(mux, "GET /api/v1/telemetry/export", s.instrumented("/api/v1/telemetry/export", s.handleGetTelemetryExport))
@@ -1213,7 +1213,7 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 
 	// 3. Jobs (Redis ZSet)
 	s.registerRoute(mux, "GET /api/v1/jobs", s.instrumented("/api/v1/jobs", s.handleListJobs))
-	s.registerRoute(mux, "GET /api/v1/copilot/sessions/{sessionId}", s.instrumented("/api/v1/copilot/sessions/:sessionId", s.handleGetCopilotSession))
+	s.registerRoute(mux, "GET /api/v1/copilot/sessions/{sessionId}", s.instrumented("/api/v1/copilot/sessions/{sessionId}", s.handleGetCopilotSession))
 
 	// 4. Job Details
 	s.registerRoute(mux, "GET /api/v1/jobs/{id}", s.instrumented("/api/v1/jobs/{id}", s.handleGetJob))
