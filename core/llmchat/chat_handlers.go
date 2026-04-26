@@ -29,6 +29,12 @@ const (
 	wsWriteQueueSize   = 64
 )
 
+var (
+	errChatAuthRequired     = errors.New("chat authentication required")
+	errChatSessionNotFound  = errors.New("chat session not found")
+	errChatSessionForbidden = errors.New("chat session not found")
+)
+
 // chatRunner runs a user turn against the phase-4 agent loop.
 type chatRunner interface {
 	Turn(ctx context.Context, in TurnInput) <-chan Frame
@@ -371,6 +377,12 @@ func (h *ChatHandlers) resolveOrCreateSession(ctx context.Context, r *http.Reque
 	user := strings.TrimSpace(h.userPrincipalFn(r))
 	tenant := strings.TrimSpace(h.tenantFn(r))
 	sessionID = strings.TrimSpace(sessionID)
+	if user == "" || tenant == "" {
+		if sessionID != "" {
+			return nil, errChatSessionNotFound
+		}
+		return nil, errChatAuthRequired
+	}
 	if sessionID != "" {
 		existing, err := h.sessions.Get(ctx, sessionID)
 		if err != nil {
@@ -381,7 +393,9 @@ func (h *ChatHandlers) resolveOrCreateSession(ctx context.Context, r *http.Reque
 		}
 		if existing != nil {
 			slog.Warn("llmchat: forged or cross-tenant chat session id rejected", "session_id", sessionID, "tenant", tenant)
+			return nil, errChatSessionForbidden
 		}
+		return nil, errChatSessionNotFound
 	}
 	created, err := h.sessions.Create(ctx, Session{ID: uuid.NewString(), UserPrincipal: user, Tenant: tenant, AgentID: h.agentID})
 	if err != nil {
@@ -394,13 +408,12 @@ func sessionVisibleToUser(sess *Session, user, tenant string) bool {
 	if sess == nil {
 		return false
 	}
-	if user != "" && sess.UserPrincipal != "" && sess.UserPrincipal != user {
+	user = strings.TrimSpace(user)
+	tenant = strings.TrimSpace(tenant)
+	if user == "" || tenant == "" || strings.TrimSpace(sess.UserPrincipal) == "" || strings.TrimSpace(sess.Tenant) == "" {
 		return false
 	}
-	if tenant != "" && sess.Tenant != "" && sess.Tenant != tenant {
-		return false
-	}
-	return true
+	return sess.UserPrincipal == user && sess.Tenant == tenant
 }
 
 func (h *ChatHandlers) ensureDelegation(ctx context.Context, session *Session) (string, error) {
@@ -484,14 +497,14 @@ func defaultUserPrincipal(r *http.Request) string {
 	if auth := gatewayauth.FromRequest(r); auth != nil && auth.PrincipalID != "" {
 		return auth.PrincipalID
 	}
-	return firstNonEmpty(r.Header.Get("X-Cordum-User-Principal"), r.Header.Get("X-Principal-Id"))
+	return ""
 }
 
 func defaultTenant(r *http.Request) string {
 	if auth := gatewayauth.FromRequest(r); auth != nil && auth.Tenant != "" {
 		return auth.Tenant
 	}
-	return firstNonEmpty(r.Header.Get("X-Cordum-Tenant"), r.Header.Get("X-Tenant-ID"))
+	return ""
 }
 
 func writeChatError(w http.ResponseWriter, status int, code, msg string) {
@@ -502,12 +515,24 @@ func httpStatusForChatError(err error) int {
 	if errors.Is(err, errSessionMissing) {
 		return http.StatusServiceUnavailable
 	}
+	if errors.Is(err, errChatAuthRequired) {
+		return http.StatusUnauthorized
+	}
+	if errors.Is(err, errChatSessionNotFound) || errors.Is(err, errChatSessionForbidden) {
+		return http.StatusNotFound
+	}
 	return http.StatusInternalServerError
 }
 
 func chatErrorCode(err error) string {
 	if errors.Is(err, errSessionMissing) {
 		return "session_store_unavailable"
+	}
+	if errors.Is(err, errChatAuthRequired) {
+		return "authentication_required"
+	}
+	if errors.Is(err, errChatSessionNotFound) || errors.Is(err, errChatSessionForbidden) {
+		return "not_found"
 	}
 	return "chat_failed"
 }

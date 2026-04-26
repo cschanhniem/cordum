@@ -104,17 +104,21 @@ func (r *ApprovalResumer) handleEvent(ctx context.Context, ev ApprovalEvent) err
 		return nil
 	}
 	pending, ok := r.pending[approvalID]
-	if ok {
-		delete(r.pending, approvalID)
-		r.done[approvalID] = struct{}{}
-	}
-	r.mu.Unlock()
 	if !ok {
+		r.mu.Unlock()
 		return nil
 	}
 	if ev.AgentID != "" && pending.AgentID != "" && ev.AgentID != pending.AgentID {
+		r.mu.Unlock()
 		return nil
 	}
+	if ev.SessionID != "" && pending.Session != nil && pending.Session.ID != "" && ev.SessionID != pending.Session.ID {
+		r.mu.Unlock()
+		return nil
+	}
+	delete(r.pending, approvalID)
+	r.done[approvalID] = struct{}{}
+	r.mu.Unlock()
 	runner := pending.Runner
 	if runner == nil {
 		runner = r.runner

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
+	gatewayauth "github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/logging"
@@ -166,6 +167,9 @@ func main() {
 
 	entitlementResolver := licensing.NewEntitlementResolver()
 	entitlementResolver.Init()
+	permissionChecker := gatewayauth.NewPermissionChecker(gatewayauth.NewRBACStoreFromClient(redisClient), func() licensing.Entitlements {
+		return entitlementResolver.Entitlements()
+	})
 	agent := llmchat.NewAgent(llmchat.AgentConfig{
 		Provider:     provider,
 		MCP:          mcpClient,
@@ -196,6 +200,7 @@ func main() {
 		Agent:        agent,
 		Sessions:     sessionStore,
 		Entitlements: entitlementResolver,
+		Permissions:  permissionChecker,
 		Delegations:  delegationClient,
 		Audit:        auditSender,
 		Approvals:    approvalResumer,

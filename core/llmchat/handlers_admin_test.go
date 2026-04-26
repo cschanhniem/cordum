@@ -85,6 +85,47 @@ func TestChatAdminDetailTranscriptAndCrossTenantNotFound(t *testing.T) {
 	}
 }
 
+func TestChatAdminRejectsSpoofedAdminHeadersWithoutTrustedAuth(t *testing.T) {
+	sessions := newFakeChatSessionStore()
+	seedSession(t, sessions, "sess-a", "tenant-a", "alice")
+
+	h := newTestChatHandlers(&scriptedChatRunner{}, sessions, true)
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/chat/sessions", nil)
+	listReq.Header.Set("X-Role", "admin")
+	listReq.Header.Set("X-Cordum-Role", "admin")
+	listReq.Header.Set("X-Cordum-Global-Admin", "true")
+	list := httptest.NewRecorder()
+	h.HandleListSessions(list, listReq)
+	if list.Code != http.StatusForbidden {
+		t.Fatalf("spoofed list status=%d body=%s want 403", list.Code, list.Body.String())
+	}
+
+	detailReq := httptest.NewRequest(http.MethodGet, "/api/v1/chat/sessions/sess-a", nil)
+	detailReq.Header.Set("X-Role", "admin")
+	detailReq.Header.Set("X-Cordum-Role", "admin")
+	detailReq.Header.Set("X-Cordum-Global-Admin", "true")
+	detail := httptest.NewRecorder()
+	h.HandleGetSession(detail, detailReq, "sess-a")
+	if detail.Code != http.StatusForbidden {
+		t.Fatalf("spoofed detail status=%d body=%s want 403", detail.Code, detail.Body.String())
+	}
+}
+
+func TestChatAdminFailsClosedWithoutPermissionChecker(t *testing.T) {
+	sessions := newFakeChatSessionStore()
+	seedSession(t, sessions, "sess-a", "tenant-a", "alice")
+
+	h := newTestChatHandlers(&scriptedChatRunner{}, sessions, true)
+	req := withLLMAuth(httptest.NewRequest(http.MethodGet, "/api/v1/chat/sessions", nil), "tenant-a", "admin-a", "admin", false)
+	rr := httptest.NewRecorder()
+	h.HandleListSessions(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("trusted admin without permission checker status=%d body=%s want 403", rr.Code, rr.Body.String())
+	}
+}
+
 func seedSession(t *testing.T, store *fakeChatSessionStore, id, tenant, principal string) *Session {
 	t.Helper()
 	sess, err := store.Create(context.Background(), Session{ID: id, Tenant: tenant, UserPrincipal: principal, AgentID: "chat-assistant"})

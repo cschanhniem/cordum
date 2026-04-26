@@ -115,29 +115,19 @@ func (h *ChatHandlers) requireChatReadAll(w http.ResponseWriter, r *http.Request
 		}
 		return true
 	}
-	if auth := gatewayauth.FromRequest(r); auth != nil && strings.EqualFold(auth.Role, "admin") {
-		return true
-	}
-	if strings.EqualFold(firstNonEmpty(r.Header.Get("X-Cordum-Role"), r.Header.Get("X-Role")), "admin") {
-		return true
-	}
-	writeChatError(w, http.StatusForbidden, "forbidden", gatewayauth.PermChatReadAll+" required")
+	writeChatError(w, http.StatusForbidden, "forbidden", gatewayauth.PermChatReadAll+" permission checker required")
 	return false
 }
 
 func adminCanSeeSession(r *http.Request, sess *Session) bool {
 	auth := gatewayauth.FromRequest(r)
-	if auth != nil {
-		if auth.AllowCrossTenant {
-			return true
-		}
-		return strings.TrimSpace(auth.Tenant) == "" || strings.TrimSpace(sess.Tenant) == strings.TrimSpace(auth.Tenant)
+	if auth == nil {
+		return false
 	}
-	if strings.EqualFold(firstNonEmpty(r.Header.Get("X-Cordum-Global-Admin"), r.Header.Get("X-Global-Admin")), "true") {
+	if auth.AllowCrossTenant {
 		return true
 	}
-	tenant := firstNonEmpty(r.Header.Get("X-Cordum-Tenant"), r.Header.Get("X-Tenant-ID"))
-	return tenant == "" || strings.TrimSpace(sess.Tenant) == tenant
+	return strings.TrimSpace(auth.Tenant) != "" && strings.TrimSpace(sess.Tenant) == strings.TrimSpace(auth.Tenant)
 }
 
 func parseSessionListLimit(raw string) int {

@@ -305,6 +305,95 @@ func TestChatHandlers_StreamSSEFrames(t *testing.T) {
 	}
 }
 
+func TestChatHandlers_ResumeRequiresTrustedNonEmptyPrincipalAndTenant(t *testing.T) {
+	sessions := newFakeChatSessionStore()
+	seedSession(t, sessions, "sess-victim", "tenant-a", "alice")
+	runner := &scriptedChatRunner{}
+	h := NewChatHandlers(ChatHandlersConfig{
+		Agent:           runner,
+		Sessions:        sessions,
+		Entitlements:    fakeEntitlements{enabled: true},
+		AgentID:         "chat-assistant",
+		UserPrincipalFn: func(*http.Request) string { return "" },
+		TenantFn:        func(*http.Request) string { return "" },
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat", bytes.NewBufferString(`{"session_id":"sess-victim","message":"hi"}`))
+	rr := httptest.NewRecorder()
+	h.HandleChatPost(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status=%d body=%s want 404 for session resume without trusted identity", rr.Code, rr.Body.String())
+	}
+	turns, _ := runner.snapshot()
+	if len(turns) != 0 {
+		t.Fatalf("turns=%+v want no agent turn for unauthenticated resume", turns)
+	}
+	if sessions.createdN != 1 {
+		t.Fatalf("createdN=%d want only seeded session, no replacement", sessions.createdN)
+	}
+}
+
+func TestChatHandlers_DefaultIdentityIgnoresSpoofedHeaders(t *testing.T) {
+	sessions := newFakeChatSessionStore()
+	seedSession(t, sessions, "sess-victim", "tenant-a", "alice")
+	runner := &scriptedChatRunner{}
+	h := NewChatHandlers(ChatHandlersConfig{
+		Agent:        runner,
+		Sessions:     sessions,
+		Entitlements: fakeEntitlements{enabled: true},
+		AgentID:      "chat-assistant",
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat", bytes.NewBufferString(`{"session_id":"sess-victim","message":"hi"}`))
+	req.Header.Set("X-Cordum-User-Principal", "alice")
+	req.Header.Set("X-Principal-Id", "alice")
+	req.Header.Set("X-Cordum-Tenant", "tenant-a")
+	req.Header.Set("X-Tenant-ID", "tenant-a")
+	rr := httptest.NewRecorder()
+	h.HandleChatPost(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status=%d body=%s want 404 for spoofed header resume without trusted auth", rr.Code, rr.Body.String())
+	}
+	turns, _ := runner.snapshot()
+	if len(turns) != 0 {
+		t.Fatalf("turns=%+v want no agent turn for spoofed header resume", turns)
+	}
+	if sessions.createdN != 1 {
+		t.Fatalf("createdN=%d want only seeded session, no replacement", sessions.createdN)
+	}
+}
+
+func TestChatHandlers_ForgedSessionIDDoesNotCreateReplacement(t *testing.T) {
+	sessions := newFakeChatSessionStore()
+	seedSession(t, sessions, "sess-victim", "tenant-a", "alice")
+	runner := &scriptedChatRunner{}
+	h := NewChatHandlers(ChatHandlersConfig{
+		Agent:           runner,
+		Sessions:        sessions,
+		Entitlements:    fakeEntitlements{enabled: true},
+		AgentID:         "chat-assistant",
+		UserPrincipalFn: func(*http.Request) string { return "bob" },
+		TenantFn:        func(*http.Request) string { return "tenant-a" },
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat", bytes.NewBufferString(`{"session_id":"sess-victim","message":"hi"}`))
+	rr := httptest.NewRecorder()
+	h.HandleChatPost(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status=%d body=%s want 404 for forged session id", rr.Code, rr.Body.String())
+	}
+	turns, _ := runner.snapshot()
+	if len(turns) != 0 {
+		t.Fatalf("turns=%+v want no agent turn for forged session", turns)
+	}
+	if sessions.createdN != 1 {
+		t.Fatalf("createdN=%d want only seeded session, no replacement", sessions.createdN)
+	}
+}
+
 func TestChatFrameSchemaPinned(t *testing.T) {
 	frames := []Frame{
 		{Type: FrameUser, Text: "hello", SessionID: "sess-1"},
