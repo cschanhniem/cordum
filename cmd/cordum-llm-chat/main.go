@@ -227,6 +227,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", handlers.Healthz)
 	mux.HandleFunc("/readyz", handlers.Readyz)
+	mux.HandleFunc("/api/v1/chat/healthz", handlers.Readyz)
 
 	// Trusted-forwarder auth middleware. Every chat / admin route MUST
 	// go through this so handlers see a populated gatewayauth.AuthContext

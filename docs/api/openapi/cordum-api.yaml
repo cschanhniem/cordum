@@ -61,6 +61,8 @@ tags:
   description: Topic registry for job routing and worker discovery
 - name: License
   description: Platform license status, usage metrics, and reload (admin only)
+- name: LLMChat
+  description: Qwen-backed LLM chat assistant gateway proxy
 - name: Telemetry
   description: Observability export configuration, consent, and usage stats
 - name: AuditExport
@@ -3735,6 +3737,197 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/chat/healthz:
+    get:
+      operationId: getLLMChatHealth
+      summary: Check LLM chat assistant readiness
+      description: Proxies to cordum-llm-chat readiness. The dashboard uses this response to hide the chat button while vLLM or Redis is unavailable.
+      tags:
+      - LLMChat
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      responses:
+        '200':
+          description: LLM chat dependencies are ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  redis:
+                    type: string
+                    example: ok
+                  vllm:
+                    type: string
+                    example: ok
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/TierLimit'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/chat:
+    post:
+      operationId: postLLMChat
+      summary: Send a single LLM chat message
+      description: Proxies an authenticated single-shot chat turn to cordum-llm-chat.
+      tags:
+      - LLMChat
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - message
+              properties:
+                session_id:
+                  type: string
+                message:
+                  type: string
+      responses:
+        '200':
+          description: Chat turn result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericObject'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/TierLimit'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/chat/stream:
+    get:
+      operationId: streamLLMChat
+      summary: Stream an LLM chat turn with Server-Sent Events
+      tags:
+      - LLMChat
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: session_id
+        in: query
+        schema:
+          type: string
+      - name: message
+        in: query
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: SSE stream of chat frames
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/TierLimit'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/chat/ws:
+    get:
+      operationId: websocketLLMChat
+      summary: Open the LLM chat assistant WebSocket
+      description: Upgrades to a WebSocket and streams chat frames for the Gmail-style dashboard widget.
+      tags:
+      - LLMChat
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: session_id
+        in: query
+        schema:
+          type: string
+      responses:
+        '101':
+          description: WebSocket upgrade
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/TierLimit'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/chat/sessions:
+    get:
+      operationId: listLLMChatSessions
+      summary: List LLM chat sessions
+      tags:
+      - LLMChat
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: cursor
+        in: query
+        schema:
+          type: string
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          default: 50
+      responses:
+        '200':
+          description: Chat session page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericObject'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/chat/sessions/{sessionId}:
+    get:
+      operationId: getLLMChatSession
+      summary: Get an LLM chat session transcript
+      tags:
+      - LLMChat
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: sessionId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Chat session transcript
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericObject'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
   /api/v1/telemetry/status:

@@ -58,7 +58,9 @@ export function useChatAssistantAvailability(): AvailabilityStatus {
   const lastEntitledRef = useRef<boolean | null>(null);
 
   const features = license?.entitlements?.features;
-  const entitled = !!(features && features["llm_chat_assistant"]);
+  const entitled =
+    !!license?.entitlements?.llmChatAssistant ||
+    !!(features && features["llm_chat_assistant"]);
 
   useEffect(() => {
     // Update visible status if entitlement state flipped.

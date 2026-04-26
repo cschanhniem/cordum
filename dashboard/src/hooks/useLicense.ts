@@ -45,6 +45,7 @@ type BackendLicenseEntitlements = {
   velocity_rules?: boolean;
   break_glass_admin?: boolean;
   agent_identity?: boolean;
+  llm_chat_assistant?: boolean;
   features?: Record<string, boolean>;
   limits?: Record<string, number>;
 };
@@ -117,6 +118,11 @@ function mapLicenseEntitlements(entitlements?: BackendLicenseEntitlements | null
     return {};
   }
 
+  const features = { ...(entitlements.features ?? {}) };
+  if (entitlements.llm_chat_assistant !== undefined) {
+    features.llm_chat_assistant = !!entitlements.llm_chat_assistant;
+  }
+
   return {
     approvalMode: entitlements.approval_mode,
     telemetryMode: entitlements.telemetry_mode,
@@ -143,7 +149,8 @@ function mapLicenseEntitlements(entitlements?: BackendLicenseEntitlements | null
     velocityRules: entitlements.velocity_rules,
     breakGlassAdmin: entitlements.break_glass_admin,
     agentIdentity: entitlements.agent_identity,
-    features: entitlements.features,
+    llmChatAssistant: entitlements.llm_chat_assistant,
+    features: Object.keys(features).length > 0 ? features : undefined,
     limits: entitlements.limits,
   };
 }
@@ -198,9 +205,21 @@ function mapLicenseUsage(usage?: BackendLicenseUsage): LicenseUsage {
 }
 
 function mapLicenseSummary(response: BackendLicenseSummary): LicenseSummary {
+  const entitlements = mapLicenseEntitlements(response.entitlements);
+  if (
+    !entitlements.features?.llm_chat_assistant &&
+    response.license?.features?.includes("llm_chat_assistant")
+  ) {
+    entitlements.llmChatAssistant = true;
+    entitlements.features = {
+      ...(entitlements.features ?? {}),
+      llm_chat_assistant: true,
+    };
+  }
+
   return {
     plan: response.plan ?? "community",
-    entitlements: mapLicenseEntitlements(response.entitlements),
+    entitlements,
     rights: mapLicenseRights(response.rights),
     license: mapLicenseInfo(response.license),
     expiryStatus: response.expiry_status,

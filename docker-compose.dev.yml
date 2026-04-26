@@ -58,6 +58,8 @@ services:
     build:
       context: ./dashboard
       dockerfile: Dockerfile
+      args:
+        VITE_LLM_CHAT_ASSISTANT: ${VITE_LLM_CHAT_ASSISTANT:-true}
 
   llm-chat:
     image: cordum/llm-chat:dev

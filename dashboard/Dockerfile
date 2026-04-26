@@ -13,6 +13,8 @@ COPY package.json package-lock.json ./
 RUN npm install --legacy-peer-deps --no-audit --no-fund
 
 COPY . .
+ARG VITE_LLM_CHAT_ASSISTANT=true
+ENV VITE_LLM_CHAT_ASSISTANT=${VITE_LLM_CHAT_ASSISTANT}
 RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine

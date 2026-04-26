@@ -252,4 +252,17 @@ describe("useLicense hooks", () => {
       agentIdentity: true,
     });
   });
+
+  it("maps llm_chat_assistant into the feature map consumed by the chat widget", () => {
+    expect(
+      __licenseInternal.mapLicenseEntitlements({
+        llm_chat_assistant: true,
+      }),
+    ).toMatchObject({
+      llmChatAssistant: true,
+      features: {
+        llm_chat_assistant: true,
+      },
+    });
+  });
 });

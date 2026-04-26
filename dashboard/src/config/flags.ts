@@ -35,7 +35,8 @@ export const FEATURE_FLAGS = {
     import.meta.env.VITE_DELEGATION_DASHBOARD === "true",
   // LLM chat assistant widget is gated on the Enterprise license entitlement
   // and the cordum-llm-chat service health probe; this flag is the master kill
-  // switch so operators can dark-launch independently of license state.
+  // switch so operators can dark-launch independently of license state. Default
+  // on; set VITE_LLM_CHAT_ASSISTANT=false to force-hide the widget.
   llmChatAssistant:
-    import.meta.env.VITE_LLM_CHAT_ASSISTANT === "true",
+    import.meta.env.VITE_LLM_CHAT_ASSISTANT !== "false",
 } as const;

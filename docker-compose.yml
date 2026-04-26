@@ -265,6 +265,7 @@ services:
       # — set to `true` only in trusted dev environments.
       - CORDUM_DASHBOARD_EMBED_API_KEY=${CORDUM_DASHBOARD_EMBED_API_KEY:-false}
       - TENANT_ID=default
+      - CORDUM_LLM_CHAT_URL=${CORDUM_LLM_CHAT_URL:-http://llm-chat:8090}
       - CORDUM_LICENSE_TOKEN=${CORDUM_LICENSE_TOKEN:-}
       - CORDUM_LICENSE_PUBLIC_KEY=${CORDUM_LICENSE_PUBLIC_KEY:-}
       - CORDUM_POLICY_SIGNING_KEY_ID=${CORDUM_POLICY_SIGNING_KEY_ID:-dev-local}
@@ -399,6 +400,8 @@ services:
     build:
       context: ./dashboard
       dockerfile: Dockerfile
+      args:
+        VITE_LLM_CHAT_ASSISTANT: ${VITE_LLM_CHAT_ASSISTANT:-true}
     depends_on:
       api-gateway:
         condition: service_healthy

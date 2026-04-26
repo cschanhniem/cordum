@@ -1299,6 +1299,7 @@ export interface LicenseEntitlements {
   velocityRules?: boolean;
   breakGlassAdmin?: boolean;
   agentIdentity?: boolean;
+  llmChatAssistant?: boolean;
   features?: Record<string, boolean>;
   limits?: Record<string, number>;
 }
