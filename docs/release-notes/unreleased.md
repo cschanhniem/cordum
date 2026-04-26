@@ -4,6 +4,33 @@ This file captures user-visible changes that have landed on `main` but
 have not yet been cut into a release. When a release is tagged, copy
 these entries into a versioned release note and reset this file.
 
+## What's new
+
+**Cordum LLM Chat Assistant** — ask Cordum questions in natural
+language and let a governance-approved agent run actions for you.
+Self-hosted on your own GPUs (H100 production / A100 supported / RTX
+5090 design-partner preview). Every action traverses your existing
+approval + audit pipeline; admins can review every chat session via
+**Settings → Chat Sessions**.
+
+The assistant sits behind the gateway as a regular MCP client — it
+can't bypass any policy bundle, safety kernel rule, or approval
+gate. Read tools run freely; `cordum_submit_job` is preapproved;
+every other mutation surfaces an inline Approve / Reject prompt in
+the chat panel.
+
+- **License gate.** Enterprise tier default ON; Community tier
+  default OFF (returns HTTP 402 `feature_unavailable`).
+- **Default policy bundle** ships at
+  `config/llmchat/policy-default.yaml` — import via the existing
+  `POST /api/v1/policy/bundles` flow.
+- **Hardware tier matrix.** See
+  [`docs/llmchat/hardware-tiers.md`](../llmchat/hardware-tiers.md).
+- **Operator docs.** See
+  [`docs/llmchat/overview.md`](../llmchat/overview.md) for the
+  index of provider config / policy bundle / hardware tier /
+  troubleshooting pages.
+
 ## Changed
 
 - **core: extracted the Unix-timestamp → RFC3339 formatter into
