@@ -1199,6 +1199,11 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 	// that had /api/v1/audit/verify 404ing on fresh deploys despite the
 	// handler being fully implemented and unit-tested.
 	s.registerRoute(mux, "GET /api/v1/audit/verify", s.instrumented("/api/v1/audit/verify", s.handleAuditVerify))
+	// 2.7.2 Audit chain query (admin only) — handler lives in
+	// handlers_audit_query.go. Backs the MCP audit_query tool
+	// (core/mcp/bridge_readonly.go:233); without this route registered
+	// every chat copilot call to audit_query 404'd at runtime.
+	s.registerRoute(mux, "GET /api/v1/audit/query", s.instrumented("/api/v1/audit/query", s.handleAuditQuery))
 	s.registerRoute(mux, "GET /api/v1/governance/health", s.instrumented("/api/v1/governance/health", s.handleGovernanceHealth))
 
 	// 2.8 Legal hold management (admin only, entitlement-gated)
