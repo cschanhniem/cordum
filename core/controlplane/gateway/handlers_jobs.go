@@ -1791,12 +1791,12 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_denied", jobID, req.Topic, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "submit-time policy denied: "+reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
-		writeJSON(w, map[string]any{
+		writeJSON(w, mergeResponseFields(map[string]any{
 			"error":    reason,
 			"status":   http.StatusForbidden,
 			"job_id":   jobID,
 			"trace_id": traceID,
-		})
+		}, safetyDecisionResponseFields(policyResult, "")))
 		return
 	}
 	if policyResult.Throttled {
@@ -1806,7 +1806,13 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_throttled", jobID, req.Topic, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "submit-time policy throttled: "+reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
 		w.Header().Set("Retry-After", "30")
-		writeErrorJSON(w, http.StatusTooManyRequests, reason)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		writeJSON(w, mergeResponseFields(map[string]any{
+			"error":  reason,
+			"status": http.StatusTooManyRequests,
+			"job_id": jobID,
+		}, safetyDecisionResponseFields(policyResult, "")))
 		return
 	}
 
@@ -1950,11 +1956,12 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 
 		w.Header().Set("X-Trace-Id", traceID)
 		w.Header().Set("Content-Type", "application/json")
-		writeJSON(w, map[string]string{
-			"job_id": jobID,
-			"status": "approval_required",
-			"reason": policyResult.Reason,
-		})
+		writeJSON(w, mergeResponseFields(map[string]any{
+			"job_id":   jobID,
+			"trace_id": traceID,
+			"status":   "approval_required",
+			"reason":   policyResult.Reason,
+		}, safetyDecisionResponseFields(policyResult, jobID)))
 		return
 	}
 
@@ -2122,10 +2129,10 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	s.appendSubmitSafetyDecisionAudit(r.Context(), "submit", jobID, req.Topic, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "submit job "+jobID, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
 	w.Header().Set("X-Trace-Id", traceID)
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, map[string]string{
+	writeJSON(w, mergeResponseFields(map[string]any{
 		"job_id":   jobID,
 		"trace_id": traceID,
-	})
+	}, safetyDecisionResponseFields(policyResult, "")))
 }
 
 func (s *server) validateSubmitJobSchema(ctx context.Context, req submitJobRequest, tenantID string, reg *topicregistry.Registration) ([]schemaValidationError, error) {
