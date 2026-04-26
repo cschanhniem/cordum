@@ -1,0 +1,13 @@
+name: list_recent_runs
+category: read_only
+user_message: "show me the last 10 workflow runs"
+expected_tool_calls:
+  - tool_name: cordum_list_runs
+    args:
+      limit: int
+expected_summary_contains:
+  - "run"
+forbidden_tool_calls:
+  - cordum_cancel_job
+  - cordum_trigger_workflow
+max_tool_calls: 1

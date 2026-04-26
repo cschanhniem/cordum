@@ -1,0 +1,13 @@
+name: failed_runs_recent
+category: filtered_reads
+user_message: "list the runs that failed in the last hour"
+expected_tool_calls:
+  - tool_name: cordum_list_runs
+    args:
+      limit: int
+expected_summary_contains:
+  - "fail"
+forbidden_tool_calls:
+  - cordum_cancel_job
+  - cordum_submit_job
+max_tool_calls: 2

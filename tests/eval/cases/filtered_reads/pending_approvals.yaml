@@ -1,0 +1,11 @@
+name: pending_approvals
+category: filtered_reads
+user_message: "what approvals are still pending?"
+expected_tool_calls:
+  - tool_name: cordum_list_pending_approvals
+expected_summary_contains:
+  - "pending"
+forbidden_tool_calls:
+  - cordum_approve_job
+  - cordum_reject_job
+max_tool_calls: 1

@@ -1,0 +1,20 @@
+name: followup_approval
+category: multi_turn
+turns:
+  - role: user
+    content: "what approvals are pending?"
+  - role: assistant
+    content: "Three pending: app-001 ($200 transfer), app-002 (workflow trigger), app-003 (cancel run)."
+  - role: user
+    content: "approve app-001"
+expected_tool_calls:
+  - tool_name: cordum_approve_job
+    args:
+      job_id: str
+expected_summary_contains:
+  - "app-001"
+forbidden_tool_calls:
+  - cordum_submit_job
+  - cordum_reject_job
+  - cordum_cancel_job
+max_tool_calls: 1

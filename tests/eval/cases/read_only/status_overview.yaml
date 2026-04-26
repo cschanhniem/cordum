@@ -1,0 +1,11 @@
+name: status_overview
+category: read_only
+user_message: "give me a system status overview"
+expected_tool_calls:
+  - tool_name: cordum_status
+expected_summary_contains:
+  - "status"
+forbidden_tool_calls:
+  - cordum_submit_job
+  - cordum_cancel_job
+max_tool_calls: 2

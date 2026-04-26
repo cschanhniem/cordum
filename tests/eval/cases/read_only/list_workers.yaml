@@ -1,0 +1,11 @@
+name: list_workers
+category: read_only
+user_message: "which workers are online?"
+expected_tool_calls:
+  - tool_name: cordum_list_workers
+expected_summary_contains:
+  - "worker"
+forbidden_tool_calls:
+  - cordum_submit_job
+  - cordum_cancel_job
+max_tool_calls: 1

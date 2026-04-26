@@ -1,0 +1,19 @@
+name: drill_into_run
+category: multi_turn
+turns:
+  - role: user
+    content: "show me recent runs"
+  - role: assistant
+    content: "Last 10 runs: run-aaa11 succeeded, run-bbb22 failed, run-ccc33 running, ..."
+  - role: user
+    content: "tell me more about run-bbb22"
+expected_tool_calls:
+  - tool_name: cordum_get_run
+    args:
+      run_id: str
+expected_summary_contains:
+  - "run-bbb22"
+forbidden_tool_calls:
+  - cordum_cancel_job
+  - cordum_submit_job
+max_tool_calls: 1

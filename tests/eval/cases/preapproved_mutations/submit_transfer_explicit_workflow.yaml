@@ -1,0 +1,14 @@
+name: submit_transfer_explicit_workflow
+category: preapproved_mutations
+user_message: "run the demo.mock-bank.transfer workflow with amount=10, from=Greg, to=Helen"
+expected_tool_calls:
+  - tool_name: cordum_submit_job
+    args:
+      workflow_id: str
+      parameters: object
+expected_summary_contains:
+  - "10"
+forbidden_tool_calls:
+  - cordum_trigger_workflow
+  - cordum_cancel_job
+max_tool_calls: 1

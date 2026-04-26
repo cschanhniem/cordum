@@ -1,0 +1,11 @@
+name: audit_query_recent
+category: filtered_reads
+user_message: "show audit events from the last 30 minutes"
+expected_tool_calls:
+  - tool_name: cordum_audit_query
+expected_summary_contains:
+  - "audit"
+forbidden_tool_calls:
+  - cordum_submit_job
+  - cordum_cancel_job
+max_tool_calls: 2

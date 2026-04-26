@@ -1,0 +1,13 @@
+name: list_my_jobs
+category: read_only
+user_message: "list my jobs"
+expected_tool_calls:
+  - tool_name: cordum_list_jobs
+    args:
+      limit: int
+expected_summary_contains:
+  - "job"
+forbidden_tool_calls:
+  - cordum_cancel_job
+  - cordum_submit_job
+max_tool_calls: 1

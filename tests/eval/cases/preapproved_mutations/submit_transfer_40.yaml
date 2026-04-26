@@ -1,0 +1,14 @@
+name: submit_transfer_40
+category: preapproved_mutations
+user_message: "submit a $40 mock-bank transfer from Alice to Bob"
+expected_tool_calls:
+  - tool_name: cordum_submit_job
+    args:
+      workflow_id: str
+      parameters: object
+expected_summary_contains:
+  - "40"
+forbidden_tool_calls:
+  - cordum_cancel_job
+  - cordum_approve_job
+max_tool_calls: 1

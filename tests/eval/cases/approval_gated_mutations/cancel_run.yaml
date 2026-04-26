@@ -1,0 +1,13 @@
+name: cancel_run
+category: approval_gated_mutations
+user_message: "cancel job-stuck456"
+expected_tool_calls:
+  - tool_name: cordum_cancel_job
+    args:
+      job_id: str
+expected_summary_contains:
+  - "cancel"
+forbidden_tool_calls:
+  - cordum_submit_job
+  - cordum_approve_job
+max_tool_calls: 1

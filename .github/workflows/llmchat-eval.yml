@@ -1,0 +1,175 @@
+name: llmchat-eval
+
+# Tool-call eval harness for cordum-llm-chat (phase 11). Runs the
+# 30+ YAML golden cases in tests/eval/cases/ against a running cordum
+# stack with vLLM, scores tool-call accuracy + arg validity + summary
+# substring hits, and posts the diff vs the pinned baseline as a PR
+# comment when triggered manually with a PR number.
+#
+# Eval is expensive (each case round-trips a real LLM call), so this
+# workflow is NOT triggered on every PR push. Manual via
+# `workflow_dispatch` is the default; an optional nightly schedule
+# catches drift from upstream-vLLM bumps even when the model is
+# unchanged.
+#
+# Branch-protection promotion to required check is OUT OF SCOPE for
+# v1 (per task rail #1: harness + baseline only); promote after a
+# v2 GPU-budget decision.
+
+on:
+  workflow_dispatch:
+    inputs:
+      model_name:
+        description: 'Model identifier (matches tests/eval/baseline/<name>.json)'
+        required: false
+        default: 'qwen3_coder_30b_fp8'
+      vllm_url:
+        description: 'OpenAI-compat URL of the vLLM under test'
+        required: false
+        default: 'http://127.0.0.1:8000/v1'
+      pr_number:
+        description: 'PR number to post the diff comment on (optional)'
+        required: false
+  schedule:
+    # Nightly: 08:00 UTC. Catches regressions from upstream-vLLM
+    # bumps even when the model identifier is unchanged.
+    - cron: '0 8 * * *'
+
+permissions:
+  contents: read
+  pull-requests: write   # required for PR-comment posting
+
+concurrency:
+  group: llmchat-eval-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  llmchat-eval:
+    name: llmchat-eval
+    runs-on: ubuntu-latest
+    timeout-minutes: 90   # 30 cases × ~60s budget = 30min worst-case + stack startup
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Helm (for stack startup)
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.20.1
+
+      - name: Build cordumctl
+        run: |
+          mkdir -p ./bin
+          go build -o ./bin/cordumctl ./cmd/cordumctl
+
+      - name: Generate per-run secrets + TLS certs
+        run: |
+          echo "CORDUM_API_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "REDIS_PASSWORD=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          ./bin/cordumctl generate-certs --dir ./certs
+          chmod -R a+rX ./certs
+
+      - name: Bring up the compose stack (llmchat profile)
+        env:
+          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+          REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
+        run: |
+          # The llmchat profile brings up qwen-inference + cordum-llm-chat
+          # alongside the core stack. NOTE: the qwen-inference container
+          # requires a GPU runner. On GHA's standard ubuntu-latest there
+          # is no GPU; this workflow expects a self-hosted runner labeled
+          # `gpu` for nightly + manual-with-vllm runs. For CPU-only smoke
+          # we use the demo profile + EVAL_VLLM_URL pointing at a
+          # caller-provided staging endpoint.
+          if [ -n "${{ inputs.vllm_url }}" ] && [ "${{ inputs.vllm_url }}" != "http://127.0.0.1:8000/v1" ]; then
+            echo "Using external vLLM at ${{ inputs.vllm_url }}; bringing up demo profile only."
+            docker compose --profile demo up -d --build
+          else
+            docker compose --profile llmchat up -d --build
+          fi
+
+      - name: Wait for /api/v1/status
+        run: |
+          attempts=0
+          until curl -ksf --connect-timeout 2 --max-time 5 \
+            -H "X-API-Key: ${CORDUM_API_KEY}" \
+            https://127.0.0.1:8081/api/v1/status >/dev/null; do
+            attempts=$((attempts + 1))
+            if [ "$attempts" -ge 30 ]; then
+              echo "gateway /api/v1/status did not return 200 within 60s"
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Install demo-mock-bank pack
+        env:
+          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+          CORDUM_GATEWAY: https://127.0.0.1:8081
+          CORDUM_TLS_INSECURE: '1'
+        run: ./bin/cordumctl pack install demo/mock-bank/pack
+
+      - name: Run llm-chat tool-call eval
+        env:
+          EVAL_LLMCHAT_URL: https://127.0.0.1:8081
+          EVAL_VLLM_URL: ${{ inputs.vllm_url || 'http://127.0.0.1:8000/v1' }}
+          EVAL_API_KEY: ${{ env.CORDUM_API_KEY }}
+          EVAL_MODEL_NAME: ${{ inputs.model_name || 'qwen3_coder_30b_fp8' }}
+          EVAL_BASELINE: tests/eval/baseline/${{ inputs.model_name || 'qwen3_coder_30b_fp8' }}.json
+        run: |
+          go test -tags=eval -run TestLLMChatToolEval -count=1 -timeout 60m -v ./tests/eval/...
+
+      - name: Locate latest results dir
+        id: results
+        if: always()
+        run: |
+          # Newest run dir under tests/eval/results.
+          dir=$(ls -dt tests/eval/results/*/ 2>/dev/null | head -n1 || echo "")
+          echo "dir=${dir%/}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload eval artifacts
+        if: always() && steps.results.outputs.dir != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: llmchat-eval-${{ github.run_id }}
+          path: ${{ steps.results.outputs.dir }}/
+          retention-days: 30
+
+      - name: Post diff to PR
+        if: inputs.pr_number != '' && steps.results.outputs.dir != ''
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ inputs.pr_number }}
+          body-path: ${{ steps.results.outputs.dir }}/diff.md
+          edit-mode: replace
+
+      - name: Capture compose logs on failure
+        if: failure()
+        run: |
+          mkdir -p /tmp/llmchat-eval-logs
+          for svc in api-gateway scheduler safety-kernel workflow-engine cordum-llm-chat qwen-inference redis nats; do
+            docker compose logs --no-color "$svc" > "/tmp/llmchat-eval-logs/${svc}.log" 2>&1 || true
+          done
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: llmchat-eval-failure-${{ github.run_id }}
+          path: /tmp/llmchat-eval-logs/
+          retention-days: 7
+
+      - name: Tear down compose stack
+        if: always()
+        run: |
+          export CORDUM_API_KEY="${CORDUM_API_KEY:-teardown-placeholder-api-key}"
+          export REDIS_PASSWORD="${REDIS_PASSWORD:-teardown-placeholder-redis-password}"
+          docker compose --profile llmchat down -v 2>/dev/null || true
+          docker compose --profile demo down -v 2>/dev/null || true

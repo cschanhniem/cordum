@@ -1,0 +1,19 @@
+name: filter_after_listing
+category: multi_turn
+turns:
+  - role: user
+    content: "list all jobs"
+  - role: assistant
+    content: "I found 28 jobs across multiple states. Want me to narrow it down?"
+  - role: user
+    content: "yes — only the failed ones"
+expected_tool_calls:
+  - tool_name: cordum_list_jobs
+    args:
+      limit: int
+expected_summary_contains:
+  - "fail"
+forbidden_tool_calls:
+  - cordum_cancel_job
+  - cordum_submit_job
+max_tool_calls: 1

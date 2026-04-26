@@ -1,0 +1,19 @@
+name: timeline_of_run
+category: multi_turn
+turns:
+  - role: user
+    content: "what happened with run-deny42?"
+  - role: assistant
+    content: "run-deny42 was denied at safety-kernel evaluation; rule mock-bank-blocked-amounts triggered."
+  - role: user
+    content: "show me the full timeline"
+expected_tool_calls:
+  - tool_name: cordum_run_timeline
+    args:
+      run_id: str
+expected_summary_contains:
+  - "timeline"
+forbidden_tool_calls:
+  - cordum_cancel_job
+  - cordum_submit_job
+max_tool_calls: 1

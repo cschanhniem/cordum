@@ -1,0 +1,14 @@
+name: submit_transfer_round
+category: preapproved_mutations
+user_message: "submit a fifty dollar mock-bank transfer from Eve to Frank"
+expected_tool_calls:
+  - tool_name: cordum_submit_job
+    args:
+      workflow_id: str
+      parameters: object
+expected_summary_contains:
+  - "50"
+forbidden_tool_calls:
+  - cordum_cancel_job
+  - cordum_approve_job
+max_tool_calls: 1

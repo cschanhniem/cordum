@@ -1,0 +1,14 @@
+name: submit_transfer_with_note
+category: preapproved_mutations
+user_message: "kick off a $25 transfer from Carol to Dave with note 'rent split'"
+expected_tool_calls:
+  - tool_name: cordum_submit_job
+    args:
+      workflow_id: str
+      parameters: object
+expected_summary_contains:
+  - "25"
+forbidden_tool_calls:
+  - cordum_cancel_job
+  - cordum_approve_job
+max_tool_calls: 1

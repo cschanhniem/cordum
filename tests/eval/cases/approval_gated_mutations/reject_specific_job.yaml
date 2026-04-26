@@ -1,0 +1,14 @@
+name: reject_specific_job
+category: approval_gated_mutations
+user_message: "reject job-xyz789 — wrong recipient"
+expected_tool_calls:
+  - tool_name: cordum_reject_job
+    args:
+      job_id: str
+expected_summary_contains:
+  - "reject"
+forbidden_tool_calls:
+  - cordum_submit_job
+  - cordum_cancel_job
+  - cordum_approve_job
+max_tool_calls: 1

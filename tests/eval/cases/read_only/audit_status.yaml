@@ -1,0 +1,11 @@
+name: audit_status
+category: read_only
+user_message: "is the audit chain healthy?"
+expected_tool_calls:
+  - tool_name: cordum_audit_verify
+expected_summary_contains:
+  - "audit"
+forbidden_tool_calls:
+  - cordum_submit_job
+  - cordum_cancel_job
+max_tool_calls: 1

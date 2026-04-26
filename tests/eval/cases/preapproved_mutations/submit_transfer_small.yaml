@@ -1,0 +1,14 @@
+name: submit_transfer_small
+category: preapproved_mutations
+user_message: "send $5 from Alice to Bob via mock-bank"
+expected_tool_calls:
+  - tool_name: cordum_submit_job
+    args:
+      workflow_id: str
+      parameters: object
+expected_summary_contains:
+  - "5"
+forbidden_tool_calls:
+  - cordum_cancel_job
+  - cordum_approve_job
+max_tool_calls: 1

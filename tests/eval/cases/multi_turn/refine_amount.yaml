@@ -1,0 +1,20 @@
+name: refine_amount
+category: multi_turn
+turns:
+  - role: user
+    content: "submit a $50 transfer from Alice to Bob"
+  - role: assistant
+    content: "I can submit that. Should I proceed?"
+  - role: user
+    content: "actually make it $30"
+expected_tool_calls:
+  - tool_name: cordum_submit_job
+    args:
+      workflow_id: str
+      parameters: object
+expected_summary_contains:
+  - "30"
+forbidden_tool_calls:
+  - cordum_cancel_job
+  - cordum_approve_job
+max_tool_calls: 1

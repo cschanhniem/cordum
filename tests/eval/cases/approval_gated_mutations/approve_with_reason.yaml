@@ -1,0 +1,14 @@
+name: approve_with_reason
+category: approval_gated_mutations
+user_message: "approve job-finance-q3 — quarter-end batch"
+expected_tool_calls:
+  - tool_name: cordum_approve_job
+    args:
+      job_id: str
+expected_summary_contains:
+  - "approve"
+forbidden_tool_calls:
+  - cordum_submit_job
+  - cordum_cancel_job
+  - cordum_reject_job
+max_tool_calls: 1
