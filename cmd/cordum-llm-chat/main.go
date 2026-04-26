@@ -95,16 +95,6 @@ func main() {
 	sessionStore := llmchat.NewSessionStoreFromClient(redisClient)
 	_ = sessionStore // consumed by phase-5 WS handler
 
-	delegationClient := llmchat.NewDelegationClient(llmchat.DelegationConfig{
-		BaseURL:    cfg.GatewayURL,
-		AgentID:    cfg.ChatAssistantAgentID,
-		APIKey:     cfg.CordumAPIKey,
-		Tenant:     cfg.Tenant,
-		IssueTTL:   cfg.DelegationTTL,
-		RetryDelay: 100 * time.Millisecond,
-	})
-	_ = delegationClient // consumed by phase-5 WS handler
-
 	mcpClient, err := llmchat.NewMCPClient(llmchat.MCPClientConfig{
 		BaseURL:       cfg.GatewayURL,
 		APIKey:        cfg.CordumAPIKey,
@@ -122,12 +112,36 @@ func main() {
 	auditChainer := audit.NewChainer(redisClient, "audit:chain:")
 	bootstrapper := llmchat.NewBootstrapper(mcpAdapter{client: mcpClient}, cfg.Tenant, auditChainer)
 	bootCtx, cancelBoot := context.WithTimeout(context.Background(), bootstrapTimeout)
-	if _, err := bootstrapper.Boot(bootCtx); err != nil {
-		cancelBoot()
+	resolvedAgentID, err := bootstrapper.Boot(bootCtx)
+	cancelBoot()
+	if err != nil {
 		slog.Error("cordum-llm-chat: chat-assistant bootstrap failed", "error", err)
 		os.Exit(1)
 	}
-	cancelBoot()
+
+	// The agent ID returned from Boot is the canonical identifier —
+	// when bootstrap registers a new agent, the gateway assigns the
+	// id server-side, which may differ from the env hint. Downstream
+	// (DelegationClient) uses the resolved id; if the env supplied a
+	// pin, we error out on mismatch so the operator knows their
+	// configured pin is stale rather than silently issuing tokens for
+	// the wrong agent.
+	if cfg.ChatAssistantAgentID != "" && cfg.ChatAssistantAgentID != resolvedAgentID {
+		slog.Error("cordum-llm-chat: env LLMCHAT_CHAT_ASSISTANT_AGENT_ID does not match registered agent",
+			"env_id", cfg.ChatAssistantAgentID, "resolved_id", resolvedAgentID,
+			"remediation", "either remove LLMCHAT_CHAT_ASSISTANT_AGENT_ID to use the resolved id, or update it to "+resolvedAgentID)
+		os.Exit(1)
+	}
+
+	delegationClient := llmchat.NewDelegationClient(llmchat.DelegationConfig{
+		BaseURL:    cfg.GatewayURL,
+		AgentID:    resolvedAgentID,
+		APIKey:     cfg.CordumAPIKey,
+		Tenant:     cfg.Tenant,
+		IssueTTL:   cfg.DelegationTTL,
+		RetryDelay: 100 * time.Millisecond,
+	})
+	_ = delegationClient // consumed by phase-5 WS handler
 
 	handlers := llmchat.NewHandlers(provider, redisClient, readyzProbeTimeout)
 
@@ -267,10 +281,15 @@ func loadConfigFromEnv(getenv func(string) string) (runtimeConfig, error) {
 		MaxAssistantBytes:   maxAssistantBytes,
 	}
 
+	// LLMCHAT_CHAT_ASSISTANT_AGENT_ID is OPTIONAL: the bootstrap path
+	// resolves the canonical chat-assistant agent id at startup
+	// (either by reusing an existing identity or registering a new
+	// one via MCP). When the env is set it acts as a pin — main.go
+	// errors out post-bootstrap if the resolved id does not match,
+	// surfacing stale operator config rather than silently issuing
+	// delegations for the wrong agent. Greenfield deployments leave
+	// it empty.
 	cfg.ChatAssistantAgentID = strings.TrimSpace(getenv("LLMCHAT_CHAT_ASSISTANT_AGENT_ID"))
-	if cfg.ChatAssistantAgentID == "" {
-		return runtimeConfig{}, fmt.Errorf("LLMCHAT_CHAT_ASSISTANT_AGENT_ID is required")
-	}
 	cfg.Tenant = strings.TrimSpace(getenv("LLMCHAT_TENANT"))
 
 	delegationTTLSeconds, err := envIntOrDefault(getenv, "LLMCHAT_DELEGATION_TTL_SECONDS", int(defaultDelegationTTL.Seconds()))

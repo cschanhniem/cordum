@@ -142,41 +142,60 @@ func (b *Bootstrapper) Boot(ctx context.Context) (string, error) {
 			id, err)
 	}
 	if err := b.emitRegisteredAuditEvent(ctx, id); err != nil {
-		// Audit emission failure is logged but doesn't fail boot — the
-		// agent identity is already created, and re-running boot
-		// would hit lookup-hit and skip both the register and the
-		// audit emission. The MCP register call itself produced an
-		// `mcp.tool_invocation` audit entry via the existing
-		// ToolInvocationAuditor pipeline; this event is the
-		// chat-assistant-specific signal on top.
-		slog.Warn("llmchat: bootstrap audit emit failed", "agent_id", id, "error", err)
+		// Audit emission failure is FATAL on first-boot register
+		// because cap.agent_registered is the canonical signal that
+		// a new agent identity exists in the system; if we can't
+		// record it, the audit trail is already split. Boot fails;
+		// the operator's remediation is to repair the audit pipeline
+		// (Redis + chainer) and re-run boot. The next Boot call
+		// hits lookup-hit (the agent identity was created), so the
+		// emit-on-create path won't fire again — this is by design.
+		// QA reopen #2 at 2026-04-26 specifically required this be
+		// fail-rather-than-swallow.
+		return "", fmt.Errorf(
+			"llmchat/bootstrap: cap.agent_registered audit emit failed for chat-assistant id=%s; "+
+				"boot aborted to keep audit trail consistent: %w",
+			id, err)
 	}
 	slog.Info("llmchat: chat-assistant bootstrap registered", "agent_id", id, "tenant", b.tenant)
 	return id, nil
 }
 
 // emitRegisteredAuditEvent writes a `cap.agent_registered` SIEMEvent
-// into the audit chain on first-boot agent creation. No-op when no
-// emitter was wired (tests that don't need audit-trail verification).
+// into the audit chain on first-boot agent creation. With one retry
+// on transient failure (network blip, redis CAS contention) before
+// surfacing the error to Boot, which then fails the entire bootstrap.
 func (b *Bootstrapper) emitRegisteredAuditEvent(ctx context.Context, agentID string) error {
 	if b.emitter == nil {
 		return nil
 	}
-	return b.emitter.Append(ctx, &audit.SIEMEvent{
-		Timestamp: time.Now().UTC(),
-		EventType: "agent_lifecycle",
-		Severity:  "info",
-		TenantID:  b.tenant,
-		AgentID:   agentID,
-		AgentName: "chat-assistant",
-		Action:    SIEMActionChatBootstrapRegistered,
-		Decision:  "registered",
-		Reason:    "chat-assistant first-boot bootstrap registration via MCP cordum_register_agent + cordum_set_agent_scope",
-		Extra: map[string]string{
-			"chat_assistant_agent_id":          agentID,
-			"preapproved_mutating_tools_count": "1",
-		},
-	})
+	event := func() *audit.SIEMEvent {
+		return &audit.SIEMEvent{
+			Timestamp: time.Now().UTC(),
+			EventType: "agent_lifecycle",
+			Severity:  "info",
+			TenantID:  b.tenant,
+			AgentID:   agentID,
+			AgentName: "chat-assistant",
+			Action:    SIEMActionChatBootstrapRegistered,
+			Decision:  "registered",
+			Reason:    "chat-assistant first-boot bootstrap registration via MCP cordum_register_agent + cordum_set_agent_scope",
+			Extra: map[string]string{
+				"chat_assistant_agent_id":          agentID,
+				"preapproved_mutating_tools_count": "1",
+			},
+		}
+	}
+
+	if err := b.emitter.Append(ctx, event()); err != nil {
+		slog.Warn("llmchat: bootstrap audit emit retrying", "agent_id", agentID, "error", err)
+		// One retry: redis chain CAS can lose to a contending writer
+		// once. Second loss is not transient — surface it.
+		if retryErr := b.emitter.Append(ctx, event()); retryErr != nil {
+			return retryErr
+		}
+	}
+	return nil
 }
 
 // agentRecord is the parsed representation of the cordum_list_agents

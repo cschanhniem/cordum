@@ -8,8 +8,10 @@ import (
 	"sync"
 	"testing"
 
+	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/mcp"
+	"github.com/redis/go-redis/v9"
 )
 
 // recordingEmitter captures every SIEMEvent appended through the
@@ -17,13 +19,23 @@ import (
 // `cap.agent_registered` event fires on first-boot register-success
 // and NOT on lookup-hit reuse.
 type recordingEmitter struct {
-	mu     sync.Mutex
-	events []*audit.SIEMEvent
+	mu        sync.Mutex
+	events    []*audit.SIEMEvent
+	failTimes int   // how many leading Append calls return failErr before succeeding
+	failErr   error // the error to return; nil = use default
 }
 
 func (r *recordingEmitter) Append(_ context.Context, ev *audit.SIEMEvent) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.failTimes > 0 {
+		r.failTimes--
+		err := r.failErr
+		if err == nil {
+			err = errors.New("recordingEmitter scripted failure")
+		}
+		return err
+	}
 	clone := *ev
 	r.events = append(r.events, &clone)
 	return nil
@@ -349,6 +361,131 @@ func TestBootstrap_AuditEventOnFirstBootRegister(t *testing.T) {
 	}
 	if ev.Decision != "registered" {
 		t.Errorf("Decision = %q, want registered", ev.Decision)
+	}
+}
+
+// TestBootstrap_AuditEmitFailureFailsBoot verifies QA's fail-or-retry
+// requirement: a persistent emitter failure surfaces as a Boot error
+// (not silently swallowed). The retry path is also exercised — one
+// transient failure must succeed on retry (CAS-contention case).
+func TestBootstrap_AuditEmitFailureFailsBoot(t *testing.T) {
+	t.Parallel()
+
+	t.Run("permanent-failure-fails-boot", func(t *testing.T) {
+		t.Parallel()
+		f := newFakeBootstrapClient()
+		f.respond[mcp.ToolListAgents] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
+			return listResult(nil), nil
+		}
+		f.respond[mcp.ToolRegisterAgent] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
+			return registerResult("chat-assistant-fresh"), nil
+		}
+		f.respond[mcp.ToolSetAgentScope] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
+			return okResult(), nil
+		}
+		emitter := &recordingEmitter{failTimes: 99}
+		b := NewBootstrapper(f, "tenant-a", emitter)
+		_, err := b.Boot(context.Background())
+		if err == nil {
+			t.Fatal("Boot should fail when audit emitter cannot record cap.agent_registered")
+		}
+		if !strings.Contains(err.Error(), "cap.agent_registered audit emit failed") {
+			t.Errorf("error %v should explain the failed audit emission", err)
+		}
+	})
+
+	t.Run("one-transient-failure-then-success", func(t *testing.T) {
+		t.Parallel()
+		f := newFakeBootstrapClient()
+		f.respond[mcp.ToolListAgents] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
+			return listResult(nil), nil
+		}
+		f.respond[mcp.ToolRegisterAgent] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
+			return registerResult("chat-assistant-resilient"), nil
+		}
+		f.respond[mcp.ToolSetAgentScope] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
+			return okResult(), nil
+		}
+		emitter := &recordingEmitter{failTimes: 1}
+		b := NewBootstrapper(f, "tenant-a", emitter)
+		id, err := b.Boot(context.Background())
+		if err != nil {
+			t.Fatalf("Boot: %v (one retry should suffice)", err)
+		}
+		if id != "chat-assistant-resilient" {
+			t.Errorf("id = %q, want chat-assistant-resilient", id)
+		}
+		if got := len(emitter.Events()); got != 1 {
+			t.Errorf("Events = %d, want 1 (retry succeeded)", got)
+		}
+	})
+}
+
+// TestBootstrap_AuditEventVisibleViaConcreteChainer verifies the
+// `cap.agent_registered` event is appended to the canonical Redis-
+// backed audit chain (not just an in-memory recorder). QA's DoD
+// requires the event be assertable via the concrete audit pipeline
+// — the equivalent of the `/api/v1/audit/events` query path. This
+// test wires `audit.NewChainer` against a miniredis backend and
+// reads the resulting Redis Stream entry to prove the event landed.
+func TestBootstrap_AuditEventVisibleViaConcreteChainer(t *testing.T) {
+	t.Parallel()
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(srv.Close)
+	rdb := redis.NewClient(&redis.Options{Addr: srv.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	chainer := audit.NewChainer(rdb, "audit:chain:")
+
+	f := newFakeBootstrapClient()
+	f.respond[mcp.ToolListAgents] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
+		return listResult(nil), nil
+	}
+	f.respond[mcp.ToolRegisterAgent] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
+		return registerResult("chat-assistant-int"), nil
+	}
+	f.respond[mcp.ToolSetAgentScope] = func(_ map[string]any) (*mcp.ToolCallResult, error) {
+		return okResult(), nil
+	}
+
+	b := NewBootstrapper(f, "tenant-int", chainer)
+	id, err := b.Boot(context.Background())
+	if err != nil {
+		t.Fatalf("Boot via concrete chainer: %v", err)
+	}
+
+	// Read the tenant's audit stream directly — this is the same
+	// substrate /api/v1/audit/events queries.
+	streamKey := chainer.StreamKey("tenant-int")
+	entries, err := rdb.XRange(context.Background(), streamKey, "-", "+").Result()
+	if err != nil {
+		t.Fatalf("XRange: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 audit-chain entry, got %d", len(entries))
+	}
+	rawEvent, ok := entries[0].Values["event"].(string)
+	if !ok {
+		t.Fatalf("audit-chain entry missing 'event' field; values=%v", entries[0].Values)
+	}
+	var ev audit.SIEMEvent
+	if err := json.Unmarshal([]byte(rawEvent), &ev); err != nil {
+		t.Fatalf("decode chain event: %v", err)
+	}
+	if ev.Action != SIEMActionChatBootstrapRegistered {
+		t.Errorf("Action = %q, want %q", ev.Action, SIEMActionChatBootstrapRegistered)
+	}
+	if ev.AgentID != id {
+		t.Errorf("AgentID = %q, want %q", ev.AgentID, id)
+	}
+	if ev.TenantID != "tenant-int" {
+		t.Errorf("TenantID = %q, want tenant-int", ev.TenantID)
+	}
+	if ev.EventHash == "" || ev.Seq == 0 {
+		t.Errorf("chained event missing hash/seq: hash=%q seq=%d (the chainer is supposed to compute these)", ev.EventHash, ev.Seq)
 	}
 }
 

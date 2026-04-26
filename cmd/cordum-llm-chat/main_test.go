@@ -14,14 +14,13 @@ func fakeEnv(values map[string]string) func(string) string {
 
 func TestLoadConfigFromEnv_DefaultsWhenOnlyRequiredSet(t *testing.T) {
 	cfg, err := loadConfigFromEnv(fakeEnv(map[string]string{
-		"REDIS_URL":                       "redis://localhost:6379/0",
-		"LLMCHAT_CHAT_ASSISTANT_AGENT_ID": "chat-assistant-1",
+		"REDIS_URL": "redis://localhost:6379/0",
 	}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.ChatAssistantAgentID != "chat-assistant-1" {
-		t.Errorf("ChatAssistantAgentID = %q, want chat-assistant-1", cfg.ChatAssistantAgentID)
+	if cfg.ChatAssistantAgentID != "" {
+		t.Errorf("ChatAssistantAgentID = %q, want empty (unpinned)", cfg.ChatAssistantAgentID)
 	}
 	if cfg.DelegationTTL != defaultDelegationTTL {
 		t.Errorf("DelegationTTL = %v, want %v", cfg.DelegationTTL, defaultDelegationTTL)
@@ -148,23 +147,22 @@ func TestLoadConfigFromEnv_AllOverridesRead(t *testing.T) {
 	}
 }
 
-func TestLoadConfigFromEnv_MissingChatAssistantAgentID(t *testing.T) {
-	_, err := loadConfigFromEnv(fakeEnv(map[string]string{
+func TestLoadConfigFromEnv_AcceptsMissingAgentIDPin(t *testing.T) {
+	cfg, err := loadConfigFromEnv(fakeEnv(map[string]string{
 		"REDIS_URL": "redis://localhost:6379/0",
 	}))
-	if err == nil {
-		t.Fatal("expected error for missing LLMCHAT_CHAT_ASSISTANT_AGENT_ID")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "LLMCHAT_CHAT_ASSISTANT_AGENT_ID") {
-		t.Errorf("error = %v, want LLMCHAT_CHAT_ASSISTANT_AGENT_ID in message", err)
+	if cfg.ChatAssistantAgentID != "" {
+		t.Errorf("ChatAssistantAgentID = %q, want empty (pin is optional; bootstrap resolves it)", cfg.ChatAssistantAgentID)
 	}
 }
 
 func TestLoadConfigFromEnv_RejectsZeroDelegationTTL(t *testing.T) {
 	_, err := loadConfigFromEnv(fakeEnv(map[string]string{
-		"REDIS_URL":                       "redis://localhost:6379/0",
-		"LLMCHAT_CHAT_ASSISTANT_AGENT_ID": "chat-assistant-1",
-		"LLMCHAT_DELEGATION_TTL_SECONDS":  "0",
+		"REDIS_URL":                      "redis://localhost:6379/0",
+		"LLMCHAT_DELEGATION_TTL_SECONDS": "0",
 	}))
 	if err == nil {
 		t.Fatal("expected error for zero LLMCHAT_DELEGATION_TTL_SECONDS")
@@ -174,14 +172,12 @@ func TestLoadConfigFromEnv_RejectsZeroDelegationTTL(t *testing.T) {
 func TestLoadConfigFromEnv_TLSPairMustMatch(t *testing.T) {
 	cases := []map[string]string{
 		{
-			"REDIS_URL":                       "redis://localhost:6379/0",
-			"LLMCHAT_CHAT_ASSISTANT_AGENT_ID": "chat-assistant-1",
-			"CORDUM_LLM_CHAT_TLS_CERT_FILE":   "/tls/tls.crt",
+			"REDIS_URL":                     "redis://localhost:6379/0",
+			"CORDUM_LLM_CHAT_TLS_CERT_FILE": "/tls/tls.crt",
 		},
 		{
-			"REDIS_URL":                       "redis://localhost:6379/0",
-			"LLMCHAT_CHAT_ASSISTANT_AGENT_ID": "chat-assistant-1",
-			"CORDUM_LLM_CHAT_TLS_KEY_FILE":    "/tls/tls.key",
+			"REDIS_URL":                    "redis://localhost:6379/0",
+			"CORDUM_LLM_CHAT_TLS_KEY_FILE": "/tls/tls.key",
 		},
 	}
 	for _, env := range cases {
@@ -203,9 +199,8 @@ func TestLoadConfigFromEnv_RejectsMalformedNumbers(t *testing.T) {
 	}
 	for key, bad := range cases {
 		env := map[string]string{
-			"REDIS_URL":                       "redis://localhost:6379/0",
-			"LLMCHAT_CHAT_ASSISTANT_AGENT_ID": "chat-assistant-1",
-			key:                               bad,
+			"REDIS_URL": "redis://localhost:6379/0",
+			key:         bad,
 		}
 		if _, err := loadConfigFromEnv(fakeEnv(env)); err == nil {
 			t.Fatalf("expected parse error for %s=%q, got nil", key, bad)

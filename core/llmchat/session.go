@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,16 +31,30 @@ const (
 	SessionMaxMessages = 50
 )
 
+// Hash field names for the metadata key. Pinned wire format; the admin
+// session viewer (phase 5) reads these by name.
+const (
+	sessionFieldID             = "id"
+	sessionFieldUserPrincipal  = "user_principal"
+	sessionFieldTenant         = "tenant"
+	sessionFieldAgentID        = "agent_id"
+	sessionFieldDelegationJTI  = "delegation_jti"
+	sessionFieldDelegationJSON = "delegation_json"
+	sessionFieldCreatedAt      = "created_at_unix_nano"
+	sessionFieldLastActiveAt   = "last_active_at_unix_nano"
+)
+
 // Session is the persisted chat-assistant session record. Pinned shape;
 // admin viewer + WS handler in phase 5 deserialise this same JSON.
 //
-// Storage layout: metadata lives under `chat:session:{id}` as a JSON
-// blob; transcript messages live under `chat:session:{id}:messages` as
-// a Redis list (RPUSH appends, LTRIM caps, LRANGE reads). Splitting
-// metadata from transcript means AppendMessage is a single atomic
-// pipeline (RPUSH+LTRIM+EXPIRE on metadata+EXPIRE on list) — no
-// cross-replica read-modify-write race like the earlier JSON-blob
-// design QA flagged at 2026-04-26.
+// Storage layout: metadata lives under `chat:session:{id}` as a Redis
+// HASH (atomic field updates — no read-modify-write race); transcript
+// messages live under `chat:session:{id}:messages` as a Redis list
+// (RPUSH appends, LTRIM caps, LRANGE reads). Splitting metadata from
+// transcript means AppendMessage is a single atomic pipeline (RPUSH+
+// LTRIM+EXPIRE on list + HSET last_active_at on metadata + EXPIRE on
+// meta) and SetDelegation HSET-touches only the delegation fields,
+// never clobbering activity timestamps or other concurrent writes.
 type Session struct {
 	ID            string             `json:"id"`
 	UserPrincipal string             `json:"user_principal"`
@@ -48,20 +63,6 @@ type Session struct {
 	DelegationJTI string             `json:"delegation_jti"`
 	Delegation    *SessionDelegation `json:"delegation,omitempty"`
 	Messages      []SessionMessage   `json:"messages"`
-	CreatedAt     time.Time          `json:"created_at"`
-	LastActiveAt  time.Time          `json:"last_active_at"`
-}
-
-// sessionMetadata is the on-the-wire JSON blob persisted at the
-// metadata key. It excludes Messages (which live in the separate Redis
-// list) so the metadata key stays small and non-racy.
-type sessionMetadata struct {
-	ID            string             `json:"id"`
-	UserPrincipal string             `json:"user_principal"`
-	Tenant        string             `json:"tenant"`
-	AgentID       string             `json:"agent_id"`
-	DelegationJTI string             `json:"delegation_jti"`
-	Delegation    *SessionDelegation `json:"delegation,omitempty"`
 	CreatedAt     time.Time          `json:"created_at"`
 	LastActiveAt  time.Time          `json:"last_active_at"`
 }
@@ -91,9 +92,10 @@ type ToolCallRef struct {
 // SessionStore persists chat sessions in Redis. The 24h sliding TTL
 // expires inactive sessions automatically; AppendMessage refreshes the
 // TTL atomically with the message write so a busy session never gets
-// evicted mid-call. Cross-replica concurrent appends are safe because
-// each AppendMessage is a single Redis pipeline (RPUSH+LTRIM+EXPIRE)
-// with no read-modify-write step.
+// evicted mid-call. Cross-replica concurrent appends + delegation
+// updates are safe because every mutation uses Redis atomic field
+// updates (HSET, RPUSH, LTRIM) — no read-modify-write step that could
+// lose a write.
 type SessionStore struct {
 	client redis.UniversalClient
 }
@@ -106,7 +108,7 @@ func NewSessionStoreFromClient(client redis.UniversalClient) *SessionStore {
 
 // Create persists a new session. The caller fills UserPrincipal,
 // Tenant, AgentID, DelegationJTI (and optionally Delegation); the store
-// assigns ID, CreatedAt, LastActiveAt and writes the metadata at
+// assigns ID, CreatedAt, LastActiveAt and writes the metadata HASH at
 // chat:session:{id}. The transcript list is created lazily on first
 // AppendMessage.
 func (s *SessionStore) Create(ctx context.Context, in Session) (Session, error) {
@@ -123,8 +125,31 @@ func (s *SessionStore) Create(ctx context.Context, in Session) (Session, error) 
 		in.Messages = []SessionMessage{}
 	}
 
-	if err := s.writeMetadata(ctx, in); err != nil {
-		return Session{}, err
+	fields := map[string]any{
+		sessionFieldID:            in.ID,
+		sessionFieldUserPrincipal: in.UserPrincipal,
+		sessionFieldTenant:        in.Tenant,
+		sessionFieldAgentID:       in.AgentID,
+		sessionFieldDelegationJTI: in.DelegationJTI,
+		sessionFieldCreatedAt:     strconv.FormatInt(now.UnixNano(), 10),
+		sessionFieldLastActiveAt:  strconv.FormatInt(now.UnixNano(), 10),
+	}
+	if in.Delegation != nil {
+		raw, err := json.Marshal(in.Delegation)
+		if err != nil {
+			return Session{}, fmt.Errorf("chat session: marshal delegation: %w", err)
+		}
+		fields[sessionFieldDelegationJSON] = string(raw)
+		if in.DelegationJTI == "" {
+			fields[sessionFieldDelegationJTI] = in.Delegation.JTI
+		}
+	}
+
+	pipe := s.client.Pipeline()
+	pipe.HSet(ctx, sessionKey(in.ID), fields)
+	pipe.Expire(ctx, sessionKey(in.ID), SessionTTL)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return Session{}, fmt.Errorf("chat session: persist: %w", err)
 	}
 	return in, nil
 }
@@ -132,21 +157,21 @@ func (s *SessionStore) Create(ctx context.Context, in Session) (Session, error) 
 // Get loads a session. A missing key returns (nil, nil) so callers can
 // distinguish "not found" from a transport error without sentinel
 // matching. The transcript list is loaded via LRANGE alongside the
-// metadata blob.
+// metadata hash.
 func (s *SessionStore) Get(ctx context.Context, id string) (*Session, error) {
 	if s == nil || s.client == nil {
 		return nil, errors.New("chat session: store not configured")
 	}
-	body, err := s.client.Get(ctx, sessionKey(id)).Bytes()
-	if errors.Is(err, redis.Nil) {
-		return nil, nil
-	}
+	fields, err := s.client.HGetAll(ctx, sessionKey(id)).Result()
 	if err != nil {
 		return nil, fmt.Errorf("chat session: load: %w", err)
 	}
-	var meta sessionMetadata
-	if err := json.Unmarshal(body, &meta); err != nil {
-		return nil, fmt.Errorf("chat session: decode: %w", err)
+	if len(fields) == 0 {
+		return nil, nil
+	}
+	sess, err := decodeSessionFields(fields)
+	if err != nil {
+		return nil, err
 	}
 
 	rawMsgs, err := s.client.LRange(ctx, messagesKey(id), 0, -1).Result()
@@ -161,26 +186,18 @@ func (s *SessionStore) Get(ctx context.Context, id string) (*Session, error) {
 		}
 		messages = append(messages, m)
 	}
-
-	return &Session{
-		ID:            meta.ID,
-		UserPrincipal: meta.UserPrincipal,
-		Tenant:        meta.Tenant,
-		AgentID:       meta.AgentID,
-		DelegationJTI: meta.DelegationJTI,
-		Delegation:    meta.Delegation,
-		Messages:      messages,
-		CreatedAt:     meta.CreatedAt,
-		LastActiveAt:  meta.LastActiveAt,
-	}, nil
+	sess.Messages = messages
+	return sess, nil
 }
 
 // AppendMessage appends a transcript entry and refreshes the 24h TTL.
 // Atomic via a single Redis pipeline: RPUSH on the message list +
-// LTRIM to enforce the FIFO 50-cap + EXPIRE on both keys. Cross-
-// replica concurrent appends are safe — Redis serialises pipeline
-// commands per-connection, and there is no read-modify-write step
-// that could lose a write.
+// LTRIM to enforce the FIFO 50-cap + HSET on the LastActiveAt field
+// (no read-modify-write) + EXPIRE on both keys. Cross-replica
+// concurrent appends + concurrent SetDelegation are safe — Redis
+// serialises pipeline commands per-connection and HSET only touches
+// the named field, leaving DelegationJSON / DelegationJTI / other
+// metadata untouched.
 func (s *SessionStore) AppendMessage(ctx context.Context, id string, msg SessionMessage) error {
 	if s == nil || s.client == nil {
 		return errors.New("chat session: store not configured")
@@ -211,109 +228,91 @@ func (s *SessionStore) AppendMessage(ctx context.Context, id string, msg Session
 	// LTRIM 0 49 = keep the LAST 50 entries (drop everything before -50).
 	pipe.LTrim(ctx, msgsKey, -int64(SessionMaxMessages), -1)
 	pipe.Expire(ctx, msgsKey, SessionTTL)
+	pipe.HSet(ctx, metaKey, sessionFieldLastActiveAt, strconv.FormatInt(now.UnixNano(), 10))
 	pipe.Expire(ctx, metaKey, SessionTTL)
-	// Bump LastActiveAt on the metadata blob via a small RMW that is
-	// safe under cross-replica concurrency: even if two replicas race,
-	// both writes carry a monotonically-advancing timestamp and the
-	// last-write-wins outcome is still correct (LastActiveAt only ever
-	// moves forward). Done outside the message pipeline because the
-	// metadata edit is non-critical for transcript consistency.
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("chat session: append pipeline: %w", err)
-	}
-	if err := s.touchMetadata(ctx, id, now); err != nil {
-		return err
 	}
 	return nil
 }
 
 // SetDelegation persists the delegation JWT + JTI + expiry on a
-// session's metadata blob. Phase-5 WS handler calls this after the
-// gateway issues the per-session token so subsequent CallTool requests
-// can read the bearer back from the session record (survives
-// page-reload before the in-memory cache is repopulated).
+// session's metadata HASH. Atomic field-only update — does NOT
+// touch CreatedAt, LastActiveAt, the messages list, or any other
+// metadata. Concurrent AppendMessage on the same session keeps its
+// LastActiveAt write isolated from this call's delegation write.
 func (s *SessionStore) SetDelegation(ctx context.Context, id string, delegation *SessionDelegation) error {
 	if s == nil || s.client == nil {
 		return errors.New("chat session: store not configured")
 	}
-	body, err := s.client.Get(ctx, sessionKey(id)).Bytes()
-	if errors.Is(err, redis.Nil) {
+	metaKey := sessionKey(id)
+	if exists, err := s.client.Exists(ctx, metaKey).Result(); err != nil {
+		return fmt.Errorf("chat session: set delegation exists check: %w", err)
+	} else if exists == 0 {
 		return fmt.Errorf("chat session: set delegation: session %s not found", id)
 	}
-	if err != nil {
-		return fmt.Errorf("chat session: set delegation load: %w", err)
-	}
-	var meta sessionMetadata
-	if err := json.Unmarshal(body, &meta); err != nil {
-		return fmt.Errorf("chat session: set delegation decode: %w", err)
-	}
-	meta.Delegation = delegation
-	if delegation != nil {
-		meta.DelegationJTI = delegation.JTI
-	}
-	meta.LastActiveAt = time.Now().UTC()
 
-	out, err := json.Marshal(meta)
+	fields := map[string]any{}
+	if delegation == nil {
+		// Clear: HDEL removes the fields. Redis treats missing keys
+		// as no-op, so this is safe even if the fields were never set.
+		pipe := s.client.Pipeline()
+		pipe.HDel(ctx, metaKey, sessionFieldDelegationJSON, sessionFieldDelegationJTI)
+		pipe.Expire(ctx, metaKey, SessionTTL)
+		if _, err := pipe.Exec(ctx); err != nil {
+			return fmt.Errorf("chat session: set delegation clear: %w", err)
+		}
+		return nil
+	}
+	raw, err := json.Marshal(delegation)
 	if err != nil {
 		return fmt.Errorf("chat session: set delegation marshal: %w", err)
 	}
-	if err := s.client.Set(ctx, sessionKey(id), out, SessionTTL).Err(); err != nil {
+	fields[sessionFieldDelegationJSON] = string(raw)
+	fields[sessionFieldDelegationJTI] = delegation.JTI
+
+	pipe := s.client.Pipeline()
+	pipe.HSet(ctx, metaKey, fields)
+	pipe.Expire(ctx, metaKey, SessionTTL)
+	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("chat session: set delegation persist: %w", err)
 	}
 	return nil
 }
 
-// writeMetadata serialises the metadata blob and SETs it with the 24h
-// TTL.
-func (s *SessionStore) writeMetadata(ctx context.Context, sess Session) error {
-	meta := sessionMetadata{
-		ID:            sess.ID,
-		UserPrincipal: sess.UserPrincipal,
-		Tenant:        sess.Tenant,
-		AgentID:       sess.AgentID,
-		DelegationJTI: sess.DelegationJTI,
-		Delegation:    sess.Delegation,
-		CreatedAt:     sess.CreatedAt,
-		LastActiveAt:  sess.LastActiveAt,
+// decodeSessionFields converts a HGETALL result into a Session. The
+// hash schema is internal — wire shape is the JSON projection of
+// Session, not the field-by-field hash.
+func decodeSessionFields(fields map[string]string) (*Session, error) {
+	sess := &Session{
+		ID:            fields[sessionFieldID],
+		UserPrincipal: fields[sessionFieldUserPrincipal],
+		Tenant:        fields[sessionFieldTenant],
+		AgentID:       fields[sessionFieldAgentID],
+		DelegationJTI: fields[sessionFieldDelegationJTI],
 	}
-	body, err := json.Marshal(meta)
-	if err != nil {
-		return fmt.Errorf("chat session: marshal metadata: %w", err)
+	if raw, ok := fields[sessionFieldCreatedAt]; ok && raw != "" {
+		nano, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("chat session: parse created_at: %w", err)
+		}
+		sess.CreatedAt = time.Unix(0, nano).UTC()
 	}
-	if err := s.client.Set(ctx, sessionKey(sess.ID), body, SessionTTL).Err(); err != nil {
-		return fmt.Errorf("chat session: persist metadata: %w", err)
+	if raw, ok := fields[sessionFieldLastActiveAt]; ok && raw != "" {
+		nano, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("chat session: parse last_active_at: %w", err)
+		}
+		sess.LastActiveAt = time.Unix(0, nano).UTC()
 	}
-	return nil
-}
-
-// touchMetadata reloads the metadata blob, advances LastActiveAt to
-// `now`, and writes back. Done outside the message pipeline because
-// the metadata edit is non-critical for transcript consistency — the
-// list-side write (RPUSH+LTRIM) is the source of truth for activity.
-func (s *SessionStore) touchMetadata(ctx context.Context, id string, now time.Time) error {
-	body, err := s.client.Get(ctx, sessionKey(id)).Bytes()
-	if errors.Is(err, redis.Nil) {
-		return nil // session evicted during append; non-fatal
+	if raw, ok := fields[sessionFieldDelegationJSON]; ok && raw != "" {
+		var d SessionDelegation
+		if err := json.Unmarshal([]byte(raw), &d); err != nil {
+			return nil, fmt.Errorf("chat session: decode delegation: %w", err)
+		}
+		sess.Delegation = &d
 	}
-	if err != nil {
-		return fmt.Errorf("chat session: touch metadata load: %w", err)
-	}
-	var meta sessionMetadata
-	if err := json.Unmarshal(body, &meta); err != nil {
-		return fmt.Errorf("chat session: touch metadata decode: %w", err)
-	}
-	if !now.After(meta.LastActiveAt) {
-		return nil // racing replica already advanced past `now`
-	}
-	meta.LastActiveAt = now
-	out, err := json.Marshal(meta)
-	if err != nil {
-		return fmt.Errorf("chat session: touch metadata marshal: %w", err)
-	}
-	if err := s.client.Set(ctx, sessionKey(id), out, SessionTTL).Err(); err != nil {
-		return fmt.Errorf("chat session: touch metadata persist: %w", err)
-	}
-	return nil
+	return sess, nil
 }
 
 func sessionKey(id string) string  { return sessionKeyPrefix + id }

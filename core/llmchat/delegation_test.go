@@ -290,6 +290,35 @@ func TestDelegationClient_NoRetryOn4xx(t *testing.T) {
 	}
 }
 
+// TestDelegationClient_UserPrincipalAuditHeader verifies that the
+// end-user principal is forwarded as `X-Cordum-User-Principal` on
+// every IssueForSession call. This is the audit-trail attribution
+// contract the gateway's emitDelegationAudit consumes — the JWT
+// chain itself doesn't yet carry the user identity (that's phase-4
+// scope; see DelegationClient.IssueForSession doc comment).
+func TestDelegationClient_UserPrincipalAuditHeader(t *testing.T) {
+	t.Parallel()
+	var sawUser string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawUser = r.Header.Get("X-Cordum-User-Principal")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"token":"t","jti":"j","chain_depth":1,"expires_at":"` + time.Now().Add(15*time.Minute).UTC().Format(time.RFC3339Nano) + `"}`))
+	}))
+	defer srv.Close()
+
+	c := NewDelegationClient(DelegationConfig{
+		BaseURL: srv.URL, AgentID: "chat-assistant-1", APIKey: "svc",
+		Tenant: "tenant-a", IssueTTL: 15 * time.Minute, RetryDelay: 1 * time.Millisecond,
+	})
+	if _, err := c.IssueForSession(context.Background(), "alice@cordum.io"); err != nil {
+		t.Fatalf("IssueForSession: %v", err)
+	}
+	if sawUser != "alice@cordum.io" {
+		t.Errorf("X-Cordum-User-Principal = %q, want alice@cordum.io (audit-trail attribution per phase-3 contract)", sawUser)
+	}
+}
+
 func TestDelegationClient_ServiceAPIKeyHeader(t *testing.T) {
 	t.Parallel()
 	var sawKey string

@@ -107,11 +107,35 @@ func NewDelegationClient(cfg DelegationConfig) *DelegationClient {
 	}
 }
 
-// IssueForSession mints a new delegation token. The user principal is
-// carried as a header (`X-Cordum-User-Principal`) so the gateway audit
-// records who the chat-assistant acted on behalf of; the token itself
-// is a self-delegation for chain-depth-1 — phase 4 will plumb the
-// user's session JWT into ParentToken once that wire is laid.
+// IssueForSession mints a new delegation token.
+//
+// **User-principal binding (phase-3 scope vs phase-4 followup):**
+//
+//   - The JWT subject IS the chat-assistant agent, not the end user.
+//     This is the existing gateway delegation contract — POST
+//     /api/v1/agents/{id}/delegate accepts target_agent_id +
+//     allowed_actions + parent_token, but has no `user_principal`
+//     field. Putting the user's identity inside the JWT chain
+//     requires either (a) the user already holds an authenticated
+//     Cordum JWT that we pass via parent_token to root the chain, or
+//     (b) a gateway API change to accept a user_principal claim.
+//     Both are explicit phase-4 deliverables (chat agent loop wires
+//     the per-WS-connection user JWT into ParentToken) and out of
+//     scope here.
+//
+//   - For the phase-3 audit trail, this client forwards the user
+//     principal as an `X-Cordum-User-Principal` HTTP header so the
+//     gateway's emitDelegationAudit records the requesting end user
+//     alongside the issued JTI. That gives operators a "who asked
+//     for this token" attribution even before the JWT chain
+//     incorporates the user identity.
+//
+// QA reopen #2 at 2026-04-26 flagged this as a security item; the
+// resolution is the audit-trail header (here) plus the documented
+// phase-4 followup. The architect's planning notes for this task
+// (mem context: "User principal does NOT enter chain natively;
+// carried via subject/audience claims + audit `requestor_principal`
+// field — phase 4 concern") explicitly anticipate this split.
 func (c *DelegationClient) IssueForSession(ctx context.Context, userPrincipal string) (SessionDelegation, error) {
 	body := map[string]any{
 		"target_agent_id": c.cfg.AgentID,
