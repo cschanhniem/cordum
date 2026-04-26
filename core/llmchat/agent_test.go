@@ -177,7 +177,7 @@ func TestTurn_NoToolCalls(t *testing.T) {
 	t.Parallel()
 	provider := &scriptedProvider{
 		scripts: [][]Chunk{
-			{{FinishReason: "stop", Done: true}}, // tool-call phase: no tools, finish stop
+			{{Delta: "internal tool-choice text must not stream", FinishReason: "stop", Done: true}}, // tool-call phase: no tools, finish stop
 			{{Delta: "Hello! "}, {Delta: "How can I help?"}, {Done: true, FinishReason: "stop"}},
 		},
 	}
@@ -194,6 +194,11 @@ func TestTurn_NoToolCalls(t *testing.T) {
 	}
 	if provider.Modes()[0] != SamplingModeToolCalls || provider.Modes()[1] != SamplingModeSummary {
 		t.Errorf("modes = %v, want [ToolCalls, Summary]", provider.Modes())
+	}
+	for _, frame := range frames {
+		if frame.Type == FrameAssistantDelta && strings.Contains(frame.Text, "internal tool-choice text") {
+			t.Fatalf("tool-selection text leaked to user-visible frames: %+v", frames)
+		}
 	}
 	if got := lastFrame(frames).Type; got != FrameFinal {
 		t.Errorf("last frame = %s, want %s", got, FrameFinal)

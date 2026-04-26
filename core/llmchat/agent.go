@@ -340,7 +340,10 @@ toolLoop:
 					emitFrame(ctx, out, Frame{Type: FrameError, ErrorCode: ErrorCodeAssistantBytesBudget, ErrorMsg: fmt.Sprintf("assistant output exceeded %d bytes", a.budgets.MaxAssistantBytes)})
 					return
 				}
-				emitFrame(ctx, out, Frame{Type: FrameAssistantDelta, Text: chunk.Delta})
+				// The first provider pass is for deterministic tool selection only.
+				// Some OpenAI-compatible backends still emit direct-answer text in
+				// this mode when no tool call is needed. Keep that text internal so
+				// the user sees exactly one answer from the summary phase below.
 			}
 			if len(chunk.ToolCalls) > 0 {
 				toolCalls = append(toolCalls, chunk.ToolCalls...)
