@@ -137,6 +137,9 @@ jobs:
           EVAL_LLMCHAT_URL: http://127.0.0.1:8090
           EVAL_VLLM_URL: ${{ inputs.vllm_url || 'http://127.0.0.1:8000/v1' }}
           EVAL_API_KEY: ${{ env.CORDUM_API_KEY }}
+          EVAL_PRINCIPAL: eval-runner
+          EVAL_TENANT: default
+          EVAL_ROLE: operator
           EVAL_MODEL_NAME: ${{ inputs.model_name || 'qwen3_coder_30b_fp8' }}
           EVAL_BASELINE: tests/eval/baseline/${{ inputs.model_name || 'qwen3_coder_30b_fp8' }}.json
         run: |

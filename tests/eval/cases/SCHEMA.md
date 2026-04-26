@@ -120,9 +120,22 @@ The 6 directories under `tests/eval/cases/` map to behavioral domains:
    `name:` field.
 3. Run `go test ./tests/eval/...` to verify the YAML parses (default
    tag, no vLLM required).
-4. When you have access to a vLLM sidecar, run `EVAL_VLLM_URL=...
-   go test -tags=eval -run TestLLMChatToolEval ./tests/eval/...` to
-   confirm the case actually passes against the active model.
+4. When you have access to a vLLM sidecar and a running
+   `cordum-llm-chat` service, run:
+
+   ```bash
+   EVAL_LLMCHAT_URL=http://127.0.0.1:8090 \
+   EVAL_VLLM_URL=http://127.0.0.1:8000/v1 \
+   EVAL_API_KEY=$CORDUM_API_KEY \
+   EVAL_PRINCIPAL=eval-runner \
+   EVAL_TENANT=default \
+   EVAL_ROLE=operator \
+   go test -tags=eval -run TestLLMChatToolEval ./tests/eval/...
+   ```
+
+   The identity values become the trusted `X-Cordum-*` headers expected
+   by the direct llm-chat service. Override them for tenant-specific
+   staging runs.
 
 ## When NOT to add a case
 

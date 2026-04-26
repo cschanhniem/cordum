@@ -206,6 +206,7 @@ type CaseResult struct {
 	BudgetExceeded          bool     `json:"budget_exceeded"`
 	OrderedMatchExpected    bool     `json:"ordered_match_expected,omitempty"`
 	OrderedMatchPassed      bool     `json:"ordered_match_passed,omitempty"`
+	InfrastructureError     bool     `json:"infrastructure_error,omitempty"`
 	Errors                  []string `json:"errors,omitempty"`
 }
 

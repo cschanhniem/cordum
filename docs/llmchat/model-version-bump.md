@@ -48,11 +48,21 @@ the staging vLLM endpoint:
 EVAL_LLMCHAT_URL=https://staging-cordum:8081 \
 EVAL_VLLM_URL=http://staging-vllm:8000/v1 \
 EVAL_API_KEY=$STAGING_API_KEY \
+EVAL_PRINCIPAL=eval-runner \
+EVAL_TENANT=default \
+EVAL_ROLE=operator \
 EVAL_MODEL_NAME=qwen3_coder_40b_fp8 \
 EVAL_BASELINE=tests/eval/baseline/qwen3_coder_30b_fp8.json \
 go test -tags=eval -run TestLLMChatToolEval -count=1 -timeout 60m -v \
   ./tests/eval/...
 ```
+
+When targeting `cordum-llm-chat` directly, the harness sends the same
+trusted identity headers the gateway would normally inject:
+`X-Cordum-Principal`, `X-Cordum-Tenant`, and `X-Cordum-Role`. Override
+the three `EVAL_*` values above when staging uses a non-default tenant
+or role. Without these headers, the direct service fails closed with
+`authentication_required` before any case reaches the model.
 
 The harness writes:
 

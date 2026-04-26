@@ -14,6 +14,9 @@
 //	EVAL_VLLM_URL=http://127.0.0.1:8000/v1 \
 //	EVAL_LLMCHAT_URL=http://127.0.0.1:8090 \
 //	EVAL_API_KEY=$(cat .env | grep CORDUM_API_KEY | cut -d= -f2) \
+//	EVAL_PRINCIPAL=eval-runner \
+//	EVAL_TENANT=default \
+//	EVAL_ROLE=operator \
 //	go test -tags=eval -run TestLLMChatToolEval ./tests/eval/...
 //
 // The harness is deliberately read-only against the cordum stack —
@@ -32,6 +35,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,6 +47,9 @@ const (
 	envVLLMURL    = "EVAL_VLLM_URL"
 	envLLMChatURL = "EVAL_LLMCHAT_URL"
 	envAPIKey     = "EVAL_API_KEY"
+	envPrincipal  = "EVAL_PRINCIPAL"
+	envTenant     = "EVAL_TENANT"
+	envRole       = "EVAL_ROLE"
 	envBaseline   = "EVAL_BASELINE"
 	envResultsDir = "EVAL_RESULTS_DIR"
 	envModelName  = "EVAL_MODEL_NAME"
@@ -52,6 +59,48 @@ const (
 
 	perCaseTimeout = 60 * time.Second
 )
+
+func TestDriveDialogSendsTrustedIdentityHeaders(t *testing.T) {
+	t.Setenv(envPrincipal, "eval-user")
+	t.Setenv(envTenant, "tenant-a")
+	t.Setenv(envRole, "operator")
+
+	var gotAPIKey, gotPrincipal, gotTenant, gotRole string
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAPIKey = r.Header.Get("X-API-Key")
+		gotPrincipal = r.Header.Get("X-Cordum-Principal")
+		gotTenant = r.Header.Get("X-Cordum-Tenant")
+		gotRole = r.Header.Get("X-Cordum-Role")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"session_id":"s1","assistant":"ok","frames":[{"type":"final","text":"ok"}]}`))
+	})
+	testServer := httptest.NewServer(handler)
+	defer testServer.Close()
+
+	_, _, _, err := drivedialog(context.Background(), testServer.Client(), testServer.URL, "test-key", Case{UserMessage: "hello"})
+	if err != nil {
+		t.Fatalf("drivedialog: %v", err)
+	}
+	if gotAPIKey != "test-key" {
+		t.Fatalf("X-API-Key = %q, want test-key", gotAPIKey)
+	}
+	if gotPrincipal != "eval-user" || gotTenant != "tenant-a" || gotRole != "operator" {
+		t.Fatalf("trusted identity headers = principal:%q tenant:%q role:%q, want eval-user/tenant-a/operator", gotPrincipal, gotTenant, gotRole)
+	}
+}
+
+func TestValidateEvalRunRejectsInfrastructureErrorsAndZeroPass(t *testing.T) {
+	summary := &EvalSummary{
+		TotalCases:  30,
+		PassedCases: 0,
+		Cases: []CaseResult{
+			{Name: "network_down", InfrastructureError: true, Errors: []string{"post /api/v1/chat: connection refused"}},
+		},
+	}
+	if err := validateEvalRun(summary); err == nil {
+		t.Fatal("validateEvalRun error = nil, want infrastructure/zero-pass failure")
+	}
+}
 
 // chatPostResponse mirrors core/llmchat.chatPostResponse. We redeclare
 // the relevant fields here so the eval package doesn't depend on the
@@ -83,6 +132,9 @@ type chatPostRequest struct {
 // TestLLMChatToolEval is the eval-tag entrypoint. Skips when
 // EVAL_VLLM_URL / EVAL_LLMCHAT_URL / EVAL_API_KEY are unset (matches
 // the demo-mock-bank skip-if-not-CORDUM_INTEGRATION convention).
+// EVAL_PRINCIPAL / EVAL_TENANT / EVAL_ROLE default to the trusted
+// identity headers needed when the harness targets cordum-llm-chat
+// directly instead of going through the gateway proxy.
 func TestLLMChatToolEval(t *testing.T) {
 	llmChatURL := os.Getenv(envLLMChatURL)
 	if llmChatURL == "" {
@@ -186,6 +238,10 @@ func TestLLMChatToolEval(t *testing.T) {
 			}
 		}
 	}
+
+	if err := validateEvalRun(summary); err != nil {
+		t.Error(err)
+	}
 }
 
 // runCase issues the chat request, parses the response, scores it,
@@ -205,6 +261,7 @@ func runCase(t *testing.T, client *http.Client, base, apiKey string, c Case) Cas
 
 	sessionID, allFrames, assistantText, err := drivedialog(ctx, client, base, apiKey, c)
 	if err != nil {
+		result.InfrastructureError = true
 		result.Errors = append(result.Errors, err.Error())
 		return result
 	}
@@ -324,6 +381,9 @@ func drivedialog(ctx context.Context, client *http.Client, base, apiKey string, 
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-API-Key", apiKey)
+		req.Header.Set("X-Cordum-Principal", envOrDefault(envPrincipal, "eval-runner"))
+		req.Header.Set("X-Cordum-Tenant", envOrDefault(envTenant, "default"))
+		req.Header.Set("X-Cordum-Role", envOrDefault(envRole, "operator"))
 		resp, err := client.Do(req)
 		if err != nil {
 			return chatPostResponse{}, err
@@ -364,6 +424,31 @@ func drivedialog(ctx context.Context, client *http.Client, base, apiKey string, 
 		lastAssistant = got.Assistant
 	}
 	return sessionID, lastFrames, lastAssistant, nil
+}
+
+func validateEvalRun(summary *EvalSummary) error {
+	if summary == nil {
+		return fmt.Errorf("eval summary missing")
+	}
+	if summary.TotalCases == 0 {
+		return fmt.Errorf("eval ran zero cases")
+	}
+	for _, c := range summary.Cases {
+		if c.InfrastructureError {
+			return fmt.Errorf("eval infrastructure error in case %q: %s", c.Name, strings.Join(c.Errors, "; "))
+		}
+	}
+	if summary.PassedCases == 0 {
+		return fmt.Errorf("eval passed 0/%d cases; refusing green run with no end-to-end successes", summary.TotalCases)
+	}
+	return nil
+}
+
+func envOrDefault(key, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return fallback
 }
 
 func writeJSON(path string, v any) error {
