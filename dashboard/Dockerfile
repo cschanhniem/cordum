@@ -3,7 +3,14 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci --legacy-peer-deps
+# npm ci is strict about lock-file completeness across all platform-specific
+# optional binaries (@rolldown/@tailwindcss wasm32-wasi bundled deps, etc.)
+# — regenerating the lock to satisfy it on Linux drops Windows-resolved
+# peerDeps like @testing-library/dom. Use npm install with the lock as a
+# preference so CI builds against the published versions while tolerating
+# the platform-binary asymmetry. A proper lock regen inside a Linux
+# container is filed as a follow-up.
+RUN npm install --legacy-peer-deps --no-audit --no-fund
 
 COPY . .
 RUN npm run build
