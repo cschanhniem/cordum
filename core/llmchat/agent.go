@@ -65,9 +65,11 @@ const (
 // per Type — phase-5 WS handler uses the Type as a discriminator.
 type Frame struct {
 	Type       FrameType        `json:"type"`
+	SessionID  string           `json:"session_id,omitempty"`
 	Text       string           `json:"text,omitempty"`
 	ToolCall   *FrameToolDetail `json:"tool_call,omitempty"`
 	ToolResult string           `json:"tool_result,omitempty"`
+	IsError    bool             `json:"is_error,omitempty"`
 	ApprovalID string           `json:"approval_id,omitempty"`
 	ErrorCode  string           `json:"error_code,omitempty"`
 	ErrorMsg   string           `json:"error_msg,omitempty"`

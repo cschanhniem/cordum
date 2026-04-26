@@ -69,6 +69,7 @@ const (
 	PermWorkerCredentialsRead  = "workerCredentials.read"
 	PermWorkerCredentialsWrite = "workerCredentials.write"
 	PermGovernanceRead         = "governance.read"
+	PermChatReadAll            = "chat.read_all"
 	PermSchemasRead            = "schemas.read"
 	PermSchemasWrite           = "schemas.write"
 	PermUsersRead              = "users.read"
@@ -110,7 +111,7 @@ var AllPermissions = []string{
 	PermTelemetryRead, PermTelemetryWrite, PermTelemetryExport,
 	PermTopicsRead, PermTopicsWrite,
 	PermWorkerCredentialsRead, PermWorkerCredentialsWrite,
-	PermGovernanceRead,
+	PermGovernanceRead, PermChatReadAll,
 	PermSchemasRead, PermSchemasWrite,
 	PermUsersRead, PermUsersWrite,
 	PermRolesRead, PermRolesWrite,

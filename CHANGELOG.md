@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+#### LLM Chat Assistant — Phase 5 (HTTP transports + admin session viewer)
+- **Chat HTTP surface** (`core/llmchat`) — added `POST /api/v1/chat`, SSE fallback `GET /api/v1/chat/stream`, and WebSocket `GET /api/v1/chat/ws`, all gated by the `llm_chat_assistant` entitlement with stable `feature_unavailable` errors when disabled.
+- **WebSocket frame contract** — pinned seven frame types (`user`, `assistant_delta`, `tool_call`, `tool_result`, `approval_required`, `final`, `error`) with optional `session_id`; tool-result frames get a defense-in-depth redaction pass before leaving the service.
+- **Approval resume** — added an approval resumer for `sys.approvals.>` events. Resolved approvals replay the pending tool call with the session delegation token; rejected approvals inject `tool_result{is_error:true, tool_result:"denied by human reviewer"}` and let the LLM narrate.
+- **Admin session viewer** — added `GET /api/v1/chat/sessions` and `GET /api/v1/chat/sessions/{session_id}` plus new RBAC capability `chat.read_all`; tenant admins are scoped to their tenant and cross-tenant detail lookups return 404.
+- **Audit lifecycle events** — WebSocket connect/disconnect emit `chat.session_started` and `chat.session_closed` through the existing `SIEMEvent` chain path; schema documented in `docs/llmchat/overview.md`.
+
 #### LLM Chat Assistant — Phase 7 (Docker Compose + Helm packaging)
 - **Docker Compose** (`docker-compose.yml`) — new `qwen-inference` and `llm-chat` services gated by `profiles: [llmchat]` so the default `make dev-up` stack stays GPU-free. `qwen-inference` runs `vllm/vllm-openai:latest` with the exact 10-flag form (FP8 model, `qwen3_xml` parser, 131072 context, FP8 KV cache, prefix-caching, gpu-mem-util 0.9, loopback bind `127.0.0.1:8000:8000`). 300s healthcheck `start_period` for the cold load. `llm-chat` uses `depends_on.qwen-inference.condition: service_started` to avoid deadlocking on the 5-minute weight load. Named volume `qwen_hf_cache` persists 30GB FP8 weights across restarts.
 - **Helm chart** (`cordum-helm/`) — new `templates/deployment-llm-chat.yaml` (Deployment + Service) and `templates/deployment-qwen-inference.yaml` (PVC + Deployment + Service). Both gated by `.Values.{llmChat,qwenInference}.enabled` (default true). `Service.type: ClusterIP` on both — `qwen-inference` is never exposed externally; `llm-chat` reaches it via in-cluster DNS. External-vLLM mode supported via `llmChat.externalBaseUrl` + `qwenInference.enabled=false`. PVC for HF weight cache (default 50Gi) survives rollouts.

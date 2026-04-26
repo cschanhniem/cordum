@@ -22,7 +22,9 @@ import (
 
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/infra/buildinfo"
+	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/logging"
+	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/llmchat"
 	"github.com/cordum/cordum/core/mcp"
 	"github.com/redis/go-redis/v9"
@@ -93,7 +95,6 @@ func main() {
 	}()
 
 	sessionStore := llmchat.NewSessionStoreFromClient(redisClient)
-	_ = sessionStore // consumed by phase-5 WS handler
 
 	// Wire the knowledge-pack substituters around the file-backed
 	// prompt loader. When LLMCHAT_KNOWLEDGE_PACK_ENABLED=false the
@@ -115,7 +116,6 @@ func main() {
 		warmCancel()
 		promptLoader = kp
 	}
-	_ = promptLoader // consumed by phase-5 WS handler via Agent
 
 	mcpClient, err := llmchat.NewMCPClient(llmchat.MCPClientConfig{
 		BaseURL:       cfg.GatewayURL,
@@ -163,13 +163,55 @@ func main() {
 		IssueTTL:   cfg.DelegationTTL,
 		RetryDelay: 100 * time.Millisecond,
 	})
-	_ = delegationClient // consumed by phase-5 WS handler
+
+	entitlementResolver := licensing.NewEntitlementResolver()
+	entitlementResolver.Init()
+	agent := llmchat.NewAgent(llmchat.AgentConfig{
+		Provider:     provider,
+		MCP:          mcpClient,
+		Redactor:     llmchat.NewRedactor(),
+		PromptLoader: promptLoader,
+		Sessions:     sessionStore,
+	})
+	var approvalBus llmchat.ApprovalEventBus
+	if strings.TrimSpace(cfg.NATSURL) != "" {
+		natsBus, err := bus.NewNatsBus(cfg.NATSURL)
+		if err != nil {
+			slog.Warn("cordum-llm-chat: approval NATS bus unavailable; approval resume disabled", "error", err)
+		} else {
+			defer natsBus.Close()
+			approvalBus = llmchat.NewNATSApprovalEventBus(natsBus)
+		}
+	}
+	approvalResumer := llmchat.NewApprovalResumer(llmchat.ApprovalResumerConfig{Bus: approvalBus, Runner: agent})
+	defer func() {
+		if err := approvalResumer.Close(); err != nil {
+			slog.Warn("cordum-llm-chat: approval resumer close failed", "error", err)
+		}
+	}()
+	auditSender := llmchat.NewChainedAuditSender(auditChainer, nil)
 
 	handlers := llmchat.NewHandlers(provider, redisClient, readyzProbeTimeout)
+	chatHandlers := llmchat.NewChatHandlers(llmchat.ChatHandlersConfig{
+		Agent:        agent,
+		Sessions:     sessionStore,
+		Entitlements: entitlementResolver,
+		Delegations:  delegationClient,
+		Audit:        auditSender,
+		Approvals:    approvalResumer,
+		AgentID:      resolvedAgentID,
+	})
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", handlers.Healthz)
 	mux.HandleFunc("/readyz", handlers.Readyz)
+	mux.HandleFunc("/api/v1/chat", chatHandlers.HandleChatPost)
+	mux.HandleFunc("/api/v1/chat/stream", chatHandlers.HandleChatStream)
+	mux.HandleFunc("/api/v1/chat/ws", chatHandlers.HandleChatWS)
+	mux.HandleFunc("/api/v1/chat/sessions", chatHandlers.HandleListSessions)
+	mux.HandleFunc("/api/v1/chat/sessions/", func(w http.ResponseWriter, r *http.Request) {
+		chatHandlers.HandleGetSession(w, r, strings.TrimPrefix(r.URL.Path, "/api/v1/chat/sessions/"))
+	})
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
