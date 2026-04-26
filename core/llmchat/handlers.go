@@ -79,10 +79,10 @@ func (h *Handlers) Readyz(w http.ResponseWriter, r *http.Request) {
 	body := readyBody{Status: "ok", Redis: "ok", Vllm: "ok"}
 
 	var (
-		wg        sync.WaitGroup
-		mu        sync.Mutex
-		redisErr  error
-		vllmErr   error
+		wg       sync.WaitGroup
+		mu       sync.Mutex
+		redisErr error
+		vllmErr  error
 	)
 
 	if h.redis != nil {

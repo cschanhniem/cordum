@@ -91,22 +91,22 @@ type openaiStreamFrame struct {
 }
 
 type openaiStreamChoice struct {
-	Index        int                `json:"index"`
-	Delta        openaiStreamDelta  `json:"delta"`
-	FinishReason *string            `json:"finish_reason,omitempty"`
+	Index        int               `json:"index"`
+	Delta        openaiStreamDelta `json:"delta"`
+	FinishReason *string           `json:"finish_reason,omitempty"`
 }
 
 type openaiStreamDelta struct {
-	Role      string                  `json:"role,omitempty"`
-	Content   string                  `json:"content,omitempty"`
-	ToolCalls []openaiStreamToolCall  `json:"tool_calls,omitempty"`
+	Role      string                 `json:"role,omitempty"`
+	Content   string                 `json:"content,omitempty"`
+	ToolCalls []openaiStreamToolCall `json:"tool_calls,omitempty"`
 }
 
 type openaiStreamToolCall struct {
-	Index    int                 `json:"index"`
-	ID       string              `json:"id,omitempty"`
-	Type     string              `json:"type,omitempty"`
-	Function openaiToolCallBody  `json:"function"`
+	Index    int                `json:"index"`
+	ID       string             `json:"id,omitempty"`
+	Type     string             `json:"type,omitempty"`
+	Function openaiToolCallBody `json:"function"`
 }
 
 var retryDelays = []time.Duration{
@@ -267,9 +267,24 @@ func (p *OpenAIProvider) doWithRetry(ctx context.Context, body []byte) (*http.Re
 	return nil, fmt.Errorf("llmchat/openai: retry exhausted: %w", lastErr)
 }
 
+// ErrPrematureStreamEnd is returned on the terminal Chunk when the SSE
+// stream ends before the backend emits either [DONE] or a frame with a
+// finish_reason. Callers see Chunk{Done: true, Err: ErrPrematureStreamEnd}
+// and can choose to retry, surface a partial-output warning, or escalate
+// — silently treating an aborted stream as success would corrupt the
+// audit trail.
+var ErrPrematureStreamEnd = errors.New("llmchat/openai: stream ended before [DONE] or finish_reason")
+
 // stream reads the SSE body frame-by-frame and emits Chunks. It runs
 // in a goroutine spawned by Complete; it owns closing the response
 // body and the output channel.
+//
+// Terminal-frame discipline: the stream returns ONLY when emitFrame
+// reports a terminator ([DONE] sentinel or finish_reason). If the
+// underlying body returns io.EOF before that happens, the stream
+// surfaces ErrPrematureStreamEnd on the terminal Chunk so callers do
+// not silently consume a truncated assistant turn (QA gate, task
+// task-8775a7c9 reopen).
 func (p *OpenAIProvider) stream(ctx context.Context, resp *http.Response, out chan<- Chunk) {
 	defer resp.Body.Close()
 	defer close(out)
@@ -293,8 +308,10 @@ func (p *OpenAIProvider) stream(ctx context.Context, resp *http.Response, out ch
 		}
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				p.drainBuffer(ctx, &buf, out)
-				emit(ctx, out, Chunk{Done: true})
+				if terminated := p.drainBuffer(ctx, &buf, out); terminated {
+					return
+				}
+				emit(ctx, out, Chunk{Done: true, Err: ErrPrematureStreamEnd})
 				return
 			}
 			emit(ctx, out, Chunk{Done: true, Err: fmt.Errorf("llmchat/openai: stream read: %w", err)})
@@ -316,12 +333,14 @@ func (p *OpenAIProvider) stream(ctx context.Context, resp *http.Response, out ch
 
 // drainBuffer processes any frame still sitting in the buffer on EOF
 // without a trailing blank line. Some backends close the stream
-// immediately after `data: [DONE]\n` with no second newline.
-func (p *OpenAIProvider) drainBuffer(ctx context.Context, buf *bytes.Buffer, out chan<- Chunk) {
+// immediately after `data: [DONE]\n` with no second newline. Returns
+// true when emitFrame found a terminator inside the residue (so the
+// caller can suppress the premature-EOF error path).
+func (p *OpenAIProvider) drainBuffer(ctx context.Context, buf *bytes.Buffer, out chan<- Chunk) bool {
 	if buf.Len() == 0 {
-		return
+		return false
 	}
-	_ = p.emitFrame(ctx, buf.Bytes(), out)
+	return p.emitFrame(ctx, buf.Bytes(), out)
 }
 
 // emitFrame decodes a single SSE block and forwards a Chunk. Returns

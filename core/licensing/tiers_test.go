@@ -6,14 +6,14 @@ func TestDefaultEntitlementsByTier(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name            string
-		plan            Plan
-		maxWorkers      int64
-		rps             int64
-		auditDays       int64
-		approvalMode    string
-		velocity        bool
-		agentID         bool
+		name             string
+		plan             Plan
+		maxWorkers       int64
+		rps              int64
+		auditDays        int64
+		approvalMode     string
+		velocity         bool
+		agentID          bool
 		llmChatAssistant bool
 	}{
 		{

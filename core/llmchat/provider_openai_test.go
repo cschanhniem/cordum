@@ -185,10 +185,10 @@ func TestOpenAIProvider_SamplingModeSelectsTemps(t *testing.T) {
 	}
 
 	cases := []struct {
-		name        string
-		mode        SamplingMode
-		wantTemp    float64
-		wantTopP    float64
+		name     string
+		mode     SamplingMode
+		wantTemp float64
+		wantTopP float64
 	}{
 		{"tool_calls uses 0.3/0.9", SamplingModeToolCalls, 0.3, 0.9},
 		{"summary uses 0.7/0.8", SamplingModeSummary, 0.7, 0.8},
@@ -415,6 +415,96 @@ func TestOpenAIProvider_ToolsForwarded(t *testing.T) {
 	}
 }
 
+// TestOpenAIProvider_PrematureEOF asserts that an SSE stream which
+// ends without [DONE] or finish_reason surfaces ErrPrematureStreamEnd
+// on the terminal Chunk — silent truncation would corrupt the audit
+// trail and let a partial assistant turn pose as a complete one.
+func TestOpenAIProvider_PrematureEOF(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fl := captureFlusher(t, w)
+		// Emit a single content frame, then close mid-stream — no
+		// [DONE], no finish_reason. Models a network drop or backend
+		// crash mid-response.
+		_, _ = io.WriteString(w, ssePayload(`{"choices":[{"index":0,"delta":{"content":"par"}}]}`))
+		fl.Flush()
+	}))
+	defer srv.Close()
+
+	p := NewOpenAIProvider(ProviderConfig{Kind: "openai", BaseURL: srv.URL, Model: "qwen3-coder"})
+	ch, err := p.Complete(context.Background(), CompleteRequest{
+		Messages: []Message{{Role: "user", Content: "hi"}},
+	}, SamplingModeSummary)
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	chunks := collect(t, ch)
+
+	if len(chunks) == 0 {
+		t.Fatal("expected at least one chunk")
+	}
+	terminal := chunks[len(chunks)-1]
+	if !terminal.Done {
+		t.Fatalf("terminal Chunk.Done = false, full chunks=%+v", chunks)
+	}
+	if !errors.Is(terminal.Err, ErrPrematureStreamEnd) {
+		t.Fatalf("terminal.Err = %v, want ErrPrematureStreamEnd", terminal.Err)
+	}
+}
+
+// TestOpenAIProvider_UsageFrame asserts that an OpenAI-compatible
+// streaming usage frame (choices: [], usage: {...}) is parsed without
+// error and does NOT terminate the stream — text content following the
+// usage block must still flow to the consumer.
+func TestOpenAIProvider_UsageFrame(t *testing.T) {
+	t.Parallel()
+
+	frames := []string{
+		ssePayload(`{"choices":[{"index":0,"delta":{"role":"assistant","content":"hello"}}]}`),
+		// Usage frames have empty choices; OpenAI sends them when
+		// stream_options.include_usage=true. Parser MUST NOT mistake
+		// the empty-choices frame for a terminator.
+		ssePayload(`{"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}`),
+		ssePayload(`{"choices":[{"index":0,"delta":{"content":" world"},"finish_reason":"stop"}]}`),
+		ssePayload("[DONE]"),
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		streamFrames(t, w, frames)
+	}))
+	defer srv.Close()
+
+	p := NewOpenAIProvider(ProviderConfig{Kind: "openai", BaseURL: srv.URL, Model: "qwen3-coder"})
+	ch, err := p.Complete(context.Background(), CompleteRequest{
+		Messages: []Message{{Role: "user", Content: "ping"}},
+	}, SamplingModeSummary)
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	chunks := collect(t, ch)
+
+	var text strings.Builder
+	var sawFinish bool
+	for _, c := range chunks {
+		if c.Err != nil {
+			t.Fatalf("unexpected Chunk.Err = %v (usage frame should not error the stream)", c.Err)
+		}
+		text.WriteString(c.Delta)
+		if c.FinishReason == "stop" {
+			sawFinish = true
+		}
+	}
+	if got := text.String(); got != "hello world" {
+		t.Fatalf("text = %q, want %q (content following usage frame must flow through)", got, "hello world")
+	}
+	if !sawFinish {
+		t.Error("expected finish_reason=stop after the usage frame")
+	}
+}
+
 func TestOpenAIProvider_HealthCheckOK(t *testing.T) {
 	t.Parallel()
 
@@ -500,4 +590,3 @@ func TestOpenAIProvider_ContextCancelEndsStream(t *testing.T) {
 		}
 	}
 }
-

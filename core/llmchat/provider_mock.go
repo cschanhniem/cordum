@@ -14,12 +14,12 @@ import (
 // HealthCheck returns the configured HealthErr (nil by default), so
 // readyz tests can simulate both healthy and degraded backends.
 type MockProvider struct {
-	mu         sync.Mutex
-	script     []Chunk
-	lastReq    CompleteRequest
-	lastMode   SamplingMode
-	calls      int
-	healthErr  error
+	mu          sync.Mutex
+	script      []Chunk
+	lastReq     CompleteRequest
+	lastMode    SamplingMode
+	calls       int
+	healthErr   error
 	healthCalls int
 }
 
