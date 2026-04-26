@@ -11,6 +11,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
+	"github.com/cordum/cordum/core/model"
 )
 
 func newTestAPIClient(t *testing.T, baseURL string, opts ...APIClientOption) *APIClient {
@@ -37,7 +40,7 @@ func fastBackoff() APIClientOption {
 	})
 }
 
-// (a) Success ListJobs round-trip — GET, X-API-Key set, Accept: application/json.
+// (a) Success GetJob round-trip — GET, X-API-Key set, Accept: application/json.
 func TestAPIClient_GetJob_Success_AppliesServiceAPIKey(t *testing.T) {
 	t.Parallel()
 	var seenURL, seenMethod, seenAccept, seenAPIKey, seenAuth string
@@ -47,7 +50,15 @@ func TestAPIClient_GetJob_Success_AppliesServiceAPIKey(t *testing.T) {
 		seenAccept = r.Header.Get("Accept")
 		seenAPIKey = r.Header.Get("X-API-Key")
 		seenAuth = r.Header.Get("Authorization")
-		_ = json.NewEncoder(w).Encode(map[string]any{"id": "job-123", "state": "SUCCEEDED"})
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":                "job-123",
+			"state":             "SUCCEEDED",
+			"topic":             "demo.echo",
+			"tenant":            "tenant-a",
+			"trace_id":          "trace-1",
+			"approval_required": true,
+			"risk_tags":         []string{"read"},
+		})
 	}))
 	defer srv.Close()
 
@@ -56,8 +67,8 @@ func TestAPIClient_GetJob_Success_AppliesServiceAPIKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetJob err: %v", err)
 	}
-	if got["id"] != "job-123" {
-		t.Fatalf("decoded id mismatch: %v", got)
+	if got.ID != "job-123" || got.State != model.JobStateSucceeded || got.Topic != "demo.echo" || !got.ApprovalRequired {
+		t.Fatalf("decoded job detail mismatch: %+v", got)
 	}
 	if seenMethod != http.MethodGet {
 		t.Errorf("method = %s, want GET", seenMethod)
@@ -73,6 +84,134 @@ func TestAPIClient_GetJob_Success_AppliesServiceAPIKey(t *testing.T) {
 	}
 	if seenAccept != "application/json" {
 		t.Errorf("Accept = %q, want application/json", seenAccept)
+	}
+}
+
+func TestAPIClient_AllRequiredHelpers_SuccessPathsAreTyped(t *testing.T) {
+	t.Parallel()
+	seenPaths := make(chan string, 6)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method for %s = %s, want GET", r.URL.Path, r.Method)
+		}
+		seenPaths <- r.URL.RequestURI()
+		switch r.URL.Path {
+		case "/api/v1/jobs":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"items": []map[string]any{
+					{"id": "job-1", "state": "SUCCEEDED", "topic": "demo.echo", "updated_at": 1700000000000},
+				},
+				"next_cursor": int64(1699999999999),
+			})
+		case "/api/v1/jobs/job-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": "job-1", "state": "SUCCEEDED", "topic": "demo.echo", "tenant": "tenant-a",
+			})
+		case "/api/v1/policy/bundles":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"bundles": map[string]any{
+					"secops/base": map[string]any{"content": "rules: []\n", "enabled": true},
+				},
+				"items": []policybundles.PolicyBundleSummary{
+					{ID: "secops/base", Enabled: true, Source: "secops", RuleCount: 2, UpdatedAt: "2026-04-26T10:00:00Z"},
+				},
+				"updated_at": "2026-04-26T10:00:00Z",
+			})
+		case "/api/v1/policy/bundles/secops~base":
+			_ = json.NewEncoder(w).Encode(policybundles.PolicyBundleDetail{
+				ID: "secops/base", Content: "rules: []\n", Enabled: true, UpdatedAt: "2026-04-26T10:00:00Z",
+			})
+		case "/api/v1/policy/rules":
+			if r.URL.Query().Get("include_disabled") != "true" {
+				t.Errorf("include_disabled query = %q, want true", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"items": []map[string]any{
+					{
+						"id":       "rule-1",
+						"decision": "deny",
+						"enabled":  true,
+						"match":    map[string]any{"topics": []string{"demo.echo"}},
+						"source": map[string]any{
+							"fragment_id": "secops/base",
+							"pack_id":     "secops",
+						},
+					},
+				},
+			})
+		case "/api/v1/audit/verify":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status":          "ok",
+				"total_events":    2,
+				"verified_events": 2,
+				"last_seq":        9,
+			})
+		default:
+			http.Error(w, "unexpected path "+r.URL.RequestURI(), http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestAPIClient(t, srv.URL)
+	jobs, err := c.ListJobs(context.Background(), ListJobsOptions{Limit: 10}, "")
+	if err != nil {
+		t.Fatalf("ListJobs err: %v", err)
+	}
+	if len(jobs.Items) != 1 || jobs.Items[0].ID != "job-1" || jobs.Items[0].State != model.JobStateSucceeded {
+		t.Fatalf("ListJobs response = %+v, want typed model.JobRecord item", jobs)
+	}
+	job, err := c.GetJob(context.Background(), "job-1", "")
+	if err != nil {
+		t.Fatalf("GetJob err: %v", err)
+	}
+	if job.ID != "job-1" || job.State != model.JobStateSucceeded {
+		t.Fatalf("GetJob response = %+v, want typed JobDetail", job)
+	}
+	bundles, err := c.ListBundles(context.Background(), "")
+	if err != nil {
+		t.Fatalf("ListBundles err: %v", err)
+	}
+	if len(bundles.Items) != 1 || bundles.Items[0].ID != "secops/base" || bundles.Items[0].RuleCount != 2 {
+		t.Fatalf("ListBundles response = %+v, want typed PolicyBundleSummary items", bundles)
+	}
+	bundle, err := c.GetBundle(context.Background(), "secops/base", "")
+	if err != nil {
+		t.Fatalf("GetBundle err: %v", err)
+	}
+	if bundle.ID != "secops/base" || bundle.Content == "" {
+		t.Fatalf("GetBundle response = %+v, want typed PolicyBundleDetail", bundle)
+	}
+	policies, err := c.ListPolicies(context.Background(), ListPoliciesOptions{IncludeDisabled: true}, "")
+	if err != nil {
+		t.Fatalf("ListPolicies err: %v", err)
+	}
+	if len(policies.Items) != 1 || policies.Items[0].ID != "rule-1" || policies.Items[0].Decision != "deny" || policies.Items[0].Source.FragmentID != "secops/base" {
+		t.Fatalf("ListPolicies response = %+v, want typed PolicyRule at /api/v1/policy/rules", policies)
+	}
+	audit, err := c.GetAuditChain(context.Background(), AuditVerifyOptions{Limit: 2}, "")
+	if err != nil {
+		t.Fatalf("GetAuditChain err: %v", err)
+	}
+	if audit.Status != "ok" || audit.VerifiedEvents != 2 {
+		t.Fatalf("GetAuditChain response = %+v, want typed AuditVerifyResult", audit)
+	}
+
+	close(seenPaths)
+	got := map[string]int{}
+	for p := range seenPaths {
+		got[p]++
+	}
+	for _, want := range []string{
+		"/api/v1/jobs?limit=10",
+		"/api/v1/jobs/job-1",
+		"/api/v1/policy/bundles",
+		"/api/v1/policy/bundles/secops~base",
+		"/api/v1/policy/rules?include_disabled=true",
+		"/api/v1/audit/verify?limit=2",
+	} {
+		if got[want] != 1 {
+			t.Fatalf("seen paths = %+v, want exactly one %s", got, want)
+		}
 	}
 }
 
@@ -225,7 +364,7 @@ func TestAPIClient_BearerToken_OmitsAPIKey(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seenAuth = r.Header.Get("Authorization")
 		seenAPIKey = r.Header.Get("X-API-Key")
-		_ = json.NewEncoder(w).Encode(map[string]any{"id": "job-1"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "job-1", "state": "SUCCEEDED"})
 	}))
 	defer srv.Close()
 

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/model"
 	sdkclient "github.com/cordum/cordum/sdk/client"
 )
@@ -147,6 +148,89 @@ type ListJobsResponse struct {
 	NextCursor *int64            `json:"next_cursor,omitempty"`
 }
 
+// JobDetail is the typed REST payload returned by GET /api/v1/jobs/{id}.
+// The gateway builds this payload from job metadata, context/result pointers,
+// safety records, approval fields, and optional delegation lineage. There is
+// no exported gateway DTO for this route, so this struct mirrors the
+// OpenAPI JobDetail schema plus the production handler's extra fields.
+type JobDetail struct {
+	model.JobRecord
+
+	ContextPtr string            `json:"context_ptr,omitempty"`
+	Context    any               `json:"context,omitempty"`
+	ResultPtr  string            `json:"result_ptr,omitempty"`
+	Result     any               `json:"result,omitempty"`
+	Labels     map[string]string `json:"labels,omitempty"`
+	WorkflowID string            `json:"workflow_id,omitempty"`
+	RunID      string            `json:"run_id,omitempty"`
+	StepID     string            `json:"step_id,omitempty"`
+
+	SafetyConstraints  any    `json:"safety_constraints,omitempty"`
+	SafetyRemediations any    `json:"safety_remediations,omitempty"`
+	SafetyJobHash      string `json:"safety_job_hash,omitempty"`
+	ApprovalRequired   bool   `json:"approval_required,omitempty"`
+	ApprovalRef        string `json:"approval_ref,omitempty"`
+
+	ApprovalBy             string `json:"approval_by,omitempty"`
+	ApprovalRole           string `json:"approval_role,omitempty"`
+	ApprovalAt             int64  `json:"approval_at,omitempty"`
+	ApprovalReason         string `json:"approval_reason,omitempty"`
+	ApprovalNote           string `json:"approval_note,omitempty"`
+	ApprovalPolicySnapshot string `json:"approval_policy_snapshot,omitempty"`
+	ApprovalJobHash        string `json:"approval_job_hash,omitempty"`
+	ApprovalStatus         string `json:"approval_status,omitempty"`
+	ApprovalActionability  string `json:"approval_actionability,omitempty"`
+	ApprovalRevision       int64  `json:"approval_revision,omitempty"`
+	ApprovalDecision       string `json:"approval_decision,omitempty"`
+
+	OutputDecision string `json:"output_decision,omitempty"`
+	OutputSafety   any    `json:"output_safety,omitempty"`
+	Delegation     any    `json:"delegation,omitempty"`
+
+	ErrorMessage string `json:"error_message,omitempty"`
+	ErrorStatus  string `json:"error_status,omitempty"`
+	ErrorCode    string `json:"error_code,omitempty"`
+	LastState    string `json:"last_state,omitempty"`
+}
+
+// ListBundlesResponse is the typed response from GET /api/v1/policy/bundles.
+// It reuses the gateway's exported PolicyBundleSummary DTO.
+type ListBundlesResponse struct {
+	Bundles   map[string]any                      `json:"bundles,omitempty"`
+	Items     []policybundles.PolicyBundleSummary `json:"items"`
+	UpdatedAt string                              `json:"updated_at,omitempty"`
+}
+
+// PolicyRule is the typed response item from GET /api/v1/policy/rules. The
+// gateway currently materializes rules as normalized maps and does not export
+// a Go DTO, so this local type mirrors the OpenAPI schema while also accepting
+// the production handler's `decision`, `match`, and structured source fields.
+type PolicyRule struct {
+	ID          string                         `json:"id"`
+	Name        string                         `json:"name,omitempty"`
+	Description string                         `json:"description,omitempty"`
+	Enabled     bool                           `json:"enabled,omitempty"`
+	Action      string                         `json:"action,omitempty"`
+	Decision    string                         `json:"decision,omitempty"`
+	Reason      string                         `json:"reason,omitempty"`
+	Severity    string                         `json:"severity,omitempty"`
+	Priority    int                            `json:"priority,omitempty"`
+	Conditions  map[string]any                 `json:"conditions,omitempty"`
+	Match       map[string]any                 `json:"match,omitempty"`
+	Source      policybundles.PolicyRuleSource `json:"source,omitempty"`
+}
+
+// ListPoliciesOptions narrows GET /api/v1/policy/rules.
+type ListPoliciesOptions struct {
+	IncludeDisabled bool
+}
+
+// ListPoliciesResponse is the typed response from GET /api/v1/policy/rules.
+type ListPoliciesResponse struct {
+	Items  []PolicyRule                         `json:"items"`
+	Errors []policybundles.PolicyRuleParseError `json:"errors,omitempty"`
+}
+
 // ListJobs hits GET /api/v1/jobs.
 func (c *APIClient) ListJobs(ctx context.Context, opts ListJobsOptions, bearerToken string) (*ListJobsResponse, error) {
 	q := url.Values{}
@@ -184,60 +268,56 @@ func (c *APIClient) ListJobs(ctx context.Context, opts ListJobsOptions, bearerTo
 	return &out, nil
 }
 
-// GetJob hits GET /api/v1/jobs/{id}. Gateway returns the raw HGETALL meta
-// dump as JSON, so the typed surface here is map[string]any — matching
-// the existing sdk/client.GetJob contract.
-func (c *APIClient) GetJob(ctx context.Context, jobID, bearerToken string) (map[string]any, error) {
+// GetJob hits GET /api/v1/jobs/{id}.
+func (c *APIClient) GetJob(ctx context.Context, jobID, bearerToken string) (*JobDetail, error) {
 	if strings.TrimSpace(jobID) == "" {
 		return nil, fmt.Errorf("llmchat/apiclient: job id required")
 	}
-	var out map[string]any
+	var out JobDetail
 	path := "/api/v1/jobs/" + url.PathEscape(jobID)
 	if err := c.do(ctx, path, nil, bearerToken, &out); err != nil {
 		return nil, err
 	}
-	return out, nil
+	return &out, nil
 }
 
 // ListBundles hits GET /api/v1/policy/bundles. Gateway returns a
-// list-shaped JSON; the wrapper shape is unexported so the typed return
-// is []map[string]any matching the gateway response.
-func (c *APIClient) ListBundles(ctx context.Context, bearerToken string) ([]map[string]any, error) {
-	var out struct {
-		Items []map[string]any `json:"items"`
-	}
+// list-shaped JSON with exported PolicyBundleSummary items.
+func (c *APIClient) ListBundles(ctx context.Context, bearerToken string) (*ListBundlesResponse, error) {
+	var out ListBundlesResponse
 	if err := c.do(ctx, "/api/v1/policy/bundles", nil, bearerToken, &out); err != nil {
 		return nil, err
 	}
-	return out.Items, nil
+	return &out, nil
 }
 
-// GetBundle hits GET /api/v1/policy/bundles/{id}. Returns the raw bundle
-// detail body — gateway emits policybundles.PolicyBundleDetail with an
-// optional Shadow extension, but this client surfaces the JSON as a map
-// so callers can read fields without taking on a policybundles import.
-func (c *APIClient) GetBundle(ctx context.Context, bundleID, bearerToken string) (map[string]any, error) {
+// GetBundle hits GET /api/v1/policy/bundles/{id}. It reuses the gateway's
+// exported PolicyBundleDetail DTO; any optional enrichment fields the gateway
+// adds are ignored by the JSON decoder.
+func (c *APIClient) GetBundle(ctx context.Context, bundleID, bearerToken string) (*policybundles.PolicyBundleDetail, error) {
 	if strings.TrimSpace(bundleID) == "" {
 		return nil, fmt.Errorf("llmchat/apiclient: bundle id required")
 	}
-	var out map[string]any
-	path := "/api/v1/policy/bundles/" + url.PathEscape(bundleID)
+	var out policybundles.PolicyBundleDetail
+	path := "/api/v1/policy/bundles/" + url.PathEscape(strings.ReplaceAll(bundleID, "/", "~"))
 	if err := c.do(ctx, path, nil, bearerToken, &out); err != nil {
 		return nil, err
 	}
-	return out, nil
+	return &out, nil
 }
 
-// ListPolicies hits GET /api/v1/policies — the catalog of registered
-// policy rules.
-func (c *APIClient) ListPolicies(ctx context.Context, bearerToken string) ([]map[string]any, error) {
-	var out struct {
-		Items []map[string]any `json:"items"`
+// ListPolicies hits GET /api/v1/policy/rules — the gateway's registered
+// policy-rule read route.
+func (c *APIClient) ListPolicies(ctx context.Context, opts ListPoliciesOptions, bearerToken string) (*ListPoliciesResponse, error) {
+	q := url.Values{}
+	if opts.IncludeDisabled {
+		q.Set("include_disabled", "true")
 	}
-	if err := c.do(ctx, "/api/v1/policies", nil, bearerToken, &out); err != nil {
+	var out ListPoliciesResponse
+	if err := c.do(ctx, "/api/v1/policy/rules", q, bearerToken, &out); err != nil {
 		return nil, err
 	}
-	return out.Items, nil
+	return &out, nil
 }
 
 // AuditVerifyOptions narrows a GET /api/v1/audit/verify call.
