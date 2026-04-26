@@ -70,6 +70,7 @@ correct_cmd() {
       - --kv-cache-dtype
       - fp8
       - --enable-prefix-caching
+      - --disable-log-requests
       - --gpu-memory-utilization
       - "0.9"
       - --host
@@ -140,6 +141,12 @@ for run in 1 2 3; do
 	bare_ports=$(printf '      - "8000:8000"\n')
 	fix=$(write_fixture "bare_ports_${run}" "$(correct_cmd)" "$bare_ports" "300s")
 	run_case "bare-ports run=${run}" "$fix" "ports-disallow-bare"
+
+	# (vi) request logging enabled by omission — vLLM must not emit
+	# prompt/request bodies to logs.
+	missing_log_suppression_cmd=$(correct_cmd | sed '/--disable-log-requests/d')
+	fix=$(write_fixture "missing_log_suppression_${run}" "$missing_log_suppression_cmd" "$(correct_ports)" "300s")
+	run_case "missing-log-suppression run=${run}" "$fix" "disable-log-requests"
 done
 
 # Positive case: the actual current docker-compose.yml + .release.yml

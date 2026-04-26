@@ -551,6 +551,10 @@ services:
       - --kv-cache-dtype
       - fp8
       - --enable-prefix-caching
+      # Do not log prompts / request bodies from chat traffic. Synthetic
+      # security probes grep vLLM logs for JWT/API-key shapes and must find
+      # zero hits.
+      - --disable-log-requests
       - --gpu-memory-utilization
       - "0.9"
       - --host

@@ -1,0 +1,71 @@
+name: security-llmchat
+
+# Senior-review static security gates for the self-hosted LLM chat stack.
+# Runs on Compose/Helm/security-harness changes and fails closed for the
+# two highest-risk packaging regressions: parser drift and external vLLM
+# exposure.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docker-compose.yml'
+      - 'docker-compose.release.yml'
+      - 'docker-compose.dev.yml'
+      - 'cordum-helm/**'
+      - 'tests/security/llmchat_*.sh'
+      - 'tools/scripts/vllm_*.sh'
+      - '.github/workflows/security-llmchat.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'docker-compose.yml'
+      - 'docker-compose.release.yml'
+      - 'docker-compose.dev.yml'
+      - 'cordum-helm/**'
+      - 'tests/security/llmchat_*.sh'
+      - 'tools/scripts/vllm_*.sh'
+      - '.github/workflows/security-llmchat.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-llmchat-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  packaging-hardening:
+    name: parser-pinning-loopback
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.20.1
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+
+      - name: Syntax check probe scripts
+        run: |
+          bash -n tests/security/llmchat_common.sh
+          bash -n tests/security/llmchat_probe_05_parser_pinning.sh
+          bash -n tests/security/llmchat_probe_06_loopback_binding.sh
+          bash -n tools/scripts/vllm_config_lint.sh
+          bash -n tools/scripts/vllm_config_lint_test.sh
+          bash -n tools/scripts/vllm_helm_lint.sh
+
+      - name: Parser pinning probe (negative override included)
+        run: bash tests/security/llmchat_probe_05_parser_pinning.sh
+
+      - name: Loopback / ClusterIP exposure probe
+        run: bash tests/security/llmchat_probe_06_loopback_binding.sh

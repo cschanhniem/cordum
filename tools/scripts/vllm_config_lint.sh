@@ -79,6 +79,12 @@ for file in "${TARGETS[@]}"; do
 	vllm_lint_assert_present "$file" "^[[:space:]]*-[[:space:]]+--enable-prefix-caching[[:space:]]*$" \
 		"enable-prefix-caching" "missing '--enable-prefix-caching' flag"
 
+	# Rule: --disable-log-requests. vLLM must not log chat prompts/tool
+	# results because probe traffic intentionally contains synthetic JWT/API-key
+	# shapes and production traffic can contain tenant secrets.
+	vllm_lint_assert_present "$file" "^[[:space:]]*-[[:space:]]+--disable-log-requests[[:space:]]*$" \
+		"disable-log-requests" "missing '--disable-log-requests' (vLLM must not log prompts/request bodies)"
+
 	# Rule: ports binding loopback-only. The container bridge bind
 	# (`--host 0.0.0.0`) is intentional for Docker DNS reachability;
 	# the host-side boundary is the loopback port mapping.

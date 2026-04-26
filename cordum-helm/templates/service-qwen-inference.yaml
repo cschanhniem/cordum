@@ -7,9 +7,9 @@ metadata:
     {{- include "cordum.labels" . | nindent 4 }}
     app.kubernetes.io/component: qwen-inference
 spec:
-  # ClusterIP ONLY. NEVER LoadBalancer or NodePort — llm-chat is the
-  # sole legitimate client. External exposure of the inference endpoint
-  # is a P0 (see security review task-6cda949c).
+  # ClusterIP ONLY. Do not use externally reachable service types —
+  # llm-chat is the sole legitimate client. External exposure of the
+  # inference endpoint is a P0 (see security review task-6cda949c).
   type: ClusterIP
   ports:
     - name: openai

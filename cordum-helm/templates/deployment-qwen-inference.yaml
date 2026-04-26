@@ -54,7 +54,7 @@ spec:
         - name: qwen-inference
           image: {{ .Values.qwenInference.image | quote }}
           imagePullPolicy: {{ .Values.global.image.pullPolicy }}
-          # vLLM command — the EXACT 10 flags. DO NOT swap qwen3_xml.
+          # vLLM command. DO NOT swap qwen3_xml.
           # DO NOT drop the -FP8 model suffix (BF16 won't fit H100 at
           # 128K context).
           args:
@@ -64,7 +64,10 @@ spec:
             - {{ .Values.qwenInference.servedModelName | quote }}
             - --enable-auto-tool-choice
             - --tool-call-parser
-            - {{ .Values.qwenInference.toolCallParser | quote }}
+            # SECURITY: hardcoded per llm-chat rail/task-6cda949c. Do not make
+            # this values/env-driven; unsupported parser regressions can create
+            # infinite tool-call streams and context-exhaustion DoS.
+            - "qwen3_xml"
             - --max-model-len
             - {{ .Values.qwenInference.maxModelLen | quote }}
             - --kv-cache-dtype
@@ -72,6 +75,10 @@ spec:
             {{- if .Values.qwenInference.enablePrefixCaching }}
             - --enable-prefix-caching
             {{- end }}
+            # Do not log prompts / request bodies from chat traffic. Synthetic
+            # security probes grep vLLM logs for JWT/API-key shapes and must
+            # find zero hits.
+            - --disable-log-requests
             - --gpu-memory-utilization
             - {{ .Values.qwenInference.gpuMemoryUtilization | quote }}
             # In-cluster: bind to all interfaces so the llm-chat pod can

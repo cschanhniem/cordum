@@ -25,10 +25,28 @@ else
 	VALUES_FILES=("${CHART_DIR}/values.yaml")
 fi
 
-if ! command -v helm >/dev/null 2>&1; then
+HELM_BIN="${LLMCHAT_HELM_BIN:-}"
+if [ -z "$HELM_BIN" ]; then
+	if command -v helm >/dev/null 2>&1; then
+		HELM_BIN="helm"
+	elif command -v helm.exe >/dev/null 2>&1; then
+		HELM_BIN="helm.exe"
+	fi
+fi
+
+if [ -z "$HELM_BIN" ]; then
 	echo "[ERROR] helm CLI not installed; install via setup-helm@v4 in CI or 'choco/brew install helm' locally" >&2
 	exit 2
 fi
+
+helm_path_arg() {
+	local path="$1"
+	if [[ "$HELM_BIN" == *".exe" ]] && command -v wslpath >/dev/null 2>&1 && [[ "$path" == /* ]] && [ -e "$path" ]; then
+		wslpath -w "$path"
+	else
+		printf '%s\n' "$path"
+	fi
+}
 
 # Render the chart with mandatory secrets passed inline so `helm
 # template` does not error on `required` notices.
@@ -37,16 +55,17 @@ trap 'rm -f "${RENDER_TMP}"' EXIT
 
 values_args=()
 for vf in "${VALUES_FILES[@]}"; do
-	values_args+=(-f "$vf")
+	values_args+=(-f "$(helm_path_arg "$vf")")
 done
+CHART_ARG="$(helm_path_arg "$CHART_DIR")"
 
-if ! helm template "$CHART_DIR" \
+if ! "$HELM_BIN" template "$CHART_ARG" \
 	"${values_args[@]}" \
 	--set secrets.apiKey=lint-dummy \
 	--set redis.auth.password=lint-dummy \
 	>"$RENDER_TMP" 2>/dev/null; then
 	echo "[ERROR] helm template render failed for ${CHART_DIR}; cannot lint" >&2
-	helm template "$CHART_DIR" "${values_args[@]}" --set secrets.apiKey=lint-dummy --set redis.auth.password=lint-dummy >&2 || true
+	"$HELM_BIN" template "$CHART_ARG" "${values_args[@]}" --set secrets.apiKey=lint-dummy --set redis.auth.password=lint-dummy >&2 || true
 	exit 2
 fi
 
@@ -78,6 +97,32 @@ vllm_lint_assert_present "$RENDER_TMP" "^[[:space:]]+-[[:space:]]+\"?fp8\"?[[:sp
 # Rule: --enable-prefix-caching present.
 vllm_lint_assert_present "$RENDER_TMP" "^[[:space:]]+-[[:space:]]+--enable-prefix-caching[[:space:]]*$" \
 	"helm-enable-prefix-caching" "rendered Deployment missing --enable-prefix-caching flag"
+
+# Rule: --disable-log-requests present.
+vllm_lint_assert_present "$RENDER_TMP" "^[[:space:]]+-[[:space:]]+--disable-log-requests[[:space:]]*$" \
+	"helm-disable-log-requests" "rendered Deployment missing --disable-log-requests (vLLM must not log prompts/request bodies)"
+
+# Rule: operator cannot flip parser via values/env override. Render once with a
+# malicious override and assert the template remains hard-pinned to qwen3_xml.
+OVERRIDE_RENDER_TMP="$(mktemp -t vllm-helm-lint-override-XXXX.yaml)"
+trap 'rm -f "${RENDER_TMP}" "${OVERRIDE_RENDER_TMP}"' EXIT
+if ! "$HELM_BIN" template "$CHART_ARG" \
+	"${values_args[@]}" \
+	--set secrets.apiKey=lint-dummy \
+	--set redis.auth.password=lint-dummy \
+	--set qwenInference.toolCallParser=qwen3_coder \
+	>"$OVERRIDE_RENDER_TMP" 2>/dev/null; then
+	echo "[ERROR] helm template render with parser override failed for ${CHART_DIR}; cannot lint fail-closed override" >&2
+	"$HELM_BIN" template "$CHART_ARG" "${values_args[@]}" \
+		--set secrets.apiKey=lint-dummy \
+		--set redis.auth.password=lint-dummy \
+		--set qwenInference.toolCallParser=qwen3_coder >&2 || true
+	exit 2
+fi
+vllm_lint_assert_present "$OVERRIDE_RENDER_TMP" "^[[:space:]]+-[[:space:]]+\"?qwen3_xml\"?[[:space:]]*$" \
+	"helm-parser-override-pinned-qwen3-xml" "parser override must still render qwen3_xml"
+vllm_lint_assert_absent "$OVERRIDE_RENDER_TMP" "^[[:space:]]+-[[:space:]]+\"?qwen3_coder\"?[[:space:]]*$" \
+	"helm-parser-override-disallowed-qwen3-coder" "parser override leaked qwen3_coder into rendered Deployment"
 
 # Rule: qwen-inference Service must be ClusterIP. Wildcard exposure
 # (LoadBalancer / NodePort) would break the zero-egress invariant.
