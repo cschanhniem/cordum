@@ -1,0 +1,129 @@
+name: llmchat-integration
+
+# End-to-end guard for the cordum-llm-chat service. Brings up the demo
+# compose profile (gateway / scheduler / safety-kernel / workflow-engine
+# / redis / nats / mock-bank pack) and runs the build-tagged integration
+# tests in core/llmchat. The LLM itself is mocked in-process via the
+# mockvllm helper so CI does not need a GPU; the real vLLM path is
+# validated manually + via the Helm smoke in phase 7 (task-c6daadab).
+#
+# Mirrors the demo-mock-bank-e2e workflow conventions: per-run secrets,
+# generated TLS certs, condition-based health polling, log-capture on
+# failure. Branch-protection promotion happens in a follow-up after a
+# soak period of 14 successful runs / 7 days (per task-68e50aed Phase 8
+# step (e)).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: llmchat-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  llmchat-integration:
+    name: llmchat-integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build cordumctl
+        run: |
+          mkdir -p ./bin
+          go build -o ./bin/cordumctl ./cmd/cordumctl
+
+      - name: Generate API key + Redis password
+        run: |
+          echo "CORDUM_API_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "REDIS_PASSWORD=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+
+      - name: Generate TLS certificates
+        run: |
+          ./bin/cordumctl generate-certs --dir ./certs
+          chmod -R a+rX ./certs
+
+      - name: Bring up the compose stack (demo profile)
+        env:
+          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+          REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
+        run: |
+          docker compose --profile demo up -d --build
+          docker compose ps
+
+      - name: Wait for gateway /api/v1/status to return 200
+        run: |
+          attempts=0
+          max_attempts=30
+          until curl -ksf \
+            --connect-timeout 2 \
+            --max-time 5 \
+            -H "X-API-Key: ${CORDUM_API_KEY}" \
+            https://127.0.0.1:8081/api/v1/status >/dev/null; do
+            attempts=$((attempts + 1))
+            if [ "$attempts" -ge "$max_attempts" ]; then
+              echo "gateway /api/v1/status did not return 200 within $((max_attempts * 2))s"
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "gateway healthy after $((attempts * 2))s"
+
+      - name: Install demo-mock-bank pack
+        env:
+          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+          CORDUM_GATEWAY: https://127.0.0.1:8081
+          CORDUM_TLS_INSECURE: "1"
+        run: |
+          ./bin/cordumctl pack install demo/mock-bank/pack
+
+      - name: Run llmchat integration tests
+        env:
+          CORDUM_INTEGRATION: "1"
+          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+          CORDUM_API_BASE: https://127.0.0.1:8081
+          CORDUM_TLS_INSECURE: "1"
+        run: |
+          go test -tags=integration ./core/llmchat/... -count=3 -timeout 10m -v
+
+      - name: Capture compose logs on failure
+        if: failure()
+        run: |
+          export CORDUM_API_KEY="${CORDUM_API_KEY:-teardown-placeholder-api-key}"
+          export REDIS_PASSWORD="${REDIS_PASSWORD:-teardown-placeholder-redis-password}"
+          mkdir -p /tmp/llmchat-int-logs
+          for svc in api-gateway scheduler safety-kernel workflow-engine mock-bank-worker redis nats; do
+            docker compose logs --no-color "$svc" > "/tmp/llmchat-int-logs/${svc}.log" 2>&1 || true
+          done
+          docker compose ps > /tmp/llmchat-int-logs/compose-ps.txt || true
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: llmchat-integration-failure
+          path: /tmp/llmchat-int-logs/
+          retention-days: 7
+
+      - name: Tear down compose stack
+        if: always()
+        run: |
+          export CORDUM_API_KEY="${CORDUM_API_KEY:-teardown-placeholder-api-key}"
+          export REDIS_PASSWORD="${REDIS_PASSWORD:-teardown-placeholder-redis-password}"
+          docker compose --profile demo down -v

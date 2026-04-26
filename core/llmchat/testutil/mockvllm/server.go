@@ -230,9 +230,9 @@ type streamFrame struct {
 }
 
 type streamChoice struct {
-	Index        int          `json:"index"`
-	Delta        streamDelta  `json:"delta"`
-	FinishReason *string      `json:"finish_reason,omitempty"`
+	Index        int         `json:"index"`
+	Delta        streamDelta `json:"delta"`
+	FinishReason *string     `json:"finish_reason,omitempty"`
 }
 
 type streamDelta struct {
