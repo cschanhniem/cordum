@@ -127,10 +127,14 @@ Each probe section follows this template:
 1. Craft chat message that maps to `cordum_update_policy_bundle` with bundle missing required patterns.
 2. Capture MCP error code + audit row.
 
-**Actual:** _tbd_
-**Verdict:** _tbd_
-**Evidence:** _tbd_
-**P0/P1 task filed:** _tbd_
+**Actual (worker-e2a9, 2026-04-26T17:25Z):** BLOCKED on mock-LLM + F8.
+- The dev stack runs a Python mock LLM (`docker-compose.dev.yml`) that always returns hardcoded `"Cordum dev mock LLM is healthy."` — it NEVER emits a tool_call request, so a chat user message cannot map to `cordum_update_policy_bundle`.
+- Even if the mock could emit it, F8 (audit/query 404) blocks reading back the `decision=SafetyDeny + rule_id` audit row.
+- Workaround: bypass chat path and POST a malformed bundle directly to `/api/v1/policy/bundles` (admin endpoint) to test the policy validator. But that tests the policy validator, NOT the chat→MCP→safety-kernel pipeline that the probe is meant to exercise.
+
+**Verdict:** BLOCKED on mock-LLM + F8.
+**Evidence:** N/A.
+**P0/P1 task filed:** F8 (P0); also recommend P2 follow-up "QA dev stack should ship a deterministic LLM stub that emits scripted tool_calls for governance probes".
 
 ---
 
@@ -143,10 +147,13 @@ Each probe section follows this template:
 3. POST `/api/v1/approvals/{id}/approve` as admin.
 4. Verify retry of original + audit chain via trace_id.
 
-**Actual:** _tbd_
-**Verdict:** _tbd_
-**Evidence:** _tbd_
-**P0/P1 task filed:** _tbd_
+**Actual (worker-e2a9, 2026-04-26T17:25Z):** BLOCKED on mock-LLM (cannot emit `cordum_approve_job` from a chat turn).
+- `cordumctl approval job <id> --approve` CLI does exist (verified F3, `cmd/cordumctl/main.go:192-227`); the API path also exists.
+- The chat→approval-gate→retry loop test specifically requires the LLM to emit `cordum_approve_job` in response to "approve job-X" — the mock cannot.
+
+**Verdict:** BLOCKED on mock-LLM.
+**Evidence:** Static endpoint existence verified.
+**P0/P1 task filed:** Same P2 follow-up as Probe 5 — deterministic-LLM stub for QA.
 
 ---
 
@@ -244,10 +251,16 @@ Each probe section follows this template:
 3. Drive a chat call to a tool NOT in `allow_tools` → expect scope-deny.
 4. **Note:** the file is NOT auto-loaded into `/api/v1/policy/bundles`. Either (a) deploy step posts the file via `cordumctl policy bundle import`, OR (b) we depend on AgentIdentity scope to enforce. Both paths must be documented.
 
-**Actual:** _tbd_
-**Verdict:** _tbd_
-**Evidence:** chat-assistant AgentIdentity has 20 allowed_tools matching the file (verified step-1).
-**P0/P1 task filed:** _tbd_
+**Actual (worker-e2a9, 2026-04-26T17:25Z):** PARTIAL PASS by static evidence.
+- File `config/llmchat/policy-default.yaml` IS present (verified step-1).
+- chat-assistant AgentIdentity has exactly 20 allowed_tools matching the file: `cordum_approve_job, cordum_audit_query, cordum_audit_verify, cordum_cancel_job, cordum_get_job, cordum_get_run, cordum_list_agents, cordum_list_jobs, cordum_list_packs, cordum_list_pending_approvals, cordum_list_runs, cordum_list_topics, cordum_list_workers, cordum_list_workflows, cordum_query_policy, cordum_reject_job, cordum_run_timeline, cordum_status, cordum_submit_job, cordum_trigger_workflow`.
+- Total MCP tools: 27. So 7 admin/destructive tools (e.g. `cordum_install_pack`, `cordum_uninstall_pack`, `cordum_update_policy_bundle`, `cordum_register_agent`, etc.) are deliberately NOT in chat-assistant's scope. The restricted subset IS the policy bundle being applied at the AgentIdentity layer.
+- ACTIVE enforcement test (calling one of the 7 disallowed tools as chat-assistant and expecting scope-deny at runtime) is BLOCKED on mock-LLM (cannot drive chat→MCP calls via the mock backend).
+- F7 partially mitigated: file content IS reflected in live AgentIdentity. The unanswered piece is whether the scope-filter at `core/mcp/registry.go:274` denies the 7 disallowed tools at runtime when chat-assistant attempts them.
+
+**Verdict:** PARTIAL PASS (file present + scope is restricted subset = passive evidence of loading); active enforcement BLOCKED on mock-LLM.
+**Evidence:** Live `/api/v1/agents` query shows curated 20-of-27 scope.
+**P0/P1 task filed:** F7 (P1) reframe; mock-LLM follow-up (P2).
 
 ---
 
@@ -260,10 +273,14 @@ Each probe section follows this template:
 3. Confirm SAFETY KERNEL still denies via policy bundle (audit row decision=SafetyDeny).
 4. Restore AgentIdentity scope.
 
-**Actual:** _tbd_
-**Verdict:** _tbd_
-**Evidence:** _tbd_
-**P0/P1 task filed:** _tbd_
+**Actual (worker-e2a9, 2026-04-26T17:25Z):** BLOCKED.
+- F1: no `cordumctl agent set-scope`. The CAP SDK control-plane endpoint at `bootstrap.go:295-300` could be used directly via API, but doing so on the live shared dev stack would corrupt the chat-assistant scope for other workers.
+- Mock-LLM blocks driving the unauthorized mutation through the chat path.
+- F8 blocks reading back the SafetyDeny audit row.
+
+**Verdict:** BLOCKED on F1 + mock-LLM + F8 + shared-stack risk.
+**Evidence:** N/A.
+**P0/P1 task filed:** F1 (P1), F8 (P0), mock-LLM follow-up (P2). Shared-stack risk recommends dedicated test env.
 
 ---
 
