@@ -7,11 +7,6 @@ export interface ApiResponse<T> {
   next_cursor?: number | null;
 }
 
-export interface PaginationParams {
-  page?: number;
-  perPage?: number;
-  sort?: string;
-}
 
 // ---------------------------------------------------------------------------
 // Jobs
@@ -87,24 +82,9 @@ export interface OutputSafetyRecord {
   original_ptr?: string;
 }
 
-export interface OutputPolicyRule {
-  id: string;
-  match: Record<string, unknown>;
-  decision: OutputDecision;
-  reason?: string;
-  enabled?: boolean;
-}
 
 export type SafetyDecisionType = "allow" | "deny" | "require_approval" | "allow_with_constraints" | "throttle";
 
-export interface MatchedRule {
-  rule_id: string;
-  name: string;
-  bundle_id?: string;
-  priority: number;
-  match_reason?: string;
-  decision: SafetyDecisionType;
-}
 
 export interface PolicyConstraints {
   budgets?: {
@@ -181,14 +161,6 @@ export interface GovernanceDecisionsResponse {
   nextCursor?: string;
 }
 
-export interface McpPolicyResult {
-  server?: string;
-  tool?: string;
-  resource?: string;
-  action?: string;
-  decision: SafetyDecisionType;
-  matched_rules?: string[];
-}
 
 export interface SafetyDecision {
   type: SafetyDecisionType;
@@ -198,15 +170,6 @@ export interface SafetyDecision {
   evalPath?: string[];
 }
 
-export interface SafetyResult {
-  decision: SafetyDecisionType;
-  matched_rules: MatchedRule[];
-  evaluation_ms: number;
-  constraints?: PolicyConstraints;
-  mcp_context?: McpPolicyResult;
-  approval_required: boolean;
-  approval_ref?: string;
-}
 
 export interface Job {
   id: string;

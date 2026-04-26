@@ -39,7 +39,6 @@ import type {
   GovernanceDecision,
   GovernanceVerdict,
   EvalDataset,
-  EvalEntry,
   EvalRun,
   EvalRunStatus,
   EvalRunSummary,
@@ -83,7 +82,7 @@ export interface BackendJobRecord {
   metadata?: { [key: string]: string | undefined };
 }
 
-export interface BackendOutputFinding {
+interface BackendOutputFinding {
   type?: string;
   severity?: string;
   detail?: string;
@@ -94,7 +93,7 @@ export interface BackendOutputFinding {
   length?: number;
 }
 
-export interface BackendOutputSafetyRecord {
+interface BackendOutputSafetyRecord {
   decision?: string;
   reason?: string;
   rule_id?: string;
@@ -133,7 +132,7 @@ export interface BackendJobDetail extends BackendJobRecord {
   approval_decision?: "approve" | "reject" | "expire" | "invalidate" | "repair";
 }
 
-export interface BackendWorkflowStep {
+interface BackendWorkflowStep {
   id?: string;
   name?: string;
   type?: string;
@@ -203,7 +202,7 @@ export interface BackendWorkflow {
   updated_at?: string;
 }
 
-export interface BackendStepRun {
+interface BackendStepRun {
   step_id?: string;
   status?: string;
   started_at?: string;
@@ -238,7 +237,7 @@ export interface BackendWorkflowRun {
   }>;
 }
 
-export interface BackendApprovalDecisionSummary {
+interface BackendApprovalDecisionSummary {
   source?: ApprovalDecisionSummarySource;
   completeness?: ApprovalDecisionSummaryCompleteness;
   context_status?: ApprovalContextStatus;
@@ -414,7 +413,7 @@ export interface BackendPackRecord {
   tests?: Record<string, unknown>;
 }
 
-export interface BackendMarketplaceCatalog {
+interface BackendMarketplaceCatalog {
   id: string;
   title?: string;
   url?: string;
@@ -423,7 +422,7 @@ export interface BackendMarketplaceCatalog {
   error?: string;
 }
 
-export interface BackendMarketplaceItem {
+interface BackendMarketplaceItem {
   id: string;
   version: string;
   title?: string;
@@ -822,7 +821,7 @@ function normalizeWorkflowNodeType(
   return "agent-task";
 }
 
-export function mapWorkflowStep(step: BackendWorkflowStep, fallbackId: string): WorkflowStep {
+function mapWorkflowStep(step: BackendWorkflowStep, fallbackId: string): WorkflowStep {
   let uiType = normalizeWorkflowNodeType(
     step.type,
     step.meta as Record<string, unknown> | undefined,
@@ -1460,7 +1459,7 @@ function deriveAuditActor(actorId: string, role?: string): AuditActor {
   return { id: actorId, type, role };
 }
 
-export function auditResourceLink(
+function auditResourceLink(
   resourceType: string,
   resourceId: string,
 ): string {
@@ -1731,18 +1730,8 @@ export interface BackendEvalDataset {
   created_by?: string;
 }
 
-export interface BackendEvalEntry {
-  id?: string;
-  input?: Record<string, unknown>;
-  expected_decision?: string;
-  rule_id?: string;
-  metadata?: Record<string, unknown>;
-  source?: string;
-  source_ref?: string;
-  notes?: string;
-}
 
-export interface BackendEvalRunSummary {
+interface BackendEvalRunSummary {
   total?: number;
   passed?: number;
   failed?: number;
@@ -1751,7 +1740,7 @@ export interface BackendEvalRunSummary {
   score_percent?: number | null;
 }
 
-export interface BackendEvalEntryResult {
+interface BackendEvalEntryResult {
   entry_id?: string;
   input?: Record<string, unknown>;
   expected_decision?: string;
@@ -1828,18 +1817,6 @@ export function mapEvalDataset(raw: BackendEvalDataset): EvalDataset {
   };
 }
 
-export function mapEvalEntry(raw: BackendEvalEntry): EvalEntry {
-  return {
-    id: raw.id ?? "",
-    input: raw.input ?? {},
-    expectedDecision: normalizeSafetyDecisionType(raw.expected_decision),
-    ruleId: raw.rule_id,
-    metadata: raw.metadata,
-    source: raw.source ?? "unknown",
-    sourceRef: raw.source_ref,
-    notes: raw.notes,
-  };
-}
 
 export function mapEvalEntryResult(raw: BackendEvalEntryResult): EvalEntryResult {
   const expected = normalizeSafetyDecisionType(raw.expected_decision);
@@ -1893,7 +1870,7 @@ export function isRegressionRun(run: Pick<EvalRun, "summary">): boolean {
   return (run.summary?.regressions ?? 0) > 0;
 }
 
-export interface BackendDelegationChainLink {
+interface BackendDelegationChainLink {
   agent_id?: string;
   issued_at?: string;
   expires_at?: string;
@@ -1902,7 +1879,7 @@ export interface BackendDelegationChainLink {
   issued_by?: string;
 }
 
-export interface BackendDelegationView {
+interface BackendDelegationView {
   jti?: string;
   issuer?: string;
   subject?: string;
@@ -1924,7 +1901,7 @@ export interface BackendDelegationListResponse {
   nextCursor?: string | null;
 }
 
-export function mapDelegationChainLink(
+function mapDelegationChainLink(
   raw: BackendDelegationChainLink,
 ): DelegationChainLink {
   return {
