@@ -29,6 +29,7 @@ Recorded in `task-931eaea2` step-2 (worker-e2a9, 2026-04-26). Each finding affec
 | F5 | Audit query endpoint is `/api/v1/audit/query` (NOT `/api/v1/audit/events` as the task description says) | 3 | P2 | Update probe procedure |
 | F6 | Dashboard `JobsPage.tsx:700-756` does NOT render an `agent_id` column. Visual parity DoD cannot pass without dashboard work. | 2 | P0 | File dashboard task to add agent_id column to Jobs table |
 | F7 | `config/llmchat/policy-default.yaml` is NOT auto-loaded; operator must POST to `/api/v1/policy/bundles` after first stack boot | 12 | P1 | Either auto-load on chat-assistant boot OR document the manual step in the deployment runbook + add a smoke check |
+| F8 | **`/api/v1/audit/query` endpoint returns 404** — gateway never registers it (`core/controlplane/gateway/gateway.go:1192-1207` only registers `/audit/export*`, `/audit/verify`, `/audit/legal-hold*`). MCP `audit_query` tool at `core/mcp/bridge_readonly.go:245` calls this non-existent endpoint and would fail at runtime. | 1, 3, 4, 5, 11 | **P0** | Either implement the gateway handler OR change the MCP bridge to use a different mechanism (e.g. policy/audit, legal-hold export). Verified live: `curl https://localhost:8081/api/v1/audit/query?type=chat.bootstrap_registered → 404`, `audit/verify → 200`. |
 
 ## Probe template
 
@@ -55,10 +56,17 @@ Each probe section follows this template:
 3. Restart again at `T1`; query `/api/v1/audit/query?type=chat.bootstrap_registered&since=T1` → expect zero new events.
 4. Drive a chat-driven `cordum_list_jobs` call; query `/api/v1/audit/query?type=mcp.tool_invocation&since=<call-time>` and assert the audit row carries `agent_id=chat-assistant@<tenant>` field.
 
-**Actual:** _tbd_
-**Verdict:** _tbd_
-**Evidence:** _tbd_
-**P0/P1 task filed:** _tbd_
+**Actual (worker-e2a9, 2026-04-26T17:20Z):**
+- (a) chat-assistant agent IS registered in `/api/v1/agents`: 1 entry (no duplicate ⇒ idempotent boot worked at least once across the stack lifetime), `id=d2315a95-7b08-40a1-8bdc-7b96858f41e6`, `risk_tier=medium` ✓ (matches plan spec), `owner=system`, `allowed_tools=20` (matches `config/llmchat/policy-default.yaml`), `preapproved_mutating_tools=['cordum_submit_job']` ✓ (matches epic rail #4).
+- (b) Restart for idempotency check: `docker restart cordum-llm-chat-1` failed with `Error response from daemon: Cannot restart container cordum-llm-chat-1: error while creating mount source path '/run/desktop/mnt/host/d/Cordum/cordum-llm-debug/config/llmchat': mkdir /run/desktop/mnt/host/d/Cordum/cordum-llm-debug: file exists`. Environmental issue (orphan mount from another worker session); does NOT invalidate (a) but blocks fresh-boot test.
+- (c) Audit emission verification BLOCKED by **F8** — `/api/v1/audit/query` returns 404. Gateway only registers `/audit/export*`, `/audit/verify`, `/audit/legal-hold*` (`gateway.go:1192-1207`). The MCP `audit_query` tool at `bridge_readonly.go:245` calls a non-existent endpoint.
+- (d) Chain integrity: `GET /api/v1/audit/verify` → `{"status":"ok"}` (response is just `{status}`; no `valid`/`chain_depth`/`verified_count` fields).
+
+**Verdict:** PARTIAL PASS for (a), BLOCKED on (b) by Docker mount issue, BLOCKED on (c) by F8.
+**Evidence:** Live API responses captured in step-4 worker note. Code refs: `core/audit/siem_actions.go:9` (constant exists), `core/llmchat/bootstrap.go:126,190` (boot + emission). `core/controlplane/gateway/gateway.go:1192-1207` (audit routes registered — no /query).
+**P0/P1 task filed:** F8 to be filed in step-8 triage as P0 (audit query plumbing broken).
+
+---
 
 ---
 
@@ -67,10 +75,10 @@ Each probe section follows this template:
 
 **Procedure:** _BLOCKED ON F6_ — Jobs page does not render agent_id column. File a dashboard task to add the column (or surface agent_id in another visible way) before this probe can complete.
 
-**Actual:** _BLOCKED_ — pending dashboard work (see F6).
+**Actual (worker-e2a9, 2026-04-26T17:20Z):** Re-confirmed F6 by re-reading `dashboard/src/pages/JobsPage.tsx:700-756`. Columns rendered: Status, Job ID, Topic, Origin, Safety Decision, Attempts, Updated. NO agent_id column. The dogfooding pitch ("appears in Jobs page like any other Cordum agent" — task rail #6) cannot be visually confirmed without dashboard work.
 **Verdict:** BLOCKED
-**Evidence:** `dashboard/src/pages/JobsPage.tsx:700-756` columns survey.
-**P0/P1 task filed:** _tbd — to be filed in step-8._
+**Evidence:** Code survey only; no live test possible.
+**P0/P1 task filed:** F6 → step-8 P0.
 
 ---
 
@@ -145,10 +153,10 @@ Each probe section follows this template:
 3. Chat user requests submit; capture MCP error + audit row.
 4. Restore scope.
 
-**Actual:** _tbd_
-**Verdict:** _tbd_
+**Actual (worker-e2a9, 2026-04-26T17:20Z):** BLOCKED by F1 (no `cordumctl agent set-scope` CLI command) AND F8 (cannot confirm audit reason via /audit/query). The static code path is correct (scope-first ordering verified at `core/mcp/registry.go:274,303`), but the runtime evidence cannot be captured without (a) a CLI / API workaround for narrowing scope, AND (b) the audit query endpoint to read back the deny reason.
+**Verdict:** BLOCKED
 **Evidence:** Order confirmed by code: scope filter at `core/mcp/registry.go:274` runs before approval gate at `core/mcp/registry.go:303`.
-**P0/P1 task filed:** _tbd_
+**P0/P1 task filed:** F1 + F8 → step-8 P0/P1.
 
 ---
 
