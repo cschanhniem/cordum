@@ -177,6 +177,7 @@ func TestLiveStack_MCPRoundtripEmitsAuditEvent(t *testing.T) {
 		AgentID:       "chat-assistant",
 		ClientName:    "llmchat-integration-test",
 		ClientVersion: "0.0.0",
+		HTTPClient:    liveMCPHTTPClient(),
 	})
 	if err != nil {
 		t.Fatalf("NewMCPClient: %v", err)
