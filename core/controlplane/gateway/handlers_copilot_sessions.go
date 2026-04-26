@@ -116,7 +116,7 @@ func (s *server) handleGetCopilotSession(w http.ResponseWriter, r *http.Request)
 		decisionsTruncated bool
 	)
 	if canReadGovernance {
-		decisions, decisionsTruncated, err = s.collectCopilotSessionDecisions(r.Context(), tenant, jobIDs)
+		decisions, decisionsTruncated, err = s.collectCopilotSessionDecisions(r.Context(), tenant, jobIDs, sess.CreatedAt)
 		if err != nil {
 			writeInternalError(w, r, "get copilot session decisions", err)
 			return
@@ -219,8 +219,19 @@ func (s *server) collectCopilotSessionJobs(ctx context.Context, sessionID, tenan
 	}
 
 	jobs := make([]copilotSessionJobView, 0, len(jobIDs))
+	// decisionJobSet must include every job id the session references, even
+	// those whose enriched metadata has expired or been evicted from the job
+	// store. Without that, governance decisions for missing-meta jobs are
+	// silently dropped from the response. Cross-tenant jobs are still
+	// excluded — both for security and because QueryDecisions filters by
+	// tenant, so they cannot match anyway.
+	decisionJobSet := make(map[string]struct{}, len(jobIDs))
 	for _, id := range jobIDs {
 		meta := metas[id]
+		if tenant != "" && meta["tenant"] != "" && meta["tenant"] != tenant {
+			continue
+		}
+		decisionJobSet[id] = struct{}{}
 		if len(meta) == 0 {
 			slog.Warn("copilot session job reference missing",
 				"session_id", sessionID,
@@ -229,28 +240,42 @@ func (s *server) collectCopilotSessionJobs(ctx context.Context, sessionID, tenan
 			)
 			continue
 		}
-		if tenant != "" && meta["tenant"] != "" && meta["tenant"] != tenant {
-			continue
-		}
 		jobs = append(jobs, copilotJobViewFromMeta(id, meta))
 	}
-	return jobs, jobSetFromViews(jobs), truncated, nil
+	return jobs, decisionJobSet, truncated, nil
 }
 
-func (s *server) collectCopilotSessionDecisions(ctx context.Context, tenant string, jobIDs map[string]struct{}) ([]copilotSessionDecisionView, bool, error) {
+func (s *server) collectCopilotSessionDecisions(ctx context.Context, tenant string, jobIDs map[string]struct{}, sessionStartedAt time.Time) ([]copilotSessionDecisionView, bool, error) {
 	if s.decisionLogStore == nil || len(jobIDs) == 0 {
 		return []copilotSessionDecisionView{}, false, nil
 	}
 
+	// Bound the decision-log scan to the session's lifetime, with a 7-day
+	// minimum lookback for sessions that started within the last week. A
+	// `Since: 1` (epoch) query otherwise scans every historical decision
+	// for the tenant, which is unnecessary work and a latency tail risk on
+	// tenants with extensive decision history.
+	now := time.Now().UTC()
+	weekAgoMillis := now.Add(-7 * 24 * time.Hour).UnixMilli()
+	sinceMillis := weekAgoMillis
+	if !sessionStartedAt.IsZero() {
+		startedMillis := sessionStartedAt.UTC().UnixMilli()
+		if startedMillis < sinceMillis {
+			sinceMillis = startedMillis
+		}
+	}
+	if sinceMillis < 1 {
+		sinceMillis = 1
+	}
 	var (
 		decisions []copilotSessionDecisionView
 		cursor    string
-		until     = time.Now().UTC().Add(24 * time.Hour).UnixMilli()
+		until     = now.Add(24 * time.Hour).UnixMilli()
 	)
 	for {
 		page, err := s.decisionLogStore.QueryDecisions(ctx, model.DecisionQuery{
 			Tenant: tenant,
-			Since:  1,
+			Since:  sinceMillis,
 			Until:  until,
 			Limit:  copilotSessionAggregateLimit,
 			Cursor: cursor,
@@ -303,6 +328,13 @@ func orderedCopilotSessionJobIDs(sess *copilot.CopilotSession) []string {
 
 func copilotJobViewFromMeta(id string, meta map[string]string) copilotSessionJobView {
 	topic := meta["topic"]
+	// Pool is its own metadata key; falling back to topic preserves the
+	// previous behavior for jobs whose meta predates the pool field, but
+	// real pool metadata must take precedence when present.
+	pool := strings.TrimSpace(meta["pool"])
+	if pool == "" {
+		pool = topic
+	}
 	labels := parseCopilotLabels(meta["labels"])
 	status := strings.ToLower(strings.TrimSpace(meta["state"]))
 	if status == "" {
@@ -317,7 +349,7 @@ func copilotJobViewFromMeta(id string, meta map[string]string) copilotSessionJob
 		Type:         topic,
 		Topic:        topic,
 		Status:       status,
-		Pool:         topic,
+		Pool:         pool,
 		Capabilities: capabilities,
 		RiskTags:     parseCopilotStringSlice(meta["risk_tags"]),
 		Metadata:     labels,
@@ -357,14 +389,6 @@ func formatCopilotUnixMicros(raw string) string {
 		return ""
 	}
 	return time.UnixMicro(micros).UTC().Format(time.RFC3339Nano)
-}
-
-func jobSetFromViews(jobs []copilotSessionJobView) map[string]struct{} {
-	out := make(map[string]struct{}, len(jobs))
-	for _, job := range jobs {
-		out[job.ID] = struct{}{}
-	}
-	return out
 }
 
 func copilotLogPrincipal(principal string) string {

@@ -118,7 +118,13 @@ describe("CopilotSessionPage", () => {
     expect(jobsHandler).not.toHaveBeenCalled();
   });
 
-  it("skips per-turn job chips when the referenced job is not in the detail response", async () => {
+  it("still renders per-turn job chips when the referenced job is not in the detail response", async () => {
+    // The detail endpoint caps `jobs` at copilotSessionAggregateLimit and may
+    // also drop entries whose enriched metadata expired, but `message.jobIds`
+    // is the authoritative source of references. The chip still routes to
+    // /jobs/:jobId, which only needs the id; hiding the chip would lose a
+    // valid drill-in target. The chip must render with "muted" styling so
+    // users can distinguish jobs whose enriched metadata loaded.
     server.use(
       http.get("*/api/v1/copilot/sessions/:sessionId", () =>
         HttpResponse.json(
@@ -142,7 +148,9 @@ describe("CopilotSessionPage", () => {
     await waitFor(() => {
       expect(screen.queryByText("I could not find the referenced job.")).not.toBeNull();
     });
-    expect(screen.queryByRole("link", { name: /missing-job/i })).toBeNull();
+    const chip = screen.queryByRole("link", { name: /missing-job/i });
+    expect(chip).not.toBeNull();
+    expect(chip?.getAttribute("href")).toBe("/jobs/missing-job");
   });
 
   it("renders independent empty states for messages, decisions, and jobs", async () => {
@@ -172,7 +180,7 @@ describe("CopilotSessionPage", () => {
     renderRoute(`/copilot/sessions/${SESSION_ID}`);
     await waitFor(() => {
       expect(
-        screen.queryByText(/copilot session backend is being wired up/i),
+        screen.queryByText(/copilot session details are not available yet/i),
       ).not.toBeNull();
     });
     expect(screen.getByRole("heading", { name: /^linked jobs$/i })).not.toBeNull();

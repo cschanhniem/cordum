@@ -182,7 +182,7 @@ func TestCollectCopilotSessionDecisionsPaginatesPastUnrelatedTenantDecisions(t *
 		t.Fatalf("AppendDecision(session) error = %v", err)
 	}
 
-	decisions, truncated, err := s.collectCopilotSessionDecisions(ctx, "tenant-a", map[string]struct{}{"session-job": {}})
+	decisions, truncated, err := s.collectCopilotSessionDecisions(ctx, "tenant-a", map[string]struct{}{"session-job": {}}, time.Time{})
 	if err != nil {
 		t.Fatalf("collectCopilotSessionDecisions() error = %v", err)
 	}

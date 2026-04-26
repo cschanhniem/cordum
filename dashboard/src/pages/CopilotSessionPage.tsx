@@ -2,7 +2,11 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
 import { ApiError } from "@/api/client";
-import type { CopilotSessionDetailResponse, GovernanceDecision, Job } from "@/api/types";
+import type {
+  CopilotSessionDecision,
+  CopilotSessionDetailResponse,
+  CopilotSessionJob,
+} from "@/api/types";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge, type BadgeVariant } from "@/components/ui/StatusBadge";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -129,8 +133,9 @@ export default function CopilotSessionPage() {
               Backend pending
             </p>
             <p className="text-sm text-foreground">
-              Copilot session backend is being wired up — only linked jobs are
-              available for now.
+              Copilot session details are not available yet. Linked jobs and
+              governance decisions will appear once the backend store is
+              wired up.
             </p>
           </div>
           <LinkedJobsTable jobs={jobs} navigate={navigate} />
@@ -202,18 +207,27 @@ function MessageTimeline({
               <p className="text-sm text-foreground whitespace-pre-wrap">
                 {message.content}
               </p>
-              {message.jobIds &&
-                message.jobIds.some((jobId) => knownJobIds.has(jobId)) && (
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {message.jobIds
-                      .filter((jobId) => knownJobIds.has(jobId))
-                      .map((jobId) => (
-                        <Link key={jobId} to={`/jobs/${jobId}`} className="inline-flex">
-                          <StatusBadge variant="info">{jobId}</StatusBadge>
-                        </Link>
-                      ))}
-                  </div>
-                )}
+              {message.jobIds && message.jobIds.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {/*
+                   * Render every job id the message references. The API
+                   * exposes message.jobIds independently of the enriched
+                   * jobs array (which can be capped by
+                   * copilotSessionAggregateLimit) and `/jobs/:jobId` only
+                   * needs the id, so a chip remains useful even when the
+                   * enriched view was truncated. Use knownJobIds purely
+                   * for styling so users can distinguish jobs whose
+                   * metadata loaded from those that did not.
+                   */}
+                  {message.jobIds.map((jobId) => (
+                    <Link key={jobId} to={`/jobs/${jobId}`} className="inline-flex">
+                      <StatusBadge variant={knownJobIds.has(jobId) ? "info" : "muted"}>
+                        {jobId}
+                      </StatusBadge>
+                    </Link>
+                  ))}
+                </div>
+              )}
             </li>
           ))}
         </ol>
@@ -222,7 +236,7 @@ function MessageTimeline({
   );
 }
 
-function GovernanceDecisionsPanel({ decisions }: { decisions: GovernanceDecision[] }) {
+function GovernanceDecisionsPanel({ decisions }: { decisions: CopilotSessionDecision[] }) {
   return (
     <section className="instrument-card space-y-4">
       <div>
@@ -280,7 +294,7 @@ function DecisionField({ label, value }: { label: string; value: string }) {
   );
 }
 
-function LinkedJobsTable({ jobs, navigate }: { jobs: Job[]; navigate: ReturnType<typeof useNavigate> }) {
+function LinkedJobsTable({ jobs, navigate }: { jobs: CopilotSessionJob[]; navigate: ReturnType<typeof useNavigate> }) {
   return (
     <section className="space-y-3">
       <div>
