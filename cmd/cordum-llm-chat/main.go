@@ -9,6 +9,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,6 +29,7 @@ import (
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/logging"
+	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/llmchat"
 	"github.com/redis/go-redis/v9"
@@ -47,7 +50,11 @@ const (
 	defaultDelegationTTL       = 15 * time.Minute
 	bootstrapTimeout           = 30 * time.Second
 	readyzProbeTimeout         = 2 * time.Second
+	defaultGatewayHTTPTimeout  = 30 * time.Second
 	shutdownGrace              = 10 * time.Second
+
+	envCordumTLSCA       = "CORDUM_TLS_CA"
+	envCordumTLSInsecure = "CORDUM_TLS_INSECURE"
 )
 
 // runtimeConfig is the fully-resolved, validated boot configuration.
@@ -98,6 +105,17 @@ func main() {
 
 	sessionStore := llmchat.NewSessionStoreFromClient(redisClient)
 
+	gatewayHTTPClient, err := gatewayHTTPClientFromEnv(os.Getenv, defaultGatewayHTTPTimeout)
+	if err != nil {
+		slog.Error("cordum-llm-chat: gateway TLS config failed, refusing to start", "error", err)
+		os.Exit(1)
+	}
+	mcpHTTPClient, err := gatewayHTTPClientFromEnv(os.Getenv, -1)
+	if err != nil {
+		slog.Error("cordum-llm-chat: mcp gateway TLS config failed, refusing to start", "error", err)
+		os.Exit(1)
+	}
+
 	// Wire the knowledge-pack substituters around the file-backed
 	// prompt loader. When LLMCHAT_KNOWLEDGE_PACK_ENABLED=false the
 	// placeholders pass through unchanged (rail #1 — substituters
@@ -126,6 +144,7 @@ func main() {
 		AgentID:       cfg.ChatAssistantAgentID,
 		ClientName:    "cordum-llm-chat",
 		ClientVersion: "0.1.0",
+		HTTPClient:    mcpHTTPClient,
 	})
 	if err != nil {
 		slog.Error("cordum-llm-chat: mcp client construction failed", "error", err)
@@ -142,9 +161,10 @@ func main() {
 	// delegation tokens are issued separately by DelegationClient
 	// below.
 	agentRegistry, err := capsdk.NewAgentClient(capsdk.AgentClientConfig{
-		BaseURL: cfg.GatewayURL,
-		APIKey:  cfg.CordumAPIKey,
-		Tenant:  cfg.Tenant,
+		BaseURL:    cfg.GatewayURL,
+		APIKey:     cfg.CordumAPIKey,
+		Tenant:     cfg.Tenant,
+		HTTPClient: gatewayHTTPClient,
 	})
 	if err != nil {
 		slog.Error("cordum-llm-chat: cap agent client construction failed", "error", err)
@@ -180,6 +200,7 @@ func main() {
 		Tenant:     cfg.Tenant,
 		IssueTTL:   cfg.DelegationTTL,
 		RetryDelay: 100 * time.Millisecond,
+		HTTPClient: gatewayHTTPClient,
 	})
 
 	entitlementResolver := licensing.NewEntitlementResolver()
@@ -409,9 +430,9 @@ func loadConfigFromEnv(getenv func(string) string) (runtimeConfig, error) {
 }
 
 func openRedis(redisURL string) (*redis.Client, error) {
-	options, err := redis.ParseURL(redisURL)
+	options, err := redisOptionsFromURL(redisURL)
 	if err != nil {
-		return nil, fmt.Errorf("parse REDIS_URL: %w", err)
+		return nil, err
 	}
 	client := redis.NewClient(options)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -419,6 +440,66 @@ func openRedis(redisURL string) (*redis.Client, error) {
 	if err := client.Ping(ctx).Err(); err != nil {
 		_ = client.Close()
 		return nil, fmt.Errorf("ping redis: %w", err)
+	}
+	return client, nil
+}
+
+func redisOptionsFromURL(redisURL string) (*redis.Options, error) {
+	options, err := redisutil.ParseOptions(redisURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse REDIS_URL: %w", err)
+	}
+	return options, nil
+}
+
+func gatewayHTTPClientFromEnv(getenv func(string) string, timeout time.Duration) (*http.Client, error) {
+	// timeout < 0 intentionally means "no whole-request timeout". The MCP
+	// SSE connection is long-lived and must not inherit the 30s REST timeout
+	// used for short gateway API calls, or it will reconnect forever and spam
+	// warning logs despite a healthy /mcp/sse transport.
+	noTimeout := timeout < 0
+	if timeout == 0 {
+		timeout = defaultGatewayHTTPTimeout
+	}
+	caPath := strings.TrimSpace(getenv(envCordumTLSCA))
+	insecure := parseBoolString(getenv(envCordumTLSInsecure))
+
+	if caPath == "" && !insecure {
+		client := &http.Client{}
+		if !noTimeout {
+			client.Timeout = timeout
+		}
+		return client, nil
+	}
+
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+	if insecure {
+		// #nosec G402 -- explicit dev/debug escape hatch matching cordumctl.
+		tlsConfig.InsecureSkipVerify = true
+	}
+	if caPath != "" {
+		pool, err := x509.SystemCertPool()
+		if err != nil {
+			pool = x509.NewCertPool()
+		}
+		if pool == nil {
+			pool = x509.NewCertPool()
+		}
+		// #nosec G304 -- CA path is operator-configured via CORDUM_TLS_CA.
+		pem, err := os.ReadFile(caPath)
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", envCordumTLSCA, err)
+		}
+		if ok := pool.AppendCertsFromPEM(pem); !ok {
+			return nil, fmt.Errorf("parse %s: no certificates found in %s", envCordumTLSCA, caPath)
+		}
+		tlsConfig.RootCAs = pool
+	}
+	transport.TLSClientConfig = tlsConfig
+	client := &http.Client{Transport: transport}
+	if !noTimeout {
+		client.Timeout = timeout
 	}
 	return client, nil
 }
@@ -464,6 +545,15 @@ func envDurationOrDefault(getenv func(string) string, key string, fallback time.
 		return 0, fmt.Errorf("parse %s=%q: %w", key, raw, err)
 	}
 	return v, nil
+}
+
+func parseBoolString(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 // requireTrustedForwarder builds the auth middleware for chat / admin

@@ -211,6 +211,11 @@ export function useChatAssistantSession(enabled: boolean): ChatAssistantSessionA
       type: "user",
       id: generateUUID(),
       text: trimmed,
+      // The websocket handler accepts the same user payload shape as
+      // POST /api/v1/chat (`message`). Keep `text` for local optimistic UI
+      // frames and send `message` so the server does not reject dashboard
+      // turns as empty.
+      message: trimmed,
       at: new Date().toISOString(),
     };
     try {

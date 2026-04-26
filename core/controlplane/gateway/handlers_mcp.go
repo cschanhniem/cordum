@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,6 +28,12 @@ import (
 // MCP agent. The gateway uses it (with a principal-ID fallback) to
 // populate MCPCallMetadata so the approval gate can log who is asking.
 const mcpAgentIDHeader = "X-Agent-Id"
+
+const (
+	envMCPEnabled   = "CORDUM_MCP_ENABLED"
+	envMCPTransport = "CORDUM_MCP_TRANSPORT"
+	envMCPPort      = "CORDUM_MCP_PORT"
+)
 
 type mcpGatewayConfig struct {
 	Enabled   bool
@@ -392,6 +399,7 @@ func (s *server) loadMCPConfig(ctx context.Context) mcpGatewayConfig {
 		Raw:       nil,
 	}
 	if s == nil || s.configSvc == nil {
+		applyMCPEnvOverrides(&cfg)
 		return cfg
 	}
 	if ctx == nil {
@@ -413,7 +421,33 @@ func (s *server) loadMCPConfig(ctx context.Context) mcpGatewayConfig {
 	if port := lookupIntPath(effective, "mcp", "port"); port > 0 {
 		cfg.Port = port
 	}
+	applyMCPEnvOverrides(&cfg)
 	return cfg
+}
+
+func applyMCPEnvOverrides(cfg *mcpGatewayConfig) {
+	if cfg == nil {
+		return
+	}
+	if raw := strings.TrimSpace(os.Getenv(envMCPEnabled)); raw != "" {
+		enabled, err := strconv.ParseBool(raw)
+		if err != nil {
+			slog.Warn("mcp env override ignored: invalid bool", "env", envMCPEnabled)
+		} else {
+			cfg.Enabled = enabled
+		}
+	}
+	if raw := strings.TrimSpace(os.Getenv(envMCPTransport)); raw != "" {
+		cfg.Transport = strings.ToLower(raw)
+	}
+	if raw := strings.TrimSpace(os.Getenv(envMCPPort)); raw != "" {
+		port, err := strconv.Atoi(raw)
+		if err != nil || port <= 0 {
+			slog.Warn("mcp env override ignored: invalid port", "env", envMCPPort)
+		} else {
+			cfg.Port = port
+		}
+	}
 }
 
 func (s *server) mcpHTTPTransport() *mcp.HTTPTransport {

@@ -206,6 +206,11 @@ services:
       # path). Default `false` — never set to `true` in release.
       CORDUM_DASHBOARD_EMBED_API_KEY: "${CORDUM_DASHBOARD_EMBED_API_KEY:-false}"
       TENANT_ID: default
+      CORDUM_LLM_CHAT_URL: "${CORDUM_LLM_CHAT_URL:-https://llm-chat:8090}"
+      CORDUM_LLM_CHAT_TLS_CA: "${CORDUM_LLM_CHAT_TLS_CA:-/etc/cordum/tls/ca/ca.crt}"
+      CORDUM_MCP_ENABLED: "${CORDUM_MCP_ENABLED:-true}"
+      CORDUM_MCP_TRANSPORT: "${CORDUM_MCP_TRANSPORT:-http}"
+      GATEWAY_HTTP_WRITE_TIMEOUT: "${GATEWAY_HTTP_WRITE_TIMEOUT:-1h}"
       API_RATE_LIMIT_RPS: "50"
       API_RATE_LIMIT_BURST: "100"
       REDIS_DATA_TTL: "24h"

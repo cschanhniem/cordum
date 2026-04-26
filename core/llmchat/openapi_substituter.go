@@ -25,7 +25,7 @@ const (
 // for the compact summary; everything else (request bodies, full
 // schemas, examples) is dropped to keep the budget tight.
 type openAPISpec struct {
-	Paths map[string]map[string]openAPIOperation `yaml:"paths"`
+	Paths map[string]map[string]yaml.Node `yaml:"paths"`
 }
 
 type openAPIOperation struct {
@@ -118,16 +118,32 @@ func renderOpenAPISummary(spec openAPISpec) string {
 		methods := spec.Paths[path]
 		methodKeys := make([]string, 0, len(methods))
 		for m := range methods {
-			methodKeys = append(methodKeys, m)
+			if isOpenAPIMethod(m) {
+				methodKeys = append(methodKeys, m)
+			}
 		}
 		sort.Strings(methodKeys)
 		for _, method := range methodKeys {
-			op := methods[method]
+			var op openAPIOperation
+			node := methods[method]
+			if err := node.Decode(&op); err != nil {
+				slog.Warn("llmchat/knowledgepack: openapi_operation_skipped", "path", path, "method", method, "err", err)
+				continue
+			}
 			out.WriteString(formatOpenAPIOperation(method, path, op))
 			out.WriteString("\n")
 		}
 	}
 	return out.String()
+}
+
+func isOpenAPIMethod(method string) bool {
+	switch strings.ToLower(method) {
+	case "get", "put", "post", "delete", "options", "head", "patch", "trace":
+		return true
+	default:
+		return false
+	}
 }
 
 func formatOpenAPIOperation(method, path string, op openAPIOperation) string {

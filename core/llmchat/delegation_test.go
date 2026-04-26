@@ -147,7 +147,7 @@ func TestDelegationClient_OutboundBodyShape(t *testing.T) {
 		t.Errorf("parent_token = %q, want empty (root delegation for chat-assistant)", captured.ParentToken)
 	}
 
-	wantActions := []string{"read", "submit_job", "query_policy"}
+	wantActions := expectedAllowedTools()
 	if len(captured.AllowedActions) != len(wantActions) {
 		t.Errorf("allowed_actions = %v, want %v", captured.AllowedActions, wantActions)
 	}
@@ -156,8 +156,8 @@ func TestDelegationClient_OutboundBodyShape(t *testing.T) {
 			t.Errorf("allowed_actions[%d] = %q, want %q", i, captured.AllowedActions[i], a)
 		}
 	}
-	if len(captured.AllowedTopics) != 1 || captured.AllowedTopics[0] != "job.*" {
-		t.Errorf("allowed_topics = %v, want [job.*]", captured.AllowedTopics)
+	if len(captured.AllowedTopics) != 0 {
+		t.Errorf("allowed_topics = %v, want empty (inherit agent topic allowlist)", captured.AllowedTopics)
 	}
 }
 

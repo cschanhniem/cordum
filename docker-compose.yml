@@ -265,11 +265,33 @@ services:
       # — set to `true` only in trusted dev environments.
       - CORDUM_DASHBOARD_EMBED_API_KEY=${CORDUM_DASHBOARD_EMBED_API_KEY:-false}
       - TENANT_ID=default
+      # Browser WebSocket handshakes cannot attach X-Principal-* headers.
+      # In the local embedded-API-key stack, use the same dev principal that
+      # /config.json exposes so the gateway can forward a trusted identity to
+      # cordum-llm-chat.
+      - CORDUM_PRINCIPAL_ID=${CORDUM_PRINCIPAL_ID:-dev-admin}
+      - CORDUM_PRINCIPAL_ROLE=${CORDUM_PRINCIPAL_ROLE:-admin}
       - CORDUM_LLM_CHAT_URL=${CORDUM_LLM_CHAT_URL:-http://llm-chat:8090}
+      # LLM chat connects through the gateway MCP surface. Keep MCP HTTP
+      # enabled in the local compose stack so chat turns can list/call tools
+      # instead of hanging on a 503 /mcp/sse response.
+      - CORDUM_MCP_ENABLED=${CORDUM_MCP_ENABLED:-true}
+      - CORDUM_MCP_TRANSPORT=${CORDUM_MCP_TRANSPORT:-http}
+      # MCP SSE is a long-lived response consumed by cordum-llm-chat.
+      # The gateway default WriteTimeout is intentionally short for normal
+      # REST calls; extend it in the compose stack so healthy SSE sessions do
+      # not reconnect every 30s and spam warnings.
+      - GATEWAY_HTTP_WRITE_TIMEOUT=${GATEWAY_HTTP_WRITE_TIMEOUT:-1h}
       - CORDUM_LICENSE_TOKEN=${CORDUM_LICENSE_TOKEN:-}
       - CORDUM_LICENSE_PUBLIC_KEY=${CORDUM_LICENSE_PUBLIC_KEY:-}
       - CORDUM_POLICY_SIGNING_KEY_ID=${CORDUM_POLICY_SIGNING_KEY_ID:-dev-local}
       - CORDUM_POLICY_DEV_SIGNING_SEED=${CORDUM_POLICY_DEV_SIGNING_SEED:-cordum-local-policy-signing-v1}
+      # Dev-only deterministic delegation key. Override all three values in
+      # production; without a signing key the llm-chat service cannot mint
+      # per-session delegation tokens and chat websocket startup fails closed.
+      - CORDUM_DELEGATION_PRIVATE_KEY=${CORDUM_DELEGATION_PRIVATE_KEY:-Y29yZHVtLWxvY2FsLWRlbGVnYXRpb24tc2VlZC12MSE=}
+      - CORDUM_DELEGATION_KEY_ID=${CORDUM_DELEGATION_KEY_ID:-dlg-dev}
+      - CORDUM_DELEGATION_PUBLIC_KEY_DLG_DEV=${CORDUM_DELEGATION_PUBLIC_KEY_DLG_DEV:-8MkfJWjv1UYc2AfaNTTvpPCsRv3SCXmTLJAZ2ldsTwg=}
       - CORDUM_TELEMETRY_MODE=off
       # Unset by default — the audit chain engages unconditionally at gateway boot. Set this to
       # webhook|syslog|datadog|cloudwatch to stream events to an external SIEM, or to
@@ -410,8 +432,8 @@ services:
       - CORDUM_API_KEY=${CORDUM_API_KEY:-}
       - CORDUM_DASHBOARD_EMBED_API_KEY=${CORDUM_DASHBOARD_EMBED_API_KEY:-false}
       - CORDUM_TENANT_ID=${CORDUM_TENANT_ID:-default}
-      - CORDUM_PRINCIPAL_ID=${CORDUM_PRINCIPAL_ID:-}
-      - CORDUM_PRINCIPAL_ROLE=${CORDUM_PRINCIPAL_ROLE:-}
+      - CORDUM_PRINCIPAL_ID=${CORDUM_PRINCIPAL_ID:-dev-admin}
+      - CORDUM_PRINCIPAL_ROLE=${CORDUM_PRINCIPAL_ROLE:-admin}
       - CORDUM_API_UPSTREAM_SCHEME=https
     volumes:
       - ./certs:/etc/cordum/tls:ro
@@ -622,7 +644,10 @@ services:
       nats:
         condition: service_healthy
     environment:
+      - CORDUM_LLM_CHAT_ADDR=:8090
       - CORDUM_API_KEY=${CORDUM_API_KEY:?CORDUM_API_KEY_not_set}
+      - CORDUM_LICENSE_TOKEN=${CORDUM_LICENSE_TOKEN:-}
+      - CORDUM_LICENSE_PUBLIC_KEY=${CORDUM_LICENSE_PUBLIC_KEY:-}
       - REDIS_URL=rediss://:${REDIS_PASSWORD:?REDIS_PASSWORD_not_set}@redis:6379
       - REDIS_TLS_CA=/etc/cordum/tls/ca/ca.crt
       - REDIS_TLS_CERT=/etc/cordum/tls/client/tls.crt
@@ -633,16 +658,28 @@ services:
       - NATS_TLS_CERT=/etc/cordum/tls/client/tls.crt
       - NATS_TLS_KEY=/etc/cordum/tls/client/tls.key
       - NATS_TLS_SERVER_NAME=nats
-      - CORDUM_GATEWAY_URL=${CORDUM_GATEWAY_URL:-https://api-gateway:8081}
-      - LLMCHAT_BASE_URL=http://qwen-inference:8000/v1
+      - NATS_TOKEN=${NATS_TOKEN:-cordum-dev-token}
+      - CORDUM_TLS_CA=/etc/cordum/tls/ca/ca.crt
+      - CORDUM_GATEWAY_URL=${CORDUM_GATEWAY_URL:-https://cordum-api-gateway:8081}
+      - LLMCHAT_BASE_URL=${LLMCHAT_BASE_URL:-http://qwen-inference:8000/v1}
       - LLMCHAT_MODEL=qwen3-coder
       - LLMCHAT_PROVIDER=openai
       - LLMCHAT_TOOL_TEMPERATURE=${LLMCHAT_TOOL_TEMPERATURE:-0.3}
       - LLMCHAT_TOOL_TOP_P=${LLMCHAT_TOOL_TOP_P:-0.9}
       - LLMCHAT_SUMMARY_TEMPERATURE=${LLMCHAT_SUMMARY_TEMPERATURE:-0.7}
       - LLMCHAT_SUMMARY_TOP_P=${LLMCHAT_SUMMARY_TOP_P:-0.8}
+      - LLMCHAT_TENANT=${CORDUM_TENANT_ID:-default}
+      - LLMCHAT_KNOWLEDGE_PACK_ENABLED=${LLMCHAT_KNOWLEDGE_PACK_ENABLED:-true}
+      - LLMCHAT_KNOWLEDGE_PACK_BUDGET=${LLMCHAT_KNOWLEDGE_PACK_BUDGET:-65536}
+      - LLMCHAT_OPENAPI_PATH=/etc/cordum-llm-chat/openapi.yaml
+      - LLMCHAT_CORDUM_IO_PATH=/etc/cordum-llm-chat/cordum-io
     volumes:
       - ./certs:/etc/cordum/tls:ro
+      - ./config/llmchat:/home/cordum/config/llmchat:ro
+      - ./docs/api/openapi/cordum-api.yaml:/etc/cordum-llm-chat/openapi.yaml:ro
+      - ./docs-site/docs/concepts:/etc/cordum-llm-chat/cordum-io/concepts:ro
+      - ./docs-site/docs/getting-started:/etc/cordum-llm-chat/cordum-io/getting-started:ro
+      - ./docs-site/docs/operations:/etc/cordum-llm-chat/cordum-io/operations:ro
     ports:
       - "8090:8090"
     deploy:

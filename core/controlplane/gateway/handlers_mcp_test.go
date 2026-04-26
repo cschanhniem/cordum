@@ -364,7 +364,6 @@ func TestMCPAuthRejectsCrossTenantRequest(t *testing.T) {
 }
 
 func TestLoadMCPConfigDefaultsAndOverrides(t *testing.T) {
-	t.Parallel()
 	s, _, _ := newTestGateway(t)
 
 	cfg := s.loadMCPConfig(context.Background())
@@ -397,5 +396,23 @@ func TestLoadMCPConfigDefaultsAndOverrides(t *testing.T) {
 	}
 	if cfg.Port != 8089 {
 		t.Fatalf("expected mcp.port=8089, got %d", cfg.Port)
+	}
+}
+
+func TestLoadMCPConfigEnvOverrides(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	t.Setenv(envMCPEnabled, "true")
+	t.Setenv(envMCPTransport, "http")
+	t.Setenv(envMCPPort, "8099")
+
+	cfg := s.loadMCPConfig(context.Background())
+	if !cfg.Enabled {
+		t.Fatal("expected MCP enabled from env override")
+	}
+	if cfg.Transport != "http" {
+		t.Fatalf("expected env transport http, got %q", cfg.Transport)
+	}
+	if cfg.Port != 8099 {
+		t.Fatalf("expected env mcp port 8099, got %d", cfg.Port)
 	}
 }

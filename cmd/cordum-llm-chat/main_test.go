@@ -1,8 +1,11 @@
 package main
 
 import (
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -232,6 +235,75 @@ func TestEnvHelpersFallback(t *testing.T) {
 	}
 	if got, err := envDurationOrDefault(get, "MISSING", 3*time.Second); err != nil || got != 3*time.Second {
 		t.Fatalf("envDurationOrDefault(MISSING) = %v, %v, want 3s, nil", got, err)
+	}
+}
+
+func TestRedisOptionsFromURLAppliesTLSFromEnv(t *testing.T) {
+	t.Setenv("REDIS_TLS_CA", "")
+	t.Setenv("REDIS_TLS_CERT", "")
+	t.Setenv("REDIS_TLS_KEY", "")
+	t.Setenv("REDIS_TLS_INSECURE", "")
+	t.Setenv("REDIS_TLS_SERVER_NAME", "redis")
+
+	opts, err := redisOptionsFromURL("rediss://:secret@redis:6379/0")
+	if err != nil {
+		t.Fatalf("redisOptionsFromURL: %v", err)
+	}
+	if opts.TLSConfig == nil {
+		t.Fatal("TLSConfig nil; REDIS_TLS_* env was not applied")
+	}
+	if opts.TLSConfig.ServerName != "redis" {
+		t.Fatalf("TLSConfig.ServerName = %q, want redis", opts.TLSConfig.ServerName)
+	}
+}
+
+func TestGatewayHTTPClientFromEnvTrustsConfiguredCA(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer server.Close()
+
+	caPath := filepath.Join(t.TempDir(), "ca.crt")
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
+	if err := os.WriteFile(caPath, caPEM, 0o600); err != nil {
+		t.Fatalf("write ca: %v", err)
+	}
+
+	client, err := gatewayHTTPClientFromEnv(fakeEnv(map[string]string{
+		envCordumTLSCA: caPath,
+	}), time.Second)
+	if err != nil {
+		t.Fatalf("gatewayHTTPClientFromEnv: %v", err)
+	}
+	resp, err := client.Get(server.URL)
+	if err != nil {
+		t.Fatalf("GET with configured CA: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestGatewayHTTPClientFromEnvMissingCAErrors(t *testing.T) {
+	_, err := gatewayHTTPClientFromEnv(fakeEnv(map[string]string{
+		envCordumTLSCA: filepath.Join(t.TempDir(), "missing-ca.crt"),
+	}), time.Second)
+	if err == nil {
+		t.Fatal("expected missing CORDUM_TLS_CA error, got nil")
+	}
+	if !strings.Contains(err.Error(), envCordumTLSCA) {
+		t.Fatalf("error = %v, want %s", err, envCordumTLSCA)
+	}
+}
+
+func TestGatewayHTTPClientFromEnvNegativeTimeoutDisablesDeadline(t *testing.T) {
+	client, err := gatewayHTTPClientFromEnv(fakeEnv(map[string]string{}), -1)
+	if err != nil {
+		t.Fatalf("gatewayHTTPClientFromEnv: %v", err)
+	}
+	if client.Timeout != 0 {
+		t.Fatalf("client.Timeout = %s, want 0 for long-lived clients", client.Timeout)
 	}
 }
 

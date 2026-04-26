@@ -2,8 +2,11 @@ package gateway
 
 import (
 	"context"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
@@ -85,5 +88,76 @@ func TestHandleLLMChatProxyRequiresEntitlementBeforeForwarding(t *testing.T) {
 	}
 	if called {
 		t.Fatal("upstream was called despite missing entitlement")
+	}
+}
+
+func TestHandleLLMChatProxyTrustsConfiguredUpstreamCA(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	setTestEntitlements(t, s, licensing.PlanEnterprise, func(entitlements *licensing.Entitlements) {
+		entitlements.LLMChatAssistant = true
+	})
+
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer upstream.Close()
+
+	caPath := filepath.Join(t.TempDir(), "llm-chat-ca.crt")
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: upstream.Certificate().Raw})
+	if err := os.WriteFile(caPath, caPEM, 0o600); err != nil {
+		t.Fatalf("write ca: %v", err)
+	}
+
+	t.Setenv(envLLMChatURL, upstream.URL)
+	t.Setenv(envLLMChatForwardAPIKey, "forward-key")
+	t.Setenv(envLLMChatTLSCA, caPath)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/chat/healthz", nil)
+	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, &auth.AuthContext{
+		Tenant:      "tenant-a",
+		PrincipalID: "alice",
+		Role:        "operator",
+	}))
+	rec := httptest.NewRecorder()
+
+	s.handleLLMChatProxy(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleLLMChatProxyFallsBackToConfiguredPrincipal(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	setTestEntitlements(t, s, licensing.PlanEnterprise, func(entitlements *licensing.Entitlements) {
+		entitlements.LLMChatAssistant = true
+	})
+	t.Setenv(envFallbackPrincipalID, "dev-admin")
+	t.Setenv(envFallbackPrincipalRole, "admin")
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("X-Cordum-Principal"); got != "dev-admin" {
+			t.Fatalf("X-Cordum-Principal = %q, want dev-admin", got)
+		}
+		if got := r.Header.Get("X-Cordum-Role"); got != "viewer" {
+			t.Fatalf("X-Cordum-Role = %q, want viewer from authenticated role", got)
+		}
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer upstream.Close()
+	t.Setenv(envLLMChatURL, upstream.URL)
+	t.Setenv(envLLMChatForwardAPIKey, "forward-key")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/chat/healthz", nil)
+	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, &auth.AuthContext{
+		Tenant: "tenant-a",
+		Role:   "viewer",
+	}))
+	rec := httptest.NewRecorder()
+
+	s.handleLLMChatProxy(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 body=%s", rec.Code, rec.Body.String())
 	}
 }

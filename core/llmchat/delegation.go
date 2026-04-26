@@ -142,10 +142,18 @@ func NewDelegationClient(cfg DelegationConfig) *DelegationClient {
 func (c *DelegationClient) IssueForSession(ctx context.Context, userPrincipal string) (SessionDelegation, error) {
 	body := map[string]any{
 		"target_agent_id": c.cfg.AgentID,
-		"allowed_actions": []string{"read", "submit_job", "query_policy"},
-		"allowed_topics":  []string{"job.*"},
-		"ttl_seconds":     int(c.cfg.IssueTTL.Seconds()),
-		"parent_token":    "",
+		// Delegation allowed_actions are validated against the agent
+		// identity's AllowedTools (Cordum MCP tool names), not abstract
+		// verbs. Request the same canonical tool set bootstrap pins for
+		// the chat-assistant identity so the gateway does not reject the
+		// per-session token with scope_exceeded at websocket startup.
+		"allowed_actions": expectedAllowedTools(),
+		// The chat-assistant identity currently has no topic allowlist; an
+		// empty request inherits that empty set and passes subset validation.
+		// Tool-level policy still gates mutations via MCP ApprovalGate.
+		"allowed_topics": []string{},
+		"ttl_seconds":    int(c.cfg.IssueTTL.Seconds()),
+		"parent_token":   "",
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
