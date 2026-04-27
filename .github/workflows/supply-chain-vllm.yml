@@ -81,7 +81,9 @@ jobs:
         id: digest
         run: |
           set -euo pipefail
-          line=$(grep -E '^\s*image:\s*vllm/vllm-openai@sha256:[a-f0-9]{64}' docker-compose.yml || true)
+          # The image: line in docker-compose.yml is quoted ("vllm/vllm-openai@sha256:..."),
+          # so the regex tolerates an optional leading "/' before the repo name.
+          line=$(grep -E '^\s*image:\s*"?vllm/vllm-openai@sha256:[a-f0-9]{64}' docker-compose.yml || true)
           if [ -z "$line" ]; then
             echo "::error file=docker-compose.yml::qwen-inference image is not pinned by sha256 digest. Expected literal 'vllm/vllm-openai@sha256:<64-hex>'."
             exit 1
