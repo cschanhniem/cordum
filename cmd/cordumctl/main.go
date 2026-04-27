@@ -43,6 +43,8 @@ func main() {
 		runRunCmd(args)
 	case "approval":
 		runApprovalCmd(args)
+	case "agent":
+		runAgentCmd(args)
 	case "dlq":
 		runDLQCmd(args)
 	case "pack":
@@ -391,6 +393,7 @@ Usage:
   cordumctl run timeline <run_id>
   cordumctl approval job <job_id> (--approve|--reject)
   cordumctl approval repair <job_id> [--apply] [--note "text"]
+  cordumctl agent set-scope <name|agent-id> [--allowed-tools t1,t2] [--preapproved-mutating-tools t1,t2]
   cordumctl dlq retry <job_id>
   cordumctl job submit --topic job.example --prompt \"hello\" [--input input.json]
   cordumctl job status <job_id>
@@ -424,6 +427,10 @@ Usage:
   cordumctl doctor [--json] [--verbose] [--strict] [--timeout SEC] [--skip-workers] [--fix]
   cordumctl delegation <subcommand> [...]
   cordumctl governance <subcommand> [...]
+
+Agent scope note:
+  AgentSpec create/register cannot grant preapproved mutating tools.
+  Use cordumctl agent set-scope after the agent exists to grant or revoke them.
 
 Global flags:
   --gateway    Gateway base URL (default from CORDUM_GATEWAY)

@@ -31,6 +31,16 @@ the chat panel.
   index of provider config / policy bundle / hardware tier /
   troubleshooting pages.
 
+## Operator Tooling
+
+- New `cordumctl agent set-scope <name>` subcommand wraps
+  `capsdk.AgentClient.SetScope` to narrow/widen `AllowedTools` and
+  `PreapprovedMutatingTools` without curl-ing the bare REST endpoint.
+  Closes `governance-review.md` F1 follow-up and unblocks governance
+  probes 7 and 13. Supports `--allowed-tools`,
+  `--preapproved-mutating-tools`, `--add-tool`, `--remove-tool`,
+  `--idempotency-key`, and `--dry-run`.
+
 ## Changed
 
 - **core: extracted the Unix-timestamp → RFC3339 formatter into
