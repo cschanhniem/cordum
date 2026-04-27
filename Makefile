@@ -124,7 +124,7 @@ help:
 	@echo "  make dev-up             Start all services + LLM-chat profile (default: Ollama/CPU)"
 	@echo "  make dev-up-gpu         dev-up with vLLM + Qwen3-Coder-30B-FP8 (requires GPU)"
 	@echo "  make dev-up-cpu         dev-up with vLLM + Qwen3-Coder-30B-AWQ (requires 16-24GB RAM)"
-	@echo "  make dev-up-ollama      dev-up with Ollama + Qwen2.5-Coder-7B (no GPU, ~5GB RAM)"
+	@echo "  make dev-up-ollama      dev-up with Ollama + Qwen2.5-Coder-3B (no GPU, ~2GB RAM)"
 	@echo "  make dev-down           Stop all services"
 	@echo "  make dev-logs           Tail docker compose logs"
 	@echo "  make soak-ws            10-minute WebSocket soak test"

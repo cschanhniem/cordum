@@ -15,7 +15,7 @@ CURL_TIMEOUT_SECONDS="${LLMCHAT_CURL_TIMEOUT_SECONDS:-10}"
 # LLMCHAT_OPS_BACKEND legal values:
 #   gpu-fp8        — vLLM + Qwen3-Coder-30B-FP8 (production GPU profile)
 #   cpu-vllm-awq   — vLLM + Qwen3-Coder-30B-AWQ (CPU/16-24GB RAM)
-#   ollama-cpu     — Ollama + Qwen2.5-Coder-7B-Q4_K_M (CPU/~5GB RAM, default)
+#   ollama-cpu     — Ollama + Qwen2.5-Coder-3B-Q4_K_M (CPU/~2GB RAM, default)
 LLMCHAT_OPS_BACKEND="${LLMCHAT_OPS_BACKEND:-gpu-fp8}"
 
 PYTHON_BIN="${LLMCHAT_PYTHON_BIN:-}"
@@ -173,7 +173,7 @@ require_real_ollama() {
   esac
   local cmdline_file="${PROBE_OUT_DIR}/ollama-cmdline.txt"
   local default_container="cordum-ollama-1"
-  local expected_model="${LLMCHAT_OLLAMA_MODEL:-qwen2.5-coder:7b-instruct-q4_K_M}"
+  local expected_model="${LLMCHAT_OLLAMA_MODEL:-qwen2.5-coder:3b-instruct-q4_K_M}"
   if command -v docker >/dev/null 2>&1; then
     docker exec "${LLMCHAT_OLLAMA_CONTAINER:-${default_container}}" sh -c "tr '\\000' ' ' </proc/1/cmdline" >"${cmdline_file}" 2>>"${EVIDENCE_FILE}" || true
   fi
@@ -198,7 +198,7 @@ require_real_ollama() {
 # elapses. First-pull on a cold cache is ~3-5 minutes for the 4.5 GB
 # Q4_K_M weights, so the default timeout is generous.
 wait_for_ollama_model_loaded() {
-  local expected_model="${1:-${LLMCHAT_OLLAMA_MODEL:-qwen2.5-coder:7b-instruct-q4_K_M}}"
+  local expected_model="${1:-${LLMCHAT_OLLAMA_MODEL:-qwen2.5-coder:3b-instruct-q4_K_M}}"
   local timeout="${2:-600}"
   local body="${PROBE_OUT_DIR}/ollama-tags-poll.json"
   local start now status

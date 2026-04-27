@@ -42,10 +42,13 @@ const (
 	defaultProvider            = "openai"
 	// Default points at the Ollama profile (`make dev-up` / `--profile
 	// llmchat-ollama`) so a fresh `git clone` Just Works without a GPU.
+	// 3B Q4 (~2 GB resident) fits inside the 4 GB Docker Desktop default;
+	// operators with >=8 GB Docker memory should set LLMCHAT_MODEL to
+	// `qwen2.5-coder:7b-instruct-q4_K_M` for better tool-call quality.
 	// GPU and vLLM-CPU profiles override these via env in their compose
 	// blocks. Plan: ~/.claude/plans/goofy-tickling-hartmanis.md.
 	defaultBaseURL             = "http://ollama:11434/v1"
-	defaultModel               = "qwen2.5-coder:7b-instruct-q4_K_M"
+	defaultModel               = "qwen2.5-coder:3b-instruct-q4_K_M"
 	defaultToolTemperature     = 0.3
 	defaultToolTopP            = 0.9
 	defaultSummaryTemperature  = 0.7

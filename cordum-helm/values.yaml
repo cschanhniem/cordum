@@ -704,18 +704,20 @@ ollamaInference:
     repository: "ollama/ollama"
     tag: "0.5.7"
     pullPolicy: IfNotPresent
-  # Default model: ~4.5 GB resident, Apache 2.0, native OpenAI tool_calls.
-  # For sub-8 GB Docker memory hosts, override via --set
-  # ollamaInference.model=qwen2.5-coder:3b-instruct-q4_K_M (~2 GB).
-  model: "qwen2.5-coder:7b-instruct-q4_K_M"
+  # Default model: ~2 GB resident, Apache 2.0, native OpenAI tool_calls.
+  # Fits inside 4 GB Docker Desktop default. Operators with headroom
+  # should switch to qwen2.5-coder:7b-instruct-q4_K_M (~4.5 GB resident)
+  # for materially better tool-call quality on multi-tool prompts; bump
+  # resources accordingly.
+  model: "qwen2.5-coder:3b-instruct-q4_K_M"
   service:
     port: 11434
   resources:
     limits:
-      memory: 6Gi
+      memory: 4Gi
       cpu: "2"
     requests:
-      memory: 5Gi
+      memory: 3Gi
       cpu: "1"
   modelsCache:
     # PVC for the Ollama model cache (`/root/.ollama`). Re-pulling the

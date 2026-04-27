@@ -11,7 +11,7 @@ without a GPU. The two pre-existing profiles (`llmchat` GPU/FP8 and
 
 | Profile | Inference runtime | Model | Memory floor | Activates with |
 |---|---|---|---|---|
-| `llmchat-ollama` (default) | Ollama 0.5+ | `qwen2.5-coder:7b-instruct-q4_K_M` | ~5 GB resident | `make dev-up` or `make dev-up-ollama` |
+| `llmchat-ollama` (default) | Ollama 0.5+ | `qwen2.5-coder:3b-instruct-q4_K_M` | ~2.5 GB resident | `make dev-up` or `make dev-up-ollama` |
 | `llmchat-cpu` | vLLM CPU + AWQ | `Qwen3-Coder-30B-A3B-Instruct-AWQ` | 16-24 GB | `make dev-up-cpu` |
 | `llmchat` | vLLM GPU + FP8 | `Qwen3-Coder-30B-A3B-Instruct-FP8` | ~36 GB VRAM (H100) | `make dev-up-gpu` |
 
@@ -25,11 +25,13 @@ Selected over the alternatives in `~/.claude/plans/goofy-tickling-hartmanis.md`:
   as JSON strings; the chat-loop dispatcher would silently drop them, so we
   pin a 0.5+ floor in `tools/scripts/ollama_pin_digest.sh` and assert the
   contract in `tests/ops/llmchat_probe_19_ollama_cold_start.sh`.
-- **Qwen2.5-Coder-7B-Q4_K_M** is Apache-2.0, ships in the same family as
-  the GPU profile (Qwen3-Coder-30B-FP8) so prompt patterns and tool-call
-  format stay portable, and fits inside an 8 GB Docker host with margin.
-  3B variants struggle on multi-tool prompts; 7B is the smallest size
-  that reliably chains the 19-tool MCP surface.
+- **Qwen2.5-Coder-3B-Q4_K_M** is the default — Apache-2.0, ships in the
+  same family as the GPU profile (Qwen3-Coder-30B-FP8) so prompt patterns
+  and tool-call format stay portable, and fits inside the 4 GB Docker
+  Desktop default with margin (~2 GB resident, 5.2 GB peak with KV cache).
+  3B is weaker than 7B on multi-tool prompts; users with >=8 GB Docker
+  memory should upgrade to `qwen2.5-coder:7b-instruct-q4_K_M` for
+  materially better tool-call quality on long chains.
 - **Llama-3.2-3B**, **Phi-3.5-mini**, **Hermes-3** were rejected for
   license restrictions, untested tool-call quality against this codebase,
   or custom format requiring a parser rewrite. See the plan file for the
@@ -39,13 +41,20 @@ Selected over the alternatives in `~/.claude/plans/goofy-tickling-hartmanis.md`:
 
 | Docker memory available | Recommended model | Override |
 |---|---|---|
-| ≥ 8 GB | `qwen2.5-coder:7b-instruct-q4_K_M` (default) | none — `make dev-up` |
-| 5-7 GB | `qwen2.5-coder:3b-instruct-q4_K_M` (smaller) | `LLMCHAT_MODEL=qwen2.5-coder:3b-instruct-q4_K_M make dev-up` |
-| < 5 GB | not supported | use the public Cordum Cloud demo, or run on a beefier host |
+| ≥ 8 GB | `qwen2.5-coder:7b-instruct-q4_K_M` (better tool-call quality) | `LLMCHAT_MODEL=qwen2.5-coder:7b-instruct-q4_K_M make dev-up` |
+| 4-7 GB | `qwen2.5-coder:3b-instruct-q4_K_M` (default) | none — `make dev-up` |
+| < 4 GB | not supported | bump Docker Desktop memory to ≥4 GB or run on a beefier host |
 
-The 4 GB Docker default that ships with Docker Desktop on macOS / Windows
-is **not enough** even for the 3B model under realistic chat load.
-Increase Docker Desktop memory to 8 GB before reporting OOM bugs.
+The default targets the 4 GB Docker Desktop floor (the macOS / Windows
+out-of-the-box limit). For sustained chat work, ≥6 GB Docker memory is
+recommended to avoid KV-cache thrashing under multi-tool prompts.
+
+The 7B variant is the better tool-call model but Ollama reports
+`model requires more system memory (5.2 GiB)` on hosts where Docker has
+less than ~6 GiB available — confirmed on this dev host at 4.6 GiB
+available. The pull script and docker-compose default the cache volume
+to one model at a time; switching `LLMCHAT_MODEL` reuses `ollama_models`
+without re-pulling shared layers.
 
 ## Bring-up
 
@@ -56,13 +65,13 @@ cp .env.example .env   # CORDUM_API_KEY auto-generates if blank
 make dev-up
 ```
 
-First boot blocks for **3-5 minutes** on the model pull (single 4.5 GB
-download, cached in the `ollama_models` named volume). Subsequent boots
-cold-start in ~30 seconds. Check progress:
+First boot blocks for **1-3 minutes** on the model pull (single ~2 GB
+download for 3B, ~4.5 GB for 7B; cached in the `ollama_models` named
+volume). Subsequent boots cold-start in ~30 seconds. Check progress:
 
 ```bash
 docker compose logs -f ollama
-docker compose exec ollama ollama list   # qwen2.5-coder:7b-instruct-q4_K_M  4.5 GB
+docker compose exec ollama ollama list   # qwen2.5-coder:3b-instruct-q4_K_M  2.0 GB
 ```
 
 Verify the chat is wired correctly:

@@ -7,7 +7,7 @@
 # the format the chat client `core/llmchat/provider_openai.go` parses.
 # Either failure silently breaks tool dispatch.
 #
-# Acceptance criteria: ollama /api/tags lists qwen2.5-coder:7b-instruct-q4_K_M
+# Acceptance criteria: ollama /api/tags lists qwen2.5-coder:3b-instruct-q4_K_M
 # within ${LLMCHAT_OPS_OLLAMA_PULL_TIMEOUT:-600}s of compose up; one
 # /v1/chat/completions call with a single tool emits at least one SSE
 # frame whose JSON contains `delta.tool_calls`; llm-chat /readyz reaches
@@ -31,7 +31,7 @@ record_section 'setup'
 require_real_ollama
 require_cmd curl
 
-EXPECTED_MODEL="${LLMCHAT_OLLAMA_MODEL:-qwen2.5-coder:7b-instruct-q4_K_M}"
+EXPECTED_MODEL="${LLMCHAT_OLLAMA_MODEL:-qwen2.5-coder:3b-instruct-q4_K_M}"
 PULL_TIMEOUT="${LLMCHAT_OPS_OLLAMA_PULL_TIMEOUT:-600}"
 READYZ_TIMEOUT="${LLMCHAT_OPS_OLLAMA_READYZ_TIMEOUT:-60}"
 
