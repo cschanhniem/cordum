@@ -845,7 +845,7 @@ services:
       start_period: 15s
 
   # CPU-friendly inference runtime for the local LLM chat assistant. Ollama
-  # serves `llama3.2:3b-instruct-q4_K_M-ctx8k` (~4.5 GB resident) over an
+  # serves `qwen2.5:7b-instruct-q4_K_M-ctx8k` (~4.5 GB resident) over an
   # OpenAI-compatible HTTP surface at :11434/v1, with native `tool_calls[]`
   # streaming. Brought up only via `--profile llmchat-ollama`.
   #
@@ -888,12 +888,12 @@ services:
       - |
         ollama serve &
         until ollama list >/dev/null 2>&1; do sleep 1; done
-        ollama pull llama3.2:3b-instruct-q4_K_M
+        ollama pull qwen2.5:7b-instruct-q4_K_M
         cat > /tmp/Modelfile <<MFEOF
-        FROM llama3.2:3b-instruct-q4_K_M
+        FROM qwen2.5:7b-instruct-q4_K_M
         PARAMETER num_ctx 8192
         MFEOF
-        ollama create llama3.2:3b-instruct-q4_K_M-ctx8k -f /tmp/Modelfile
+        ollama create qwen2.5:7b-instruct-q4_K_M-ctx8k -f /tmp/Modelfile
         wait
     volumes:
       - ollama_models:/root/.ollama
@@ -911,11 +911,13 @@ services:
     deploy:
       resources:
         limits:
-          # 3B Q4 model is ~2 GB; cap leaves headroom for KV cache and the
-          # ollama runtime. Operators upgrading to a 7B variant via
-          # LLMCHAT_MODEL must also bump this to >=6G (and host Docker
-          # memory to >=8 GB) — see docs/llmchat/ollama-runtime.md.
-          memory: 4G
+          # 7B Q4 model is ~5 GB resident + ~200 MB KV cache for 8K ctx +
+          # ollama runtime overhead = ~6 GB working set. Container limit
+          # set to 7G with 1 GB headroom. Requires Docker memory >=8 GB
+          # (set via ~/.wslconfig on Windows WSL2 backend) — the 4 GB
+          # default limits are insufficient and Ollama refuses with
+          # "model requires more system memory".
+          memory: 7G
           cpus: "2.0"
 
   # llm-chat sibling for the Ollama profile. Same image and shape as
@@ -973,7 +975,7 @@ services:
       - CORDUM_TLS_CA=/etc/cordum/tls/ca/ca.crt
       - CORDUM_GATEWAY_URL=${CORDUM_GATEWAY_URL:-https://cordum-api-gateway:8081}
       - LLMCHAT_BASE_URL=http://ollama:11434/v1
-      - LLMCHAT_MODEL=llama3.2:3b-instruct-q4_K_M-ctx8k
+      - LLMCHAT_MODEL=qwen2.5:7b-instruct-q4_K_M-ctx8k
       - LLMCHAT_PROVIDER=openai
       - LLMCHAT_TOOL_TEMPERATURE=${LLMCHAT_TOOL_TEMPERATURE:-0.3}
       - LLMCHAT_TOOL_TOP_P=${LLMCHAT_TOOL_TOP_P:-0.9}
@@ -1047,7 +1049,7 @@ volumes:
   # CPU/AWQ profile cache. Kept separate from FP8 cache so CPU probe runs do
   # not evict or mutate production GPU weights.
   qwen_cpu_hf_cache:
-  # Ollama models cache. Holds the pulled `llama3.2:3b-instruct-q4_K_M-ctx8k`
+  # Ollama models cache. Holds the pulled `qwen2.5:7b-instruct-q4_K_M-ctx8k`
   # (~2 GB) so cold restarts do not re-download it. Kept separate from the
   # vLLM caches because the on-disk layouts are unrelated. Operators with
   # >=8 GB Docker memory can override LLMCHAT_MODEL on llm-chat-ollama and
