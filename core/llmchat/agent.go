@@ -11,6 +11,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cordum/cordum/core/mcp"
@@ -328,6 +329,7 @@ toolLoop:
 		}
 
 		var toolCalls []ToolCall
+		var toolPhaseContent strings.Builder
 		finishReason = ""
 		for chunk := range stream {
 			if chunk.Err != nil {
@@ -354,6 +356,7 @@ toolLoop:
 				// Some OpenAI-compatible backends still emit direct-answer text in
 				// this mode when no tool call is needed. Keep that text internal so
 				// the user sees exactly one answer from the summary phase below.
+				toolPhaseContent.WriteString(chunk.Delta)
 			}
 			if len(chunk.ToolCalls) > 0 {
 				toolCalls = append(toolCalls, chunk.ToolCalls...)
@@ -363,6 +366,25 @@ toolLoop:
 			}
 		}
 		observeProvider()
+
+		// Fallback: some OpenAI-compatible backends (most notably Ollama
+		// in streaming mode with smaller models on multi-tool surfaces)
+		// emit tool calls as JSON code blocks INSIDE the assistant content
+		// field instead of as proper streaming delta.tool_calls[]. If the
+		// structured array is empty but the content has parseable
+		// {"tool_call":{...}} or {"tool_calls":[...]} JSON, synthesize
+		// ToolCall entries so the dispatch loop runs. The structured path
+		// is preferred — this only fires when the provider's stream
+		// extractor came back empty.
+		if len(toolCalls) == 0 && toolPhaseContent.Len() > 0 {
+			if extracted := extractContentToolCalls(toolPhaseContent.String()); len(extracted) > 0 {
+				slog.Info("llmchat/agent: fallback_tool_calls_extracted",
+					"session_id", in.Session.ID,
+					"count", len(extracted),
+				)
+				toolCalls = extracted
+			}
+		}
 
 		// Dispatch any tool calls accumulated this iteration.
 		if len(toolCalls) == 0 {
