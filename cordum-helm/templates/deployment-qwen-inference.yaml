@@ -1,4 +1,5 @@
 {{- if .Values.qwenInference.enabled }}
+{{- $cpuMode := .Values.qwenInference.cpuMode.enabled }}
 {{- if .Values.qwenInference.hfCache.enabled }}
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -42,6 +43,7 @@ spec:
         {{- include "cordum.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: qwen-inference
     spec:
+      {{- if not $cpuMode }}
       {{- with .Values.qwenInference.gpu.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -50,16 +52,28 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- end }}
       containers:
         - name: qwen-inference
-          image: {{ .Values.qwenInference.image | quote }}
-          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          # Pinned to vLLM v0.16.0@sha256:48011517 per task-991597a4.
+          # Bump only via tools/scripts/vllm_pin_digest.sh + supply-chain CI.
+          # Upgrade procedure: docs/llmchat/supply-chain.md.
+          image: "{{ .Values.qwenInference.image.repository }}@{{ .Values.qwenInference.image.digest }}"
+          imagePullPolicy: {{ default .Values.global.image.pullPolicy .Values.qwenInference.image.pullPolicy }}
+          {{- if $cpuMode }}
+          env:
+            - name: VLLM_TARGET_DEVICE
+              value: "cpu"
+            - name: VLLM_CPU_KVCACHE_SPACE
+              value: {{ .Values.qwenInference.cpuMode.kvCacheSpaceGB | quote }}
+          {{- end }}
           # vLLM command. DO NOT swap qwen3_xml.
-          # DO NOT drop the -FP8 model suffix (BF16 won't fit H100 at
-          # 128K context).
+          # GPU mode must keep the -FP8 model suffix (BF16 won't fit H100 at
+          # 128K context). CPU mode intentionally uses the AWQ model declared
+          # under qwenInference.cpuMode.model for interim QA-only runs.
           args:
             - --model
-            - {{ .Values.qwenInference.model | quote }}
+            - {{ ternary .Values.qwenInference.cpuMode.model .Values.qwenInference.model $cpuMode | quote }}
             - --served-model-name
             - {{ .Values.qwenInference.servedModelName | quote }}
             - --enable-auto-tool-choice
@@ -69,9 +83,11 @@ spec:
             # infinite tool-call streams and context-exhaustion DoS.
             - "qwen3_xml"
             - --max-model-len
-            - {{ .Values.qwenInference.maxModelLen | quote }}
+            - {{ ternary .Values.qwenInference.cpuMode.maxModelLen .Values.qwenInference.maxModelLen $cpuMode | quote }}
+            {{- if not $cpuMode }}
             - --kv-cache-dtype
             - {{ .Values.qwenInference.kvCacheDtype | quote }}
+            {{- end }}
             {{- if .Values.qwenInference.enablePrefixCaching }}
             - --enable-prefix-caching
             {{- end }}
@@ -81,8 +97,10 @@ spec:
             # releases removed it. Synthetic security probes grep vLLM logs for
             # JWT/API-key shapes and must find zero hits.
             - --disable-log-requests
+            {{- if not $cpuMode }}
             - --gpu-memory-utilization
             - {{ .Values.qwenInference.gpuMemoryUtilization | quote }}
+            {{- end }}
             # In-cluster: bind to all interfaces so the llm-chat pod can
             # reach us via the Service's ClusterIP. The boundary is the
             # Service.type=ClusterIP (no external exposure), NOT the
@@ -99,18 +117,21 @@ spec:
             tcpSocket:
               port: openai
             # FP8 weights are ~30GB; cold load takes 3-5 minutes on
-            # NVMe + CUDA warmup. initialDelaySeconds matches the
-            # compose start_period.
-            initialDelaySeconds: 300
+            # NVMe + CUDA warmup. CPU+AWQ first load can take 5-15 minutes.
+            # initialDelaySeconds matches the compose start_period.
+            initialDelaySeconds: {{ ternary 900 300 $cpuMode }}
             periodSeconds: 30
             failureThreshold: 5
           livenessProbe:
             tcpSocket:
               port: openai
-            initialDelaySeconds: 600
+            initialDelaySeconds: {{ ternary 1200 600 $cpuMode }}
             periodSeconds: 60
             failureThreshold: 3
           resources:
+            {{- if $cpuMode }}
+            {{- toYaml .Values.qwenInference.cpuMode.resources | nindent 12 }}
+            {{- else }}
             limits:
               nvidia.com/gpu: {{ .Values.qwenInference.gpu.count }}
               {{- with .Values.qwenInference.resources.limits.memory }}
@@ -120,6 +141,7 @@ spec:
               {{- with .Values.qwenInference.resources.requests.memory }}
               memory: {{ . }}
               {{- end }}
+            {{- end }}
           volumeMounts:
             - name: hf-cache
               mountPath: /root/.cache/huggingface

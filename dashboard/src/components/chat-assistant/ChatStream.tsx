@@ -11,9 +11,9 @@ interface ChatStreamProps {
 }
 
 const EMPTY_SUGGESTIONS: readonly string[] = [
-  "List my running jobs",
-  "Show recent failures",
-  "Submit a $40 mock-bank transfer",
+  "show denied jobs today",
+  "list my active workflows",
+  "what policies apply to billing?",
 ];
 
 export function ChatStream({ messages, emptyHint, onSuggestionClick }: ChatStreamProps) {
@@ -47,6 +47,7 @@ export function ChatStream({ messages, emptyHint, onSuggestionClick }: ChatStrea
             <li key={text}>
               <button
                 type="button"
+                aria-label={`Send suggestion: ${text}`}
                 onClick={onSuggestionClick ? () => onSuggestionClick(text) : undefined}
                 disabled={!onSuggestionClick}
                 className="w-full rounded-xl border border-border/60 bg-surface-1/60 px-3 py-2 text-left text-xs text-foreground/90 transition-colors hover:border-cordum/40 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border/60 disabled:hover:bg-surface-1/60"

@@ -629,7 +629,13 @@ llmChat:
 qwenInference:
   enabled: true
   replicas: 1
-  image: "vllm/vllm-openai:v0.16.0"
+  # Pinned to vLLM v0.16.0@sha256:48011517 per task-991597a4.
+  # Bump only via tools/scripts/vllm_pin_digest.sh + supply-chain CI.
+  # Upgrade procedure: docs/llmchat/supply-chain.md.
+  image:
+    repository: "vllm/vllm-openai"
+    digest: "sha256:4801151759655c57606c844662e5213403c032a62d149c7ce61d615759a821ef"
+    pullPolicy: IfNotPresent
   # Tier 1 default. For Tier 2 hardware (Ada/Blackwell consumer cards
   # without native FP8), override via --set qwenInference.model=…AWQ.
   model: "Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8"
@@ -653,6 +659,21 @@ qwenInference:
       memory: 40Gi
     requests:
       memory: 32Gi
+  cpuMode:
+    # Interim QA/air-gapped mode only. Production deployments should keep
+    # this false and run the GPU-backed FP8 profile above.
+    enabled: false
+    # CPU mode reuses qwenInference.image so the digest pin cannot drift.
+    model: "Qwen/Qwen3-Coder-30B-A3B-Instruct-AWQ"
+    maxModelLen: 32768
+    kvCacheSpaceGB: 4
+    resources:
+      limits:
+        cpu: "8"
+        memory: 24Gi
+      requests:
+        cpu: "4"
+        memory: 16Gi
   hfCache:
     # PVC for HuggingFace weight cache. Re-pulling 30GB FP8 weights on
     # every pod restart is unacceptable, so this defaults on. Set to

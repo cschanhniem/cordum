@@ -11,6 +11,7 @@ GATEWAY_URL="${LLMCHAT_GATEWAY_URL:-http://127.0.0.1:8081}"
 LLMCHAT_DIRECT_URL="${LLMCHAT_DIRECT_URL:-http://127.0.0.1:8090}"
 VLLM_URL="${LLMCHAT_VLLM_URL:-http://127.0.0.1:8000}"
 CURL_TIMEOUT_SECONDS="${LLMCHAT_CURL_TIMEOUT_SECONDS:-10}"
+LLMCHAT_OPS_BACKEND="${LLMCHAT_OPS_BACKEND:-gpu-fp8}"
 
 PYTHON_BIN="${LLMCHAT_PYTHON_BIN:-}"
 if [ -z "${PYTHON_BIN}" ]; then
@@ -72,6 +73,7 @@ probe_init() {
   log_evidence "repo_root=${REPO_ROOT}"
   log_evidence "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   log_evidence "live=${LLMCHAT_OPS_LIVE:-0} require_live=${LLMCHAT_OPS_REQUIRE_LIVE:-0}"
+  log_evidence "backend=${LLMCHAT_OPS_BACKEND}"
 }
 
 log_evidence() { printf '%s\n' "$*" | tee -a "${EVIDENCE_FILE}"; }
@@ -79,6 +81,7 @@ record_section() { log_evidence ''; log_evidence "## $*"; }
 probe_pass() { log_evidence "status=PASS message=${1:-PASS}"; exit 0; }
 probe_fail() { local msg="${1:-FAIL}"; log_evidence "status=FAIL message=${msg}"; echo "[${PROBE_ID}] FAIL: ${msg}" >&2; exit 1; }
 probe_skip() { local msg="${1:-SKIP}"; log_evidence "status=SKIP message=${msg}"; echo "[${PROBE_ID}] SKIP: ${msg}" >&2; exit 77; }
+probe_deferred() { local msg="${1:-DEFERRED}"; log_evidence "status=DEFERRED message=${msg}"; echo "[${PROBE_ID}] DEFERRED: ${msg}" >&2; exit 78; }
 
 write_probe_manifest() {
   record_section 'manifest'
@@ -126,20 +129,30 @@ require_live_stack() {
 
 require_real_vllm() {
   require_live_stack
+  case "${LLMCHAT_OPS_BACKEND}" in
+    gpu-fp8|cpu-vllm-awq) ;;
+    *) probe_fail "unsupported LLMCHAT_OPS_BACKEND=${LLMCHAT_OPS_BACKEND}; allowed: gpu-fp8, cpu-vllm-awq" ;;
+  esac
   local cmdline_file="${PROBE_OUT_DIR}/qwen-cmdline.txt"
+  local default_container="cordum-qwen-inference-1"
+  local expected_model="Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8"
+  if [ "${LLMCHAT_OPS_BACKEND}" = "cpu-vllm-awq" ]; then
+    default_container="cordum-qwen-inference-cpu-1"
+    expected_model="Qwen/Qwen3-Coder-30B-A3B-Instruct-AWQ"
+  fi
   if command -v docker >/dev/null 2>&1; then
-    docker exec "${LLMCHAT_QWEN_CONTAINER:-cordum-qwen-inference-1}" sh -c "tr '\\000' ' ' </proc/1/cmdline" >"${cmdline_file}" 2>>"${EVIDENCE_FILE}" || true
+    docker exec "${LLMCHAT_QWEN_CONTAINER:-${default_container}}" sh -c "tr '\\000' ' ' </proc/1/cmdline" >"${cmdline_file}" 2>>"${EVIDENCE_FILE}" || true
   fi
   if [ ! -s "${cmdline_file}" ]; then
     log_evidence 'qwen_cmdline=unavailable'
-    probe_skip 'real vLLM cmdline unavailable; run on GPU stack with qwen-inference container'
+    probe_skip "real vLLM cmdline unavailable; run backend=${LLMCHAT_OPS_BACKEND} with a matching qwen-inference container"
   fi
   sed -e 's/^/qwen_cmdline: /' "${cmdline_file}" >>"${EVIDENCE_FILE}"
   if grep -E 'mock_openai|python.*mock|python:3' "${cmdline_file}" >/dev/null 2>&1; then
     probe_skip 'qwen-inference is the dev Python mock, not real vLLM; runtime evidence would be invalid'
   fi
   grep -q -- '--tool-call-parser qwen3_xml' "${cmdline_file}" || probe_fail 'real vLLM parser is not qwen3_xml'
-  grep -q -- 'Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8' "${cmdline_file}" || probe_fail 'real vLLM model is not FP8 Qwen3-Coder'
+  grep -q -- "${expected_model}" "${cmdline_file}" || probe_fail "real vLLM model does not match ${expected_model} for backend=${LLMCHAT_OPS_BACKEND}"
 }
 
 poll_readyz() {

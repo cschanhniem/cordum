@@ -63,7 +63,7 @@ export function ChatComposer({ onSubmit, disabled, placeholder }: ChatComposerPr
           disabled={!canSend}
           aria-label="Send message"
           className={cn(
-            "h-9 w-9 shrink-0 rounded-xl border transition-colors",
+            "h-11 w-11 sm:h-9 sm:w-9 shrink-0 rounded-xl border transition-colors",
             "flex items-center justify-center",
             canSend
               ? "border-cordum/40 bg-cordum/10 text-cordum hover:bg-cordum/20"

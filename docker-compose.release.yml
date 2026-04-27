@@ -306,7 +306,10 @@ services:
 
   qwen-inference:
     profiles: [llmchat]
-    image: vllm/vllm-openai:v0.16.0
+    # Pinned to vLLM v0.16.0@sha256:48011517 per task-991597a4.
+    # Bump only via tools/scripts/vllm_pin_digest.sh + supply-chain CI.
+    # Upgrade procedure: docs/llmchat/supply-chain.md.
+    image: "vllm/vllm-openai@sha256:4801151759655c57606c844662e5213403c032a62d149c7ce61d615759a821ef"
     restart: unless-stopped
     command:
       - --model

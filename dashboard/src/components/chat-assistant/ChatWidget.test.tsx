@@ -76,3 +76,37 @@ describe("ChatWidget — overreliance affordances", () => {
     expect(screen.queryByRole("note", { name: /advisory disclaimer/i })).toBeNull();
   });
 });
+
+// Probe 11 (task-f2507515) — locks in worker-eeb9's responsive overlay
+// (commit 9796d177) so future class-list edits cannot silently regress
+// mobile fullscreen layout, and adds WCAG 2.5.5 enhanced 44px touch
+// targets for the close + send buttons at the ≤sm breakpoint.
+describe("ChatWidget — responsive layout + WCAG 2.5.5 touch targets", () => {
+  it("root renders mobile-fullscreen overlay classes that flip to docked panel at sm", async () => {
+    act(() => {
+      useChatAssistantStore.getState().openPanel();
+    });
+    renderWithProviders(<ChatWidget />);
+    const root = await screen.findByRole("complementary", { name: /cordum chat assistant/i });
+    // Literal-substring assertions catch future drift to md:/lg: variants
+    // that would skip tablet portrait at 600-768px.
+    for (const cls of ["inset-0", "max-w-none", "rounded-none", "sm:inset-auto", "sm:rounded-2xl"]) {
+      expect(root.className).toContain(cls);
+    }
+  });
+
+  it("close + send buttons expand to 44px at mobile and revert at sm", async () => {
+    act(() => {
+      useChatAssistantStore.getState().openPanel();
+    });
+    renderWithProviders(<ChatWidget />);
+    const closeButton = await screen.findByRole("button", { name: /close chat/i });
+    for (const cls of ["h-11", "w-11", "sm:h-7", "sm:w-7"]) {
+      expect(closeButton.className).toContain(cls);
+    }
+    const sendButton = screen.getByRole("button", { name: /send message/i });
+    for (const cls of ["h-11", "w-11", "sm:h-9", "sm:w-9"]) {
+      expect(sendButton.className).toContain(cls);
+    }
+  });
+});

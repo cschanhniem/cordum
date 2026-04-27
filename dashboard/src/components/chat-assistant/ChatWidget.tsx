@@ -89,7 +89,7 @@ export function ChatWidget() {
               type="button"
               onClick={closePanel}
               aria-label="Close chat"
-              className="flex h-7 w-7 items-center justify-center rounded-xl text-muted-foreground hover:bg-surface-2 hover:text-foreground"
+              className="flex h-11 w-11 sm:h-7 sm:w-7 items-center justify-center rounded-xl text-muted-foreground hover:bg-surface-2 hover:text-foreground"
             >
               <X className="h-4 w-4" />
             </button>

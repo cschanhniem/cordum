@@ -558,7 +558,10 @@ services:
   # for hardware-tier guidance and the qwen3_xml parser rationale.
   qwen-inference:
     profiles: [llmchat]
-    image: vllm/vllm-openai:v0.16.0
+    # Pinned to vLLM v0.16.0@sha256:48011517 per task-991597a4.
+    # Bump only via tools/scripts/vllm_pin_digest.sh + supply-chain CI.
+    # Upgrade procedure: docs/llmchat/supply-chain.md.
+    image: "vllm/vllm-openai@sha256:4801151759655c57606c844662e5213403c032a62d149c7ce61d615759a821ef"
     restart: unless-stopped
     command:
       - --model
@@ -611,6 +614,58 @@ services:
       # warmup. start_period MUST cover the cold path or the stack will
       # mark the service unhealthy before vLLM finishes loading.
       start_period: 300s
+
+  # CPU/AWQ vLLM profile for QA and air-gapped low-throughput evaluation.
+  # This does not replace the GPU `qwen-inference` production profile; it is
+  # a dedicated stack for the narrowed CPU probe set in task-a5d09fad.
+  qwen-inference-cpu:
+    profiles: [llmchat-cpu]
+    # Pinned to vLLM v0.16.0@sha256:48011517 per task-991597a4.
+    # Bump only via tools/scripts/vllm_pin_digest.sh + supply-chain CI.
+    # Upgrade procedure: docs/llmchat/supply-chain.md.
+    image: "vllm/vllm-openai@sha256:4801151759655c57606c844662e5213403c032a62d149c7ce61d615759a821ef"
+    restart: unless-stopped
+    environment:
+      - VLLM_TARGET_DEVICE=cpu
+      - VLLM_CPU_KVCACHE_SPACE=4
+    command:
+      - --model
+      - Qwen/Qwen3-Coder-30B-A3B-Instruct-AWQ
+      - --served-model-name
+      - qwen3-coder
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_xml
+      - --max-model-len
+      - "32768"
+      - --enable-prefix-caching
+      # Do not log prompts / request bodies from chat traffic. vLLM is pinned
+      # to v0.16.0 because that tag still accepts this deprecated-but-supported
+      # request-log suppression flag; later releases removed it.
+      # Synthetic ops/security probes grep vLLM logs for JWT/API-key shapes
+      # and must find zero hits.
+      - --disable-log-requests
+      - --host
+      # Bind to the container bridge so llm-chat-cpu can reach vLLM via
+      # http://qwen-inference-cpu:8000/v1. The host exposure boundary remains
+      # the loopback-only port mapping below.
+      - 0.0.0.0
+      - --port
+      - "8000"
+    ports:
+      # Loopback ONLY on the host and separated from the GPU profile's 8000
+      # binding so both definitions can exist without port collisions.
+      - "127.0.0.1:8001:8000"
+    volumes:
+      - qwen_cpu_hf_cache:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://127.0.0.1:8000/v1/models || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      # CPU+AWQ first load can take 5-15 minutes, especially before the
+      # qwen_cpu_hf_cache volume is warm.
+      start_period: 900s
 
   # Cordum LLM Chat Assistant — connects to the local vLLM via OpenAI
   # API; talks to the rest of Cordum over the existing MCP server (for
@@ -696,9 +751,89 @@ services:
       retries: 3
       start_period: 15s
 
+  # CPU/AWQ sibling of llm-chat for the llmchat-cpu profile. It preserves the
+  # same MCP/REST/chat service contract while pointing only at qwen-inference-cpu.
+  llm-chat-cpu:
+    profiles: [llmchat-cpu]
+    image: ghcr.io/cordum-io/cordum/llm-chat:${CORDUM_VERSION:-latest}
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: cordum-llm-chat
+    depends_on:
+      qwen-inference-cpu:
+        condition: service_started
+      api-gateway:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    environment:
+      - CORDUM_LLM_CHAT_ADDR=:8090
+      - CORDUM_API_KEY=${CORDUM_API_KEY:?CORDUM_API_KEY_not_set}
+      - CORDUM_LICENSE_TOKEN=${CORDUM_LICENSE_TOKEN:-}
+      - CORDUM_LICENSE_PUBLIC_KEY=${CORDUM_LICENSE_PUBLIC_KEY:-}
+      - REDIS_URL=rediss://:${REDIS_PASSWORD:?REDIS_PASSWORD_not_set}@redis:6379
+      - REDIS_TLS_CA=/etc/cordum/tls/ca/ca.crt
+      - REDIS_TLS_CERT=/etc/cordum/tls/client/tls.crt
+      - REDIS_TLS_KEY=/etc/cordum/tls/client/tls.key
+      - REDIS_TLS_SERVER_NAME=redis
+      - NATS_URL=tls://nats:4222
+      - NATS_TLS_CA=/etc/cordum/tls/ca/ca.crt
+      - NATS_TLS_CERT=/etc/cordum/tls/client/tls.crt
+      - NATS_TLS_KEY=/etc/cordum/tls/client/tls.key
+      - NATS_TLS_SERVER_NAME=nats
+      - NATS_TOKEN=${NATS_TOKEN:-cordum-dev-token}
+      - CORDUM_TLS_CA=/etc/cordum/tls/ca/ca.crt
+      - CORDUM_GATEWAY_URL=${CORDUM_GATEWAY_URL:-https://cordum-api-gateway:8081}
+      - LLMCHAT_BASE_URL=http://qwen-inference-cpu:8000/v1
+      - LLMCHAT_MODEL=qwen3-coder
+      - LLMCHAT_PROVIDER=openai
+      - LLMCHAT_TOOL_TEMPERATURE=${LLMCHAT_TOOL_TEMPERATURE:-0.3}
+      - LLMCHAT_TOOL_TOP_P=${LLMCHAT_TOOL_TOP_P:-0.9}
+      - LLMCHAT_SUMMARY_TEMPERATURE=${LLMCHAT_SUMMARY_TEMPERATURE:-0.7}
+      - LLMCHAT_SUMMARY_TOP_P=${LLMCHAT_SUMMARY_TOP_P:-0.8}
+      - LLMCHAT_TENANT=${CORDUM_TENANT_ID:-default}
+      - LLMCHAT_KNOWLEDGE_PACK_ENABLED=${LLMCHAT_KNOWLEDGE_PACK_ENABLED:-true}
+      - LLMCHAT_KNOWLEDGE_PACK_BUDGET=${LLMCHAT_KNOWLEDGE_PACK_BUDGET:-65536}
+      - LLMCHAT_OPENAPI_PATH=/etc/cordum-llm-chat/openapi.yaml
+      - LLMCHAT_CORDUM_IO_PATH=/etc/cordum-llm-chat/cordum-io
+    volumes:
+      - ./certs:/etc/cordum/tls:ro
+      - ./config/llmchat:/home/cordum/config/llmchat:ro
+      - ./docs/api/openapi/cordum-api.yaml:/etc/cordum-llm-chat/openapi.yaml:ro
+      - ./docs-site/docs/concepts:/etc/cordum-llm-chat/cordum-io/concepts:ro
+      - ./docs-site/docs/getting-started:/etc/cordum-llm-chat/cordum-io/getting-started:ro
+      - ./docs-site/docs/operations:/etc/cordum-llm-chat/cordum-io/operations:ro
+    ports:
+      - "8091:8090"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8090/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+
 volumes:
   nats_data:
   redis_data:
   # Persisted across restarts — re-pulling 30GB FP8 weights on every
   # `docker compose up` is unacceptable.
   qwen_hf_cache:
+  # CPU/AWQ profile cache. Kept separate from FP8 cache so CPU probe runs do
+  # not evict or mutate production GPU weights.
+  qwen_cpu_hf_cache:
