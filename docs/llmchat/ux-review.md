@@ -18,21 +18,21 @@ probes that require a live GPU stack or a human-driven browser session.
 
 | Probe | Verdict |
 |---|---|
-| 1. Persistence across routes | **PASS** (single mount in AppShell, sessionStorage-backed store) |
+| 1. Persistence across routes | **PASS** (single mount in AppShell, localStorage-backed store) |
 | 2. Header button availability tracks vLLM | **PASS** (10 s polling, hides on probe failure or unentitled) |
 | 3a. Tool-call args deterministic | **PARTIAL** (sampling-mode dispatch verified; live 10× run DEFERRED-TO-LIVE-STACK) |
 | 3b. NL summary varies | **DEFERRED-TO-LIVE-STACK** |
 | 4. Two-pass sampling env override | **PASS** (env loader covered by unit tests) |
 | 5. Inline approval flow | **PASS** code-review; click-to-approve flicker DEFERRED-TO-HUMAN |
-| 6. Session resume across tab close | **FAIL — task-7ff6765f** (sessionStorage clears on tab close; plan claimed localStorage) |
+| 6. Session resume across tab close | **PASS** (`localStorage` adopted; closes task-7ff6765f) |
 | 7. Optimistic send | **PARTIAL** (`applyFrame` is synchronous; visual flicker DEFERRED-TO-HUMAN) |
 | 8a. Streaming renders progressively | **PASS** code-review; visual cadence DEFERRED-TO-HUMAN |
 | 8b. Cold-vs-warm prefix-caching latency | **DEFERRED-TO-LIVE-STACK** |
 | 9. Tool call cards | **PASS** code-review; collapse-expand UX DEFERRED-TO-HUMAN |
 | 10. Axe-core zero violations | **PASS** (jsdom; full real-browser axe DEFERRED-TO-HUMAN) |
-| 11. Mobile responsive (375 px full-screen) | **FAIL — task-f2507515** (no media-query fullscreen at 375 px) |
+| 11. Mobile responsive (375 px full-screen) | **PASS** (full-screen overlay below `sm:` 640 px; closes task-f2507515; visual screenshots DEFERRED-TO-HUMAN) |
 | 12. Dark / light theme parity | **PASS** code-review (CSS variables only); pixel contrast DEFERRED-TO-HUMAN |
-| 13. Empty-state suggestion chips | **FAIL — task-47de92ef** (welcome hint present, 3 chips not implemented) |
+| 13. Empty-state suggestion chips | **PASS** (3 chips with click-to-send; closes task-47de92ef) |
 | 14. Error states | **PARTIAL** (error bubble + license-gate hide PASS; vLLM-timeout retry DEFERRED-TO-LIVE-STACK) |
 | 15. Admin chat-sessions page | **PASS** route exists; full UX DEFERRED-TO-HUMAN |
 | 16. i18n catalog | **DEFERRED-PER-DECISION** ([task-530874ea](#)) |
@@ -56,7 +56,7 @@ no remount flash.
   once at the top level, OUTSIDE the `<Routes>` / `<Route>` tree. Route
   changes do not unmount the widget.
 - `dashboard/src/state/chatAssistant.ts:216-224` persists `panelOpen` and
-  `sessionId` via Zustand `persist` middleware to `sessionStorage`. Store
+  `sessionId` via Zustand `persist` middleware to `localStorage`. Store
   reference identity is stable across renders, so React reconciliation does
   not remount the widget DOM tree on a route change.
 - `dashboard/src/state/chatAssistant.ts:217` storage key
@@ -72,7 +72,7 @@ docker compose --profile llmchat up -d --build
 # open http://127.0.0.1:8080 in a browser, sign in
 # click ChatHeaderButton, send "hi"
 # navigate /jobs -> /workflows -> /policies -> /settings/chat-sessions
-# assert: widget DOM stays mounted, sessionStorage["cordum-chat-assistant"] unchanged
+# assert: widget DOM stays mounted, localStorage["cordum-chat-assistant"] unchanged
 ```
 
 ---
@@ -203,24 +203,30 @@ WS round-trip to confirm visually (DEFERRED-TO-HUMAN).
 "full conversation restored from `chat:session:{id}` (Redis) via localStorage
 session_id pointer".
 
-**Actual (code-review)**:
-- `dashboard/src/state/chatAssistant.ts:218`
-  `storage: createJSONStorage(() => sessionStorage)` — uses
-  `sessionStorage`, **NOT** `localStorage`.
-- `sessionStorage` is **per-tab** — it does NOT survive tab close. Closing
-  the browser, or even the tab, clears the session pointer.
+**Original finding (pre-fix)**:
+- `dashboard/src/state/chatAssistant.ts:218` previously used
+  `createJSONStorage(() => sessionStorage)`, which is per-tab and does
+  not survive tab/browser close.
 
-**Verdict**: **FAIL — filed as task-7ff6765f (P1)**. The plan's claim is
-incorrect: closing the browser does not preserve the session pointer with
-the current implementation. Two valid resolutions exist:
+**Actual (post-fix on this branch)**:
+- `dashboard/src/state/chatAssistant.ts` now uses
+  `createJSONStorage(() => localStorage)`. The `resetChatAssistantStore`
+  helper clears `window.localStorage` for the `cordum-chat-assistant`
+  key. Closing the browser preserves the persisted `sessionId`; reopening
+  + clicking the header button restores the prior conversation via the
+  existing resume path.
 
-1. Switch to `localStorage` (matches the plan), accepting that the chat
-   pointer survives across sign-outs — needs an explicit clear on the
-   sign-out path.
-2. Update the plan / docs to describe the actual sessionStorage-tab-scoped
-   behaviour and remove the "close browser" flow from the DoD.
+**Verdict**: **PASS** — resolved on this branch by switching the persisted
+store to `localStorage`. `chatAssistant.ts` now uses
+`createJSONStorage(() => localStorage)` and the `resetChatAssistantStore`
+helper clears `window.localStorage`, so closing the browser preserves the
+`sessionId` pointer and reopening + clicking the header button restores the
+prior conversation. `clearSession` already wipes the in-memory state at
+sign-out, and the persisted entry is namespaced under
+`cordum-chat-assistant`. Closes task-7ff6765f.
 
-A Moe follow-up task captures the decision.
+Regression: `dashboard/src/state/chatAssistant.test.ts` (35 assertions
+across the chat-assistant test suite continue to pass).
 
 ---
 
@@ -317,23 +323,25 @@ announcement-order verification.
 **Expected**: 375 px viewport collapses to full-screen overlay; iPad
 ~768 px stays in panel mode but narrower.
 
-**Actual (code-review)**:
-- `ChatWidget.tsx:62-67` className:
+**Actual (code-review, post-fix)**:
+- `ChatWidget.tsx` className now mobile-first:
   ```
-  fixed right-4 z-50 flex flex-col
-  top-16 bottom-4 w-[380px] max-w-[calc(100vw-2rem)]
-  rounded-2xl border border-cordum/30 bg-surface-0 shadow-soft
-  overflow-hidden
+  fixed z-50 flex flex-col
+  inset-0 max-w-none rounded-none
+  sm:inset-auto sm:top-16 sm:bottom-4 sm:right-4 sm:w-[380px]
+  sm:max-w-[calc(100vw-2rem)] sm:rounded-2xl
+  border border-cordum/30 bg-surface-0 shadow-soft overflow-hidden
   ```
-- At 375 px, `max-w-[calc(100vw-2rem)]` = 343 px — the widget is *capped*
-  to viewport width minus 2 rem of right-edge gutter, but it is not a
-  full-screen overlay. There is no `@media` switch and no responsive
-  token.
+- Below the Tailwind `sm:` breakpoint (640 px, which covers iPhone SE 375 px
+  and any narrower mobile viewport), `inset-0 max-w-none rounded-none`
+  pins the panel to all four edges and removes corner radius — a true
+  full-screen overlay. At ≥640 px the existing floating panel layout
+  (top-16 / bottom-4 / right-4 / 380 px wide / 2xl rounded) is restored.
 
-**Verdict**: **FAIL — filed as task-f2507515 (P1)**. The current mobile
-experience is usable (widget shrinks to fit 375 px) but does not match
-the spec's "full-screen overlay" requirement. The fix is a small Tailwind
-`sm:` / `md:` breakpoint set.
+**Verdict**: **PASS** — full-screen overlay rendered below `sm:`; floating
+panel preserved on tablet/desktop. Closes task-f2507515. Pixel-perfect
+375/768/1280 screenshot capture remains DEFERRED-TO-HUMAN until a real
+browser/Playwright runner is available (tracked under task-a5d09fad).
 
 ---
 
@@ -364,14 +372,24 @@ trusted on glass surfaces (per `test-utils/a11y.ts`).
 (`show denied jobs today`, `list my active workflows`, `what policies apply
 to billing?`); clicking a chip sends that message.
 
-**Actual (code-review)**:
-- `ChatStream.tsx:29-39` renders only "Ask Cordum" + a single hint
-  paragraph: *"Try 'list failing jobs' or 'submit a $40 mock-bank
-  transfer.' Mutating actions still go through approvals."*
-- No suggestion chips. No click-to-send affordance.
+**Actual (code-review, post-fix)**:
+- `ChatStream.tsx` empty branch now renders the heading, an updated hint
+  ("Pick a suggestion below or ask anything…"), and a `<ul>` labelled
+  `aria-label="Suggested prompts"` with three `<button type="button">`
+  chips:
+  - *List my running jobs*
+  - *Show recent failures*
+  - *Submit a $40 mock-bank transfer*
+- Each chip's `onClick` calls `onSuggestionClick(text)` which
+  `ChatWidget.tsx` wires to `session.send` (the same handler the composer
+  uses). When the session is not open (`composerDisabled`), the chips are
+  rendered with the `disabled` attribute and the standard
+  `disabled:cursor-not-allowed disabled:opacity-50` Tailwind treatment, so
+  users do not see actionable affordances they cannot use.
 
-**Verdict**: **FAIL — filed as task-47de92ef (P1)**. The empty state is
-functional but does not match the plan's clickable-chips spec.
+**Verdict**: **PASS** — three click-to-send suggestion chips render in the
+empty state, gated by composer-disabled state, with an accessible list
+landmark. Closes task-47de92ef.
 
 ---
 

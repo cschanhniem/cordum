@@ -7,9 +7,16 @@ import type { ChatAssistantMessage } from "@/types/chatAssistant";
 interface ChatStreamProps {
   messages: ChatAssistantMessage[];
   emptyHint?: string;
+  onSuggestionClick?: (text: string) => void;
 }
 
-export function ChatStream({ messages, emptyHint }: ChatStreamProps) {
+const EMPTY_SUGGESTIONS: readonly string[] = [
+  "List my running jobs",
+  "Show recent failures",
+  "Submit a $40 mock-bank transfer",
+];
+
+export function ChatStream({ messages, emptyHint, onSuggestionClick }: ChatStreamProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastTextLengthRef = useRef(0);
 
@@ -19,8 +26,6 @@ export function ChatStream({ messages, emptyHint }: ChatStreamProps) {
   useEffect(() => {
     const node = scrollRef.current;
     if (!node) return;
-    // Only auto-scroll if the content actually changed; preserves manual
-    // scroll-back when nothing new arrived.
     if (lastTextLengthRef.current === tailText.length && messages.length === 0) return;
     lastTextLengthRef.current = tailText.length;
     node.scrollTop = node.scrollHeight;
@@ -32,8 +37,25 @@ export function ChatStream({ messages, emptyHint }: ChatStreamProps) {
         <div className="font-display text-base font-semibold text-foreground">Ask Cordum</div>
         <p className="mt-2 max-w-[28ch] text-xs text-muted-foreground/80">
           {emptyHint ??
-            "Try “list failing jobs” or “submit a $40 mock-bank transfer.” Mutating actions still go through approvals."}
+            "Pick a suggestion below or ask anything. Mutating actions still go through approvals."}
         </p>
+        <ul
+          className="mt-4 flex w-full max-w-[18rem] flex-col gap-2"
+          aria-label="Suggested prompts"
+        >
+          {EMPTY_SUGGESTIONS.map((text) => (
+            <li key={text}>
+              <button
+                type="button"
+                onClick={onSuggestionClick ? () => onSuggestionClick(text) : undefined}
+                disabled={!onSuggestionClick}
+                className="w-full rounded-xl border border-border/60 bg-surface-1/60 px-3 py-2 text-left text-xs text-foreground/90 transition-colors hover:border-cordum/40 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border/60 disabled:hover:bg-surface-1/60"
+              >
+                {text}
+              </button>
+            </li>
+          ))}
+        </ul>
       </div>
     );
   }

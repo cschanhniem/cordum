@@ -60,9 +60,10 @@ export function ChatWidget() {
           exit={{ opacity: 0, x: 24 }}
           transition={reduceMotion ? { duration: 0 } : { duration: 0.18, ease: "easeOut" }}
           className={cn(
-            "fixed right-4 z-50 flex flex-col",
-            "top-16 bottom-4 w-[380px] max-w-[calc(100vw-2rem)]",
-            "rounded-2xl border border-cordum/30 bg-surface-0 shadow-soft",
+            "fixed z-50 flex flex-col",
+            "inset-0 max-w-none rounded-none",
+            "sm:inset-auto sm:top-16 sm:bottom-4 sm:right-4 sm:w-[380px] sm:max-w-[calc(100vw-2rem)] sm:rounded-2xl",
+            "border border-cordum/30 bg-surface-0 shadow-soft",
             "overflow-hidden",
           )}
         >
@@ -93,7 +94,10 @@ export function ChatWidget() {
               <X className="h-4 w-4" />
             </button>
           </header>
-          <ChatStream messages={messages} />
+          <ChatStream
+            messages={messages}
+            onSuggestionClick={composerDisabled ? undefined : session.send}
+          />
           {session.error && (
             <div
               role="alert"

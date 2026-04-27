@@ -215,7 +215,7 @@ export const useChatAssistantStore = create<ChatAssistantState>()(
     }),
     {
       name: "cordum-chat-assistant",
-      storage: createJSONStorage(() => sessionStorage),
+      storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
         panelOpen: state.panelOpen,
         sessionId: state.sessionId,
@@ -224,7 +224,6 @@ export const useChatAssistantStore = create<ChatAssistantState>()(
   ),
 );
 
-/** Helper for tests: clear the underlying sessionStorage entry. */
 export function resetChatAssistantStore(): void {
   useChatAssistantStore.setState({
     panelOpen: false,
@@ -233,7 +232,7 @@ export function resetChatAssistantStore(): void {
     pendingApprovalIds: [],
     unreadCount: 0,
   });
-  if (typeof window !== "undefined" && window.sessionStorage) {
-    window.sessionStorage.removeItem("cordum-chat-assistant");
+  if (typeof window !== "undefined" && window.localStorage) {
+    window.localStorage.removeItem("cordum-chat-assistant");
   }
 }
