@@ -136,19 +136,17 @@ jobs:
       # actionable findings. The waiver file lets security-team override
       # individual CVEs by PR review (PR review IS the approval mechanism).
       #
-      # NOTE: this step is `continue-on-error: true` for the initial roll-out.
-      # The first scan against the multi-GB Python ML image surfaces a real
-      # set of CVEs that need security-team triage before they can be
-      # waivered — populating waivers without triage would be a rubber-stamp
-      # accept (the exact failure mode the plan's adversarial-review item
-      # (v) warns against). The follow-up task removes `continue-on-error`
-      # once initial waivers (or Yaron-approved threshold narrowing) land.
-      # SARIF is still uploaded to the Security tab unconditionally so the
-      # findings are visible immediately.
+      # Initial CVE triage landed in task-2cf6b514 (15 waivers populated in
+      # tools/scripts/vllm-vuln-waivers.yaml; see docs/llmchat/supply-chain.md
+      # "Initial Waiver Review" for the per-CVE reachability analysis). The
+      # gate is now ENFORCING — any new CRITICAL+HIGH+fixable Trivy finding
+      # outside the waiver list fails this step and blocks merge. Adding a
+      # waiver requires a PR with security-team review per the file header.
+      # SARIF is still uploaded to the Security tab unconditionally so
+      # findings are visible to security review immediately.
       - name: Scan pinned image for vulnerabilities (Trivy)
         id: trivy
         uses: aquasecurity/trivy-action@v0.36.0
-        continue-on-error: true
         with:
           image-ref: vllm/vllm-openai@${{ steps.digest.outputs.digest }}
           format: sarif

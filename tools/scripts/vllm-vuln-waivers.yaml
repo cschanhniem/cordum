@@ -18,15 +18,137 @@
 #     fixed_in:    Optional. Upstream version that ships the fix; lets us
 #                  drop the waiver mechanically when we bump the pin.
 #
-# Trivy ignorefile format: it consumes the top-level `cves:` list (legacy)
-# or any line not starting with `#` that looks like a CVE ID. To stay
-# forward-compatible while keeping the structured `waivers:` block above,
-# every active waiver MUST also list its CVE ID under `cves:` below.
+# Trivy ignorefile format (per task-2cf6b514 step-1 schema verification):
+# Trivy CLI v0.70.0 (the version bundled with aquasecurity/trivy-action@v0.36.0)
+# honors the top-level `vulnerabilities:` list as the SARIF/scan suppression key.
+# The legacy top-level `cves:` list is preserved for forward/backward compat with
+# older Trivy versions but is metadata-only at v0.70.0+. Every active waiver MUST
+# appear in BOTH `waivers:` (structured metadata) and `vulnerabilities:` (Trivy
+# enforcement). `cves:` is kept in sync but is not load-bearing.
 #
 # Out of scope: this file is for *image-scan* waivers only. Application-
 # code findings ride the existing Cordum security review flow.
+#
+# Initial waiver review (task-2cf6b514) — see docs/llmchat/supply-chain.md
+# "Initial Waiver Review" section for per-CVE reachability analysis. All 15
+# CRITICAL+HIGH+fixable findings on vllm/vllm-openai@sha256:480115...
+# (vLLM v0.16.0) are waived because none are reachable in Cordum's
+# deployment posture: loopback-only vLLM bind, read_only filesystem, no
+# shell access, single-node (no Ray cluster), text-only chat (no Pillow
+# image input), pinned model digest (no user-controlled model load),
+# Cordum-gateway JWT validation upstream of vLLM.
 
-waivers: []
+waivers:
+  - cve: CVE-2025-37849
+    reason: linux-libc-dev kernel headers package CVE; container does not run a kernel and uses host kernel. Headers are build-time only; read_only filesystem and no kernel module loading inside container. Vector not reachable from a vLLM serving container.
+    expires_at: "2026-07-26"
+    approved_by: yaront1111
+    fixed_in: 5.15.0-174.184
+  - cve: CVE-2025-68973
+    reason: gpgv (GnuPG verifier) is not invoked by the vLLM serving path. No external repo signing is verified at runtime in our deployment; loopback-only ingress prevents remote attacker invocation. read_only filesystem prevents persistence even if invoked.
+    expires_at: "2026-07-26"
+    approved_by: yaront1111
+    fixed_in: 2.2.27-3ubuntu2.5
+  - cve: CVE-2026-23111
+    reason: linux-libc-dev kernel headers package CVE; same reasoning as CVE-2025-37849. Container does not run a kernel; headers are build-time only. Not reachable in vLLM serving container.
+    expires_at: "2026-07-26"
+    approved_by: yaront1111
+    fixed_in: 5.15.0-174.184
+  - cve: CVE-2026-23268
+    reason: linux-libc-dev kernel headers package CVE; same reasoning as CVE-2025-37849. Container does not run a kernel; headers are build-time only. Not reachable in vLLM serving container.
+    expires_at: "2026-07-26"
+    approved_by: yaront1111
+    fixed_in: 5.15.0-173.183
+  - cve: CVE-2026-23410
+    reason: linux-libc-dev kernel headers package CVE; same reasoning as CVE-2025-37849. Container does not run a kernel; headers are build-time only. Not reachable in vLLM serving container.
+    expires_at: "2026-07-26"
+    approved_by: yaront1111
+    fixed_in: 5.15.0-173.183
+  - cve: CVE-2026-23411
+    reason: linux-libc-dev kernel headers package CVE; same reasoning as CVE-2025-37849. Container does not run a kernel; headers are build-time only. Not reachable in vLLM serving container.
+    expires_at: "2026-07-26"
+    approved_by: yaront1111
+    fixed_in: 5.15.0-173.183
+  - cve: CVE-2026-25048
+    reason: xgrammar structured-output grammar lib. Cordum's pinned `qwen3_xml` tool-call parser does not feed user-controlled grammar definitions to xgrammar; tool schemas are baked into the chat-assistant AgentIdentity AllowedTools at compile time. User chat content reaches the model as natural-language prompts, not as xgrammar grammar input. Vector requires user-supplied grammar definitions, which our deployment does not expose.
+    expires_at: "2026-07-26"
+    approved_by: yaront1111
+    fixed_in: 0.1.32
+  - cve: CVE-2026-26209
+    reason: cbor2 CBOR encoder/decoder. Cordum + vLLM use JSON over the OpenAI-compatible `:8000/v1` API; CBOR is not exercised on the request path. cbor2 is bundled by Ray for inter-node serialization, and Cordum runs single-node vLLM (no Ray cluster). Vector not reachable on single-node deployment.
+    expires_at: "2026-07-26"
+    approved_by: yaront1111
+    fixed_in: 5.9.0
+  - cve: CVE-2026-27893
+    reason: vLLM hardcodes `trust_remote_code=True` for two model implementation files, bypassing `--trust-remote-code=False`. Vector requires loading a malicious model repository. Cordum's deployment pins exactly one model `Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8` via image digest sha256:480115...; model identity is a static config flag, not a user-controlled runtime input. No path for an attacker to inject a malicious model repo.
+    expires_at: "2026-07-26"
+    approved_by: yaront1111
+    fixed_in: 0.18.0
+  - cve: CVE-2026-30922
+    reason: pyasn1 ASN.1 parser. Used internally by vLLM/Ray for SSL certificate handling and Kerberos token parsing. Cordum's vLLM bind is loopback-only (`127.0.0.1:8000`) with no external TLS termination at vLLM and no Kerberos integration. ASN.1 parser not exercised by vLLM serving path on this deployment.
+    expires_at: "2026-07-26"
+    approved_by: yaront1111
+    fixed_in: 0.6.3
+  - cve: CVE-2026-32597
+    reason: PyJWT JWT decoder. Cordum gateway validates all JWTs (delegation tokens, API tokens) BEFORE traffic reaches vLLM, per epic rail "per-session delegation tokens only" and the chat-assistant AgentIdentity flow. vLLM's bundled PyJWT is for Ray cluster auth, which Cordum does not use (single-node). Vector not reachable from vLLM serving path.
+    expires_at: "2026-07-26"
+    approved_by: yaront1111
+    fixed_in: 2.12.0
+  - cve: CVE-2026-34516
+    reason: aiohttp 3.13.3 ships with vLLM via Ray runtime_env agent thirdparty dependencies. Cordum runs single-node vLLM, so the Ray runtime_env agent is not started; aiohttp is loaded but not bound to any listening socket in our deployment. Loopback-only vLLM bind plus no Ray agent means no aiohttp server attack surface.
+    expires_at: "2026-07-26"
+    approved_by: yaront1111
+    fixed_in: 3.13.4
+  - cve: CVE-2026-34520
+    reason: aiohttp 3.13.3 (CRITICAL) bundled via Ray runtime_env thirdparty deps; same reasoning as CVE-2026-34516. Cordum runs single-node vLLM (no Ray cluster, no aiohttp server bound). Note Trivy reports SARIF severity=critical but rule severity=low; treating as critical out of caution. Vector not reachable on single-node deployment.
+    expires_at: "2026-07-26"
+    approved_by: yaront1111
+    fixed_in: 3.13.4
+  - cve: CVE-2026-35535
+    reason: sudo CVE in container's Ubuntu base layer. vLLM container does not invoke sudo at runtime; the container has no shell entrypoint exposed externally. read_only filesystem prevents privilege escalation persistence. Loopback-only ingress prevents remote attacker invocation. Vector not reachable from vLLM serving path.
+    expires_at: "2026-07-26"
+    approved_by: yaront1111
+    fixed_in: 1.9.9-1ubuntu2.6
+  - cve: CVE-2026-40192
+    reason: pillow image-decoding library. Cordum chat is text-only (Qwen3-Coder is a text/code model, no vision); pillow image-decode paths are not exercised by the OpenAI-compatible chat completion API on this deployment. No user-supplied image input vector.
+    expires_at: "2026-07-26"
+    approved_by: yaront1111
+    fixed_in: 12.2.0
 
-# Trivy reads CVE IDs from this list. Keep it in sync with `waivers:`.
-cves: []
+# Trivy v0.70.0+ reads CVE IDs from `vulnerabilities:` (preferred). Kept in
+# sync with `waivers:` above. Entries sorted alphabetically by CVE ID.
+vulnerabilities:
+  - id: CVE-2025-37849
+  - id: CVE-2025-68973
+  - id: CVE-2026-23111
+  - id: CVE-2026-23268
+  - id: CVE-2026-23410
+  - id: CVE-2026-23411
+  - id: CVE-2026-25048
+  - id: CVE-2026-26209
+  - id: CVE-2026-27893
+  - id: CVE-2026-30922
+  - id: CVE-2026-32597
+  - id: CVE-2026-34516
+  - id: CVE-2026-34520
+  - id: CVE-2026-35535
+  - id: CVE-2026-40192
+
+# Legacy `cves:` list — Trivy < v0.70.0 reads from here. Kept in sync with
+# `vulnerabilities:` above for backward compat. Entries sorted alphabetically.
+cves:
+  - CVE-2025-37849
+  - CVE-2025-68973
+  - CVE-2026-23111
+  - CVE-2026-23268
+  - CVE-2026-23410
+  - CVE-2026-23411
+  - CVE-2026-25048
+  - CVE-2026-26209
+  - CVE-2026-27893
+  - CVE-2026-30922
+  - CVE-2026-32597
+  - CVE-2026-34516
+  - CVE-2026-34520
+  - CVE-2026-35535
+  - CVE-2026-40192

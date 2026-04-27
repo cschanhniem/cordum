@@ -433,3 +433,4 @@ Walked 2026-04-27 by worker-ef86, reading the documented probe outcomes as a hos
 - [x] **`cap/docs/agent-registration.md`** (new file) — documents the `AgentClient` surface and points back to this review as the senior-review dogfooding evidence. Lands as a separate cap-repo PR per the plan.
 - [x] **`cordum/CHANGELOG.md`** — Unreleased entry for governance senior review with verdict tally + filed P0/P1/P2 follow-ups.
 - [x] **`cap/CHANGELOG.md`** — Unreleased entry adding `docs/agent-registration.md` with bi-directional cross-link to this review.
+- [x] **Supply-chain gate now enforcing** — task-2cf6b514 triaged the initial 15 CRITICAL+HIGH+fixable Trivy findings against the pinned vLLM image and removed `continue-on-error: true` from the Trivy step. Per-CVE reachability analysis in [`docs/llmchat/supply-chain.md`](supply-chain.md) §4a "Initial Waiver Review".

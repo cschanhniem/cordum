@@ -163,6 +163,21 @@ the chat panel.
 
 ## Security
 
+- **Supply-chain vLLM image gate now enforcing.** Triaged the initial
+  CRITICAL+HIGH+fixable Trivy CVE findings against
+  `vllm/vllm-openai@sha256:480115...` (vLLM v0.16.0): 15 unique CVEs
+  (2 critical, 13 high). All 15 waived in
+  `tools/scripts/vllm-vuln-waivers.yaml` — each waiver cites a
+  specific Cordum deployment-posture invariant (loopback-only bind,
+  read_only filesystem, single-node deployment with no Ray cluster,
+  text-only chat, pinned model digest, Cordum-gateway upstream JWT
+  validation). `continue-on-error: true` removed from the Trivy step
+  in `.github/workflows/supply-chain-vllm.yml` so any new
+  CRITICAL+HIGH+fixable finding outside the waiver list now blocks
+  merge. Per-CVE reachability table and bump-pin notes in
+  [`docs/llmchat/supply-chain.md`](../llmchat/supply-chain.md) §4a
+  "Initial Waiver Review". Closes task-2cf6b514.
+
 - **WebSocket quarantine-redaction fail-closed**
   (`core/controlplane/gateway/handlers_stream.go`) — the filter that strips
   `ResultPtr` + `ArtifactPtrs` from DENIED `JobResult` packets before
