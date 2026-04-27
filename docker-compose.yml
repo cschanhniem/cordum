@@ -862,6 +862,14 @@ services:
       # thrash. The chat session itself is single-flight per user.
       - OLLAMA_NUM_PARALLEL=1
       - OLLAMA_MAX_LOADED_MODELS=1
+      # Default context (2048 tokens) silently truncates the chat prompt
+      # — system prompt + 19 tool definitions + knowledge pack + user
+      # message is ~70K tokens, so the model never sees the tools and
+      # emits zero tool_calls. Qwen2.5 supports 32K natively; KV cache
+      # for the 3B Q4 model at 32K is ~100 MB, fits in the 4G container
+      # limit with headroom. Operators bumping to the 7B variant should
+      # also bump container memory to >=8G.
+      - OLLAMA_CONTEXT_LENGTH=32768
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -962,7 +970,12 @@ services:
       - LLMCHAT_MAX_WALL_CLOCK_PER_TURN=${LLMCHAT_MAX_WALL_CLOCK_PER_TURN:-5m}
       - LLMCHAT_TENANT=${CORDUM_TENANT_ID:-default}
       - LLMCHAT_KNOWLEDGE_PACK_ENABLED=${LLMCHAT_KNOWLEDGE_PACK_ENABLED:-true}
-      - LLMCHAT_KNOWLEDGE_PACK_BUDGET=${LLMCHAT_KNOWLEDGE_PACK_BUDGET:-65536}
+      # Qwen2.5-Coder-3B with 32K context fits roughly 32K tokens; system
+      # prompt + 19 tool definitions consume ~5K, leaving ~25K for KP +
+      # history + user msg. 32 KB of KP text (~8K tokens) leaves comfy
+      # headroom; the default 65536 bytes (~16K tokens) crowds the GPU
+      # baseline but leaves ZERO room on a 32K Ollama context.
+      - LLMCHAT_KNOWLEDGE_PACK_BUDGET=${LLMCHAT_KNOWLEDGE_PACK_BUDGET:-32768}
       - LLMCHAT_OPENAPI_PATH=/etc/cordum-llm-chat/openapi.yaml
       - LLMCHAT_CORDUM_IO_PATH=/etc/cordum-llm-chat/cordum-io
     volumes:
