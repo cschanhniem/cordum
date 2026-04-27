@@ -242,10 +242,29 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 			next(w, r)
 			return
 		}
-		authCtx, err := s.auth.AuthenticateHTTP(r)
-		if err != nil {
-			writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
-			return
+		// Try the chat-assistant delegation token path FIRST. The chat
+		// llm-chat-ollama / llm-chat / llm-chat-cpu services mint per-
+		// session delegation JWTs (signed with CORDUM_DELEGATION_*
+		// keys, verified via core/auth/delegation.TokenService) and
+		// send them as `Authorization: Bearer <jwt>`. The default
+		// BasicAuthProvider.AuthenticateHTTP path checks
+		// `b.jwt.Validate` (HMAC/RSA), which is unconfigured in dev,
+		// so the delegation Ed25519 tokens fail with "jwt auth not
+		// configured" → 401 on every chat tool_call. Verifying via
+		// the delegation TokenService bypasses that and uses the
+		// signing/verification keys the gateway already loads. Falls
+		// through to the standard auth path on any failure so
+		// X-API-Key, session-tokens, and JWT/HMAC paths still work.
+		var authCtx *auth.AuthContext
+		if delegationCtx, ok := s.tryDelegationAuth(r); ok {
+			authCtx = delegationCtx
+		} else {
+			var err error
+			authCtx, err = s.auth.AuthenticateHTTP(r)
+			if err != nil {
+				writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
+				return
+			}
 		}
 		ctx := context.WithValue(r.Context(), auth.ContextKey{}, authCtx)
 		r = r.WithContext(ctx)
@@ -292,6 +311,49 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	}
+}
+
+// resolveMCPIdentity looks up the agent identity for this MCP request.
+// tryDelegationAuth verifies a chat-assistant delegation JWT carried
+// in the `Authorization: Bearer <jwt>` header and returns a populated
+// AuthContext on success. Returns (nil, false) when:
+//   - no Bearer header is present (so the standard auth path can run)
+//   - the delegation TokenService can't be initialized (no signing key)
+//   - the token fails verification (signature, expiry, scope, revocation)
+//
+// Failure cases are silent on purpose — the standard
+// BasicAuthProvider.AuthenticateHTTP path runs after this and emits
+// the 401 with the same wire shape if it also fails. Logging here
+// would double-log every X-API-Key request.
+func (s *server) tryDelegationAuth(r *http.Request) (*auth.AuthContext, bool) {
+	if s == nil || r == nil {
+		return nil, false
+	}
+	token := auth.BearerToken(r.Header.Get("Authorization"))
+	if token == "" {
+		return nil, false
+	}
+	// Session-X tokens are NOT delegation tokens; let the standard
+	// path handle them via RedisUserStore.ValidateSession.
+	if strings.HasPrefix(token, "session-") {
+		return nil, false
+	}
+	service, err := s.delegationTokenService()
+	if err != nil {
+		return nil, false
+	}
+	verified, err := service.VerifyDelegationToken(r.Context(), token, "")
+	if err != nil {
+		return nil, false
+	}
+	tenant := strings.TrimSpace(verified.Tenant)
+	principal := strings.TrimSpace(verified.Subject)
+	return &auth.AuthContext{
+		APIKey:      token,
+		Tenant:      tenant,
+		PrincipalID: principal,
+		AuthSource:  auth.AuthSourceJWT,
+	}, true
 }
 
 // resolveMCPIdentity looks up the agent identity for this MCP request.
