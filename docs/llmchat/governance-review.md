@@ -6,15 +6,39 @@ Dogfooding QA for `cordum-llm-chat`: the chat copilot is itself a Cordum agent, 
 
 ## Status summary
 
-|         | Identity (1, 2, 7) | Audit (3, 4, 11) | Gating (5, 6, 12, 13) | Tenancy (8, 9, 10) |
-| ------- | ------------------ | ---------------- | --------------------- | ------------------ |
-| Pass    | _tbd_              | _tbd_            | _tbd_                 | _tbd_              |
-| Fail    | _tbd_              | _tbd_            | _tbd_                 | _tbd_              |
-| Blocked | _tbd_              | _tbd_            | _tbd_                 | _tbd_              |
+Verdicts as of 2026-04-27 after the two filed P0s landed (`task-5b755f42` audit/query handler + `task-f13505cc` dashboard agent_id parity); the remaining gaps are operational (no deterministic LLM tool-call stub in the dev mock, no `cordumctl agent set-scope` CLI, shared-stack restart risk).
 
-Audit-chain integrity (DoD #2): `/api/v1/audit/verify` → _tbd_
-Chain-verify p99 latency under chat load (DoD #3): _tbd_ ms (budget ≤ 10ms regression)
-P0 / P1 / P2 follow-up tasks filed: _tbd_
+|              | Identity (1, 2, 7) | Audit (3, 4, 11) | Gating (5, 6, 12, 13) | Tenancy (8, 9, 10) |
+| ------------ | ------------------ | ---------------- | --------------------- | ------------------ |
+| Pass         | 1 (probe 2)        | 0                | 0                     | 0                  |
+| Partial pass | 1 (probe 1)        | 1 (probe 4)      | 1 (probe 12)          | 1 (probe 9)        |
+| Blocked      | 1 (probe 7)        | 1 (probe 3)      | 3 (probes 5, 6, 13)   | 2 (probes 8, 10)   |
+| Deferred     | 0                  | 1 (probe 11)     | 0                     | 0                  |
+| Fail         | 0                  | 0                | 0                     | 0                  |
+
+Totals across all 13 probes: **1 PASS / 4 PARTIAL PASS / 7 BLOCKED / 1 DEFERRED / 0 FAIL**.
+
+Audit-chain integrity (DoD #2): `/api/v1/audit/verify` → `status=ok`, `total_events=10000`, `verified_events=10000`, `gaps=[]`, `retention_window_hours=168`, `first_seq=1`, `last_seq=10000` (probe 4 evidence). **No chain breaks observed.**
+
+Chain-verify p99 latency under chat load (DoD #3): **not measurable in this stack.** The chat-load backbone (probe 3 — 100 chat turns through real tool calls) is BLOCKED on the dev mock LLM; without that load source we cannot characterise the verify endpoint's p99 *under chat-induced load*. What we did measure on a 10K-event chain:
+
+- Baseline serial verify: p99 ≈ 241 ms (5 calls: 199 / 206 / 215 / 222 / 241 ms).
+- 20 concurrent verify calls: p50 = 1660 ms, p95 = 2325 ms, p99 = 2354 ms (overall wall-clock 2690 ms for 20 parallel).
+- The verify endpoint re-hashes all 10K events on every call — its absolute latency is at the second scale, two orders of magnitude above the DoD's 10 ms-regression budget. The "≤ 10 ms regression under chat load" budget is unmeasurable until (a) a live chat-load generator exists *and* (b) verify is rebuilt for hot-path use (cached or partial verification).
+
+P0 / P1 / P2 follow-up tasks filed and tracked:
+
+| Severity | Task / Finding                                                                                                                                                              | Status                                          |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| P0       | `task-5b755f42` — wire `/api/v1/audit/query` gateway handler                                                                                                                | **DONE**                                        |
+| P0       | `task-f13505cc` — dashboard Jobs page render `agent_id` column for visual parity                                                                                            | **DONE**                                        |
+| P1       | F1 — no `cordumctl agent set-scope` CLI; scope mutation requires hitting CAP control-plane endpoint directly                                                                | `task-754d09bf` BACKLOG                         |
+| P1       | F7 — `config/llmchat/policy-default.yaml` not auto-loaded; operator must POST it after stack boot OR rely on AgentIdentity scope                                            | Captured in this doc; not separately filed yet  |
+| P1       | Audit-verify endpoint concurrency scaling — p99 jumps 10× from baseline at 20 parallel; verify is not designed for hot-path / load-test usage                               | `task-4102015f` BACKLOG                         |
+| P1       | Deterministic-LLM stub for QA — dev `qwen-inference` mock returns hardcoded text and never emits a `tool_call`, blocking probes 3, 5, 6, 8, 10, 12-active, 13               | `task-314fe304` BACKLOG                         |
+| P2       | DataClassifications metadata not surfaced in `/api/v1/agents` JSON response (probe 8 cannot read the chat-assistant's `[public, internal]` classification through that API) | Captured in probe 8 evidence                    |
+| P2       | Redis TLS client path inside `cordum-redis-1` — operator-runbook clarity gap (probe 9 runtime test could not authenticate to Redis)                                         | Captured in probe 9 evidence                    |
+| P2       | `cordumctl tenant` subcommand existence not verified (needed for probe 10 fixture)                                                                                          | Captured in probe 10 evidence                   |
 
 ## Pre-execution findings
 
@@ -354,21 +378,28 @@ Each probe section follows this template:
 
 ---
 
-## Adversarial self-review checklist (step-10)
+## Adversarial self-review (step-10)
 
-Each item below must be addressed before final commit.
+Walked 2026-04-27 by worker-ef86, reading the documented probe outcomes as a hostile reviewer rather than the author. Each of the 9 checks below is either a documented PASS, a fix applied in this round, or an explicit follow-up procedure that must run when the underlying probe is unblocked.
 
-- [ ] (1) Probe 7: scope-narrowing applied atomically (no TOCTOU window where chat could submit before scope narrowed)?
-- [ ] (2) Probe 9: revocation persists across Redis restart (durability test)?
-- [ ] (3) Probe 10: isolation holds under concurrent submit + list race?
-- [ ] (4) Probe 4: audit verify ran AFTER buffer flush (5s)?
-- [ ] (5) Probe 13: confirmed safety kernel denies (vs. scope filter denying first)?
-- [ ] (6) Probe 11: in-flight delegation tokens preserved across scheduler restart, or invalidated (failure mode)?
-- [ ] (7) Residual state cleaned (test agents, test tenants, test sessions)?
-- [ ] (8) No real PII or API keys leaked into evidence files?
-- [ ] (9) Any temporary scope override fully reverted?
+| # | Hostile check | Status | Notes |
+| - | ------------- | ------ | ----- |
+| 1 | Probe 7: scope-narrowing applied atomically — no TOCTOU window where the chat could submit a mutating call between the read of the old scope and the write of the new one. | DEFERRED to first probe-7 live run. | Probe 7 itself was BLOCKED in this session (F1 + shared-stack risk). The atomicity of `SetScope` is a separate property of `cap/sdk/go/agent.go` — `PUT /api/v1/agents/{id}` accepts an `Idempotency-Key` header but the gateway does NOT serialise concurrent SetScope calls today, so a TOCTOU window is theoretically possible if two operators narrow scope concurrently. **Procedure addition for the live re-run:** before issuing SetScope, capture `scope_revision` (from GET); after SetScope, GET again and assert `revision = revision_before + 1` and the response reflects the narrowed AllowedTools. Only after that confirmation should the chat-driven submit be issued. Filed as a procedure note, not a P0 — narrowing scope is an admin-only path, not chat-driven, so the practical TOCTOU surface is small. |
+| 2 | Probe 9: revocation persists across Redis restart (durability), not just in-memory. | FIX APPLIED to procedure. | Probe 9 procedure now includes an adversarial extension: `docker compose restart redis` after the Revoke succeeds, then retry the captured token on a write endpoint and confirm 401 still. Verified statically: `delegation:revoked:{jti}` is a normal Redis key (not in-memory only); persistence depends on Redis RDB/AOF config in `core/infra/store`. Filed as **P2**: confirm `cordum-redis-1` is configured with `appendonly yes` (AOF) so revocations survive even between RDB snapshots. |
+| 3 | Probe 10: cross-tenant isolation HOLDS under concurrent submit + list race. | DEFERRED to first probe-10 live run. | Probe 10 was BLOCKED on mock-LLM + tenant-fixture absence. **Procedure addition for the live re-run:** spawn two goroutines / shells — tenant-A submits in a tight 50× loop while tenant-B simultaneously polls `cordum_list_jobs` 50×. Assert tenant-B never observes any tenant-A job_id. The static reasoning argues this is safe (tenant_id is in the request JWT, no shared mutable state), but a race condition in shared cache or a query that forgets to filter would only show under contention. |
+| 4 | Probe 4: audit-verify ran AFTER buffer flush (audit buffer is async; allow 5s). | PASS. | Probe-4 evidence was captured against a stack that had been running with 10K events accumulated for hours — the async audit buffer (`core/audit/buffer.go`) had long since flushed every event. **Procedure addition** for any future probe that runs verify immediately after generating events: insert a 5s sleep before verify, and re-issue verify three times to detect any sequence gap that closes within the flush interval. |
+| 5 | Probe 13: confirmed safety kernel denies (vs. scope filter denying first). | DEFERRED to first probe-13 live run. | Procedure already requires setting AllowedTools to wildcard so scope filter passes; assertion must read `decision=SafetyDeny` from the audit row (not `agent_identity_scope_deny`). **Procedure addition:** assert audit row carries `safety_rule_id=<actual-rule>` and is tied to the same `trace_id` as the chat tool call — otherwise we cannot prove the deny came from the safety kernel and not from a different gate. |
+| 6 | Probe 11: in-flight delegation tokens preserved across scheduler restart, or invalidated. | DEFERRED to first probe-11 live run. | Delegation tokens live in Redis (`core/auth/delegation/`), not in scheduler memory, so scheduler restart should not invalidate them. **Procedure addition:** the probe-11 reproducer should explicitly capture a delegation JWT before the restart, attempt to use it after the restart, and document whether the JTI is still valid (expected: yes; unexpected: scheduler caches token validation in-memory and the cache empties on restart). |
+| 7 | Residual state cleaned (test agents, test tenants, test sessions). | PASS. | Step-9 (docs + cross-link) made no runtime mutations. Earlier sessions (steps 4-7) did not successfully mutate AgentIdentity scope (probe 7 / 13 blocked), did not create test tenants (probe 10 blocked), and did not open + leave open chat sessions (mock-LLM blocked). The single environmental residual is the orphan Docker mount at `/run/desktop/mnt/host/d/Cordum/cordum-llm-debug/` that prevented `cordum-llm-chat-1` restart during probe 1(b); that mount predates this task and is **not** a residual of this work. |
+| 8 | No real PII / API keys / tenant data leaked into evidence files. | PASS. | Grep confirms `governance-review.md` and `cap/docs/agent-registration.md` do not contain `Authorization: Bearer <real-token>`, `X-API-Key: <real-key>`, real customer names, or real PII. The chat-assistant UUID `d2315a95-7b08-40a1-8bdc-7b96858f41e6` is a dev-stack generated identifier, not sensitive. Tenant references throughout the doc are placeholders (`tenant-default`, `tenant-A`, `tenant-B`). |
+| 9 | Any temporary scope override fully reverted. | PASS. | No scope overrides were applied in this session — probes 7 and 13 were both BLOCKED before any mutating call. There is nothing to revert. The plan's hypothetical `LLMCHAT_DISABLE_SCOPE_CHECK` env var was never introduced (no such flag exists in the codebase per step-2 finding) and was never set. |
+
+**Step-10 outcome:** 4 PASS (checks 4, 7, 8, 9), 1 fix-applied-to-procedure (check 2 — Redis restart durability extension + new P2 to confirm `cordum-redis-1` AOF mode), 4 DEFERRED-to-live-run procedure additions (checks 1, 3, 5, 6). No probe needs a re-run *for the adversarial check itself* in this session because most probes are still BLOCKED at the operational layer (mock-LLM, F1 CLI, shared-stack restart risk).
 
 ## Cross-links
 
-- [ ] cordum-site/docs-site governance concept page → link to this review
-- [ ] cap/docs agent-registration page → link to chat-assistant phase-3 evidence
+- [x] **cordum-site `docs-site/docs/concepts/audit.md`** — added `:::info Governance dogfooding` callout linking back to this review.
+- [x] **cordum-site `docs-site/docs/concepts/agent-protocol.md`** — added bullet under `:::info Protocol surfaces` linking to `cap/docs/agent-registration.md` and this review.
+- [x] **`cap/docs/agent-registration.md`** (new file) — documents the `AgentClient` surface and points back to this review as the senior-review dogfooding evidence. Lands as a separate cap-repo PR per the plan.
+- [x] **`cordum/CHANGELOG.md`** — Unreleased entry for governance senior review with verdict tally + filed P0/P1/P2 follow-ups.
+- [x] **`cap/CHANGELOG.md`** — Unreleased entry adding `docs/agent-registration.md` with bi-directional cross-link to this review.
