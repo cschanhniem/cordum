@@ -14,8 +14,9 @@ describe("ChatStream — empty-state suggestion chips", () => {
     const list = screen.getByRole("list", { name: /suggested prompts/i });
     const buttons = within(list).getAllByRole("button");
     expect(buttons).toHaveLength(3);
+    const renderedTexts = buttons.map((b) => b.textContent ?? "");
     for (const text of DOD_SUGGESTIONS) {
-      expect(within(list).getByText(text)).toBeInTheDocument();
+      expect(renderedTexts).toContain(text);
     }
   });
 
@@ -25,7 +26,7 @@ describe("ChatStream — empty-state suggestion chips", () => {
       const btn = screen.getByRole("button", {
         name: `Send suggestion: ${text}`,
       });
-      expect(btn).toBeInTheDocument();
+      expect(btn.getAttribute("aria-label")).toBe(`Send suggestion: ${text}`);
     }
   });
 
@@ -52,7 +53,8 @@ describe("ChatStream — empty-state suggestion chips", () => {
       const btn = screen.getByRole("button", {
         name: `Send suggestion: ${text}`,
       });
-      expect(btn).toBeDisabled();
+      expect((btn as HTMLButtonElement).disabled).toBe(true);
+      expect(btn.getAttribute("aria-label")).toBe(`Send suggestion: ${text}`);
     }
   });
 });

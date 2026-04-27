@@ -354,6 +354,17 @@ panel preserved on tablet/desktop. Closes task-f2507515. Pixel-perfect
 375/768/1280 screenshot capture remains DEFERRED-TO-HUMAN until a real
 browser/Playwright runner is available (tracked under task-a5d09fad).
 
+**Touch-target audit (WCAG 2.5.5 enhanced + Apple HIG)**: close + send
+buttons enlarged to 44 × 44 px at the `≤sm` breakpoint via
+`h-11 w-11 sm:h-7 sm:w-7` (close, in `ChatWidget.tsx`) and
+`h-11 w-11 sm:h-9 sm:w-9` (send, in `ChatComposer.tsx`). Icons stay
+`h-4 w-4`; only the button container expands so desktop perceived weight
+is preserved. Asserted in `ChatWidget.test.tsx` § "ChatWidget — responsive
+layout + WCAG 2.5.5 touch targets" via literal-substring class matchers,
+so a future drift to `md:` or `lg:` variants (which would skip tablet
+portrait at 600-768 px) breaks the test. Closes the task-f2507515
+touch-target follow-up.
+
 ---
 
 ## Probe 12 — Dark / light theme
@@ -384,13 +395,17 @@ trusted on glass surfaces (per `test-utils/a11y.ts`).
 to billing?`); clicking a chip sends that message.
 
 **Actual (code-review, post-fix)**:
-- `ChatStream.tsx` empty branch now renders the heading, an updated hint
+- `ChatStream.tsx` empty branch renders the heading, the hint
   ("Pick a suggestion below or ask anything…"), and a `<ul>` labelled
   `aria-label="Suggested prompts"` with three `<button type="button">`
-  chips:
-  - *List my running jobs*
-  - *Show recent failures*
-  - *Submit a $40 mock-bank transfer*
+  chips matching the DoD strings verbatim:
+  - *show denied jobs today*
+  - *list my active workflows*
+  - *what policies apply to billing?*
+- Each `<button>` carries an explicit `aria-label` of the form
+  `"Send suggestion: <text>"` (e.g. `"Send suggestion: show denied
+  jobs today"`) so a screen reader announces the action plus the
+  payload, not just the chip text. Required by task rail #2.
 - Each chip's `onClick` calls `onSuggestionClick(text)` which
   `ChatWidget.tsx` wires to `session.send` (the same handler the composer
   uses). When the session is not open (`composerDisabled`), the chips are
@@ -399,8 +414,10 @@ to billing?`); clicking a chip sends that message.
   users do not see actionable affordances they cannot use.
 
 **Verdict**: **PASS** — three click-to-send suggestion chips render in the
-empty state, gated by composer-disabled state, with an accessible list
-landmark. Closes task-47de92ef.
+empty state with DoD-verbatim text and per-button aria-labels, gated by
+composer-disabled state, inside an accessible list landmark. Asserted in
+`dashboard/src/components/chat-assistant/ChatStream.test.tsx` (4 cases:
+text, aria-label, click → callback, disabled-state). Closes task-47de92ef.
 
 ---
 
