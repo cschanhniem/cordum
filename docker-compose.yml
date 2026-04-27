@@ -311,6 +311,14 @@ services:
       - API_RATE_LIMIT_BURST=4000
       - REDIS_DATA_TTL=24h
       - JOB_META_TTL=168h
+      # WS read deadline for chat sessions = ping interval + pong timeout.
+      # Default 30s + 10s = 40s is shorter than CPU inference time on the
+      # llmchat-ollama profile (3B Q4 model at 8K context = 30-90s per
+      # turn), which closes the dashboard chat WS mid-inference. Bumping
+      # the pong timeout to 120s gives a 150s read deadline that fits
+      # the worst-case CPU turn comfortably. GPU + vLLM-CPU profiles see
+      # <5s inference and don't notice the cap.
+      - GATEWAY_WS_PONG_TIMEOUT=${GATEWAY_WS_PONG_TIMEOUT:-120s}
       # User authentication (set CORDUM_USER_AUTH_ENABLED=true to enable)
       - CORDUM_USER_AUTH_ENABLED=${CORDUM_USER_AUTH_ENABLED:-false}
       - CORDUM_ADMIN_USERNAME=${CORDUM_ADMIN_USERNAME:-admin}
@@ -979,19 +987,22 @@ services:
       # and don't need this override.
       - LLMCHAT_MAX_WALL_CLOCK_PER_TURN=${LLMCHAT_MAX_WALL_CLOCK_PER_TURN:-5m}
       - LLMCHAT_TENANT=${CORDUM_TENANT_ID:-default}
-      - LLMCHAT_KNOWLEDGE_PACK_ENABLED=${LLMCHAT_KNOWLEDGE_PACK_ENABLED:-true}
-      # Budget is in TOKENS (multiplied by approximateBytesPerToken=4 in
-      # core/llmchat/knowledgepack.go applyBudget). On CPU inference
-      # large prompts dominate generation time (KV-cache build for a 32K
-      # prompt on 8 threads = several minutes), so we deliberately keep
-      # the prompt short:
-      #   - 19 tool definitions  ~5K tokens
-      #   - system prompt        ~500 tokens
-      #   - KP (this budget)     1000 tokens
-      #   - user msg + history   ~500 tokens
-      #   - TOTAL                ~7K tokens, fits in 8K ctx with headroom
-      # CPU 3B at 8K prompt + 100-token response = ~10-30s per turn.
-      # GPU profile (vLLM 131K context) is unaffected.
+      # KP DISABLED on the Ollama profile. KnowledgePackLoader.applyBudget
+      # in core/llmchat/knowledgepack.go:225 truncates the source KP
+      # (568,792 bytes for cordum-api openapi) via a raw byte slice
+      # `raw[:maxBytes]` — no JSON-aware boundary, so any budget < the
+      # full KP size produces malformed JSON in the system prompt. The
+      # 3B model then spends 5+ minutes trying to parse the broken
+      # prompt and trips the LLMCHAT_MAX_WALL_CLOCK_PER_TURN budget. Tool
+      # definitions are shipped independently of the KP, so disabling
+      # KP does NOT affect tool-call quality. GPU + vLLM-CPU profiles
+      # have 32K-131K context and don't truncate, so KP stays enabled
+      # there. Re-enable here only if `core/llmchat/knowledgepack.go`
+      # gains a JSON-aware truncator (filed as out-of-scope follow-up).
+      - LLMCHAT_KNOWLEDGE_PACK_ENABLED=${LLMCHAT_KNOWLEDGE_PACK_ENABLED:-false}
+      # Budget is irrelevant when ENABLED=false but kept for the rare
+      # case an operator flips ENABLED=true on a 32K-context model
+      # variant; budget is in TOKENS (×4 = bytes via approximateBytesPerToken).
       - LLMCHAT_KNOWLEDGE_PACK_BUDGET=${LLMCHAT_KNOWLEDGE_PACK_BUDGET:-1000}
       - LLMCHAT_OPENAPI_PATH=/etc/cordum-llm-chat/openapi.yaml
       - LLMCHAT_CORDUM_IO_PATH=/etc/cordum-llm-chat/cordum-io
