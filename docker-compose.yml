@@ -980,12 +980,15 @@ services:
       - LLMCHAT_MAX_WALL_CLOCK_PER_TURN=${LLMCHAT_MAX_WALL_CLOCK_PER_TURN:-5m}
       - LLMCHAT_TENANT=${CORDUM_TENANT_ID:-default}
       - LLMCHAT_KNOWLEDGE_PACK_ENABLED=${LLMCHAT_KNOWLEDGE_PACK_ENABLED:-true}
-      # Qwen2.5-Coder-3B with 32K context fits roughly 32K tokens; system
-      # prompt + 19 tool definitions consume ~5K, leaving ~25K for KP +
-      # history + user msg. 32 KB of KP text (~8K tokens) leaves comfy
-      # headroom; the default 65536 bytes (~16K tokens) crowds the GPU
-      # baseline but leaves ZERO room on a 32K Ollama context.
-      - LLMCHAT_KNOWLEDGE_PACK_BUDGET=${LLMCHAT_KNOWLEDGE_PACK_BUDGET:-32768}
+      # Budget is in TOKENS (multiplied by approximateBytesPerToken=4 in
+      # core/llmchat/knowledgepack.go applyBudget). The default 65536 *
+      # 4 = 262144 bytes ≈ 65K tokens of KP — combined with the 19 tool
+      # definitions (~5K tokens) the prompt blows past Qwen2.5's 32K
+      # native context and Ollama silently truncates, dropping the tool
+      # definitions so the model emits zero tool_calls. 16000 tokens of
+      # KP (~64KB) plus tools (~5K) plus system prompt + user msg fits
+      # in 32K with comfortable headroom.
+      - LLMCHAT_KNOWLEDGE_PACK_BUDGET=${LLMCHAT_KNOWLEDGE_PACK_BUDGET:-16000}
       - LLMCHAT_OPENAPI_PATH=/etc/cordum-llm-chat/openapi.yaml
       - LLMCHAT_CORDUM_IO_PATH=/etc/cordum-llm-chat/cordum-io
     volumes:
