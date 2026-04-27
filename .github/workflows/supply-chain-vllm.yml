@@ -94,24 +94,34 @@ jobs:
           echo "short=${short:0:12}" >> "$GITHUB_OUTPUT"
           echo "Pinned digest: $digest"
 
-      # Cross-check that release-compose, values.yaml, and the deployment
-      # template all reference the SAME digest as docker-compose.yml. A
-      # mismatched pin between dev and release surfaces the silent-drift
-      # supply-chain bug this task exists to prevent.
+      # Cross-check that release-compose and values.yaml reference the SAME
+      # digest as docker-compose.yml. The Helm deployment template at
+      # cordum-helm/templates/deployment-qwen-inference.yaml does NOT carry
+      # the digest literally — it interpolates it from
+      # `.Values.qwenInference.image.digest` — so values.yaml is the single
+      # source of truth for the rendered deployment, and checking values.yaml
+      # is sufficient for the template too.
       - name: Verify all references agree on the digest
         env:
           DIGEST: ${{ steps.digest.outputs.digest }}
         run: |
           set -euo pipefail
           fail=0
-          for f in docker-compose.release.yml cordum-helm/values.yaml cordum-helm/templates/deployment-qwen-inference.yaml; do
+          for f in docker-compose.release.yml cordum-helm/values.yaml; do
             if ! grep -q "$DIGEST" "$f"; then
               echo "::error file=$f::Does not reference the pinned digest $DIGEST"
               fail=1
             fi
           done
+          # Defensive check: the deployment template MUST reference values
+          # via the expected interpolation key. If someone hard-codes a
+          # different image: line, this guards against silent drift.
+          if ! grep -qE '\{\{[^}]*\.Values\.qwenInference\.image\.digest[^}]*\}\}' cordum-helm/templates/deployment-qwen-inference.yaml; then
+            echo "::error file=cordum-helm/templates/deployment-qwen-inference.yaml::Deployment template does not interpolate .Values.qwenInference.image.digest; supply-chain pin can be bypassed."
+            fail=1
+          fi
           if [ "$fail" -ne 0 ]; then exit 1; fi
-          echo "All four references agree on $DIGEST."
+          echo "All references agree on $DIGEST (template interpolates from values.yaml)."
 
       - name: Pull pinned image
         env:
