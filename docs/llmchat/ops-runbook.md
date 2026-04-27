@@ -2,6 +2,8 @@
 
 Task: `task-e363a7fa` — production readiness + vLLM config verification + failure modes + rolling upgrade.
 
+Supply-chain (image provenance, digest pinning, Trivy/Syft CI gate, vulnerability waivers, vLLM upgrade procedure): see [`supply-chain.md`](supply-chain.md) (task-991597a4).
+
 ## Interim CPU operating mode
 
 Static vLLM configuration verification is documented separately in

@@ -1,0 +1,207 @@
+# Supply-chain gate for the qwen-inference vLLM image.
+#
+# What this enforces (task-991597a4):
+#   - The vLLM image referenced by docker-compose.yml / docker-compose.release.yml /
+#     cordum-helm/values.yaml MUST be pinned by sha256 digest, not a moving tag.
+#     We extract the digest from docker-compose.yml as the source of truth and
+#     fail-closed if the literal `vllm/vllm-openai@sha256:` pattern is missing
+#     (drift detection — operator nudged the pin to a tag).
+#   - The pinned digest is scanned for CRITICAL+HIGH OS+language vulnerabilities
+#     via Trivy. Fix-available findings fail the job; ignore-unfixed=true means
+#     unactionable advisories don't churn the gate.
+#   - An SBOM (SPDX JSON) is produced via Syft and uploaded as a 90-day artifact
+#     so any release can be traced to exactly the package set that shipped.
+#   - Trivy waivers in tools/scripts/vllm-vuln-waivers.yaml are honored, and the
+#     waiver file's `expires_at` dates are checked — stale waivers fail the job.
+#
+# What this does NOT do (out of scope per task rails):
+#   - Add hosted inference. The job runs in CI only. Runtime still pulls the
+#     same local-vLLM image, identified by digest.
+#   - Touch the qwen3_xml parser, the loopback host port mapping, or the
+#     ClusterIP exposure on the deployment.
+#   - Cover model-weight provenance. HuggingFace Qwen3-Coder weights are a
+#     separate concern (filed as a follow-up).
+#
+# See docs/llmchat/supply-chain.md for the operator upgrade procedure and the
+# waiver schema.
+
+name: Supply-chain — vLLM image gate
+
+on:
+  push:
+    branches: ["main", "LLM-in_Dashbord"]
+    paths:
+      - "docker-compose.yml"
+      - "docker-compose.release.yml"
+      - "cordum-helm/values.yaml"
+      - "cordum-helm/templates/deployment-qwen-inference.yaml"
+      - "tools/scripts/vllm_pin_digest.sh"
+      - "tools/scripts/vllm-vuln-waivers.yaml"
+      - ".github/workflows/supply-chain-vllm.yml"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "docker-compose.yml"
+      - "docker-compose.release.yml"
+      - "cordum-helm/values.yaml"
+      - "cordum-helm/templates/deployment-qwen-inference.yaml"
+      - "tools/scripts/vllm_pin_digest.sh"
+      - "tools/scripts/vllm-vuln-waivers.yaml"
+      - ".github/workflows/supply-chain-vllm.yml"
+  # Weekly run catches new CVEs published against the pinned digest even
+  # when no PR is touching the supply chain. 06:00 UTC Monday.
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+# Serialize per-branch so two pushes don't race on the same digest scan.
+# cancel-in-progress is true here because the scan is idempotent and
+# re-running on the latest commit is what we actually want.
+concurrency:
+  group: supply-chain-vllm-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write # SARIF upload to the Security tab
+
+jobs:
+  vllm-supply-chain:
+    name: vLLM digest pin + scan + SBOM
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Source-of-truth digest extraction. docker-compose.yml is the single
+      # canonical reference; if its image: line ever drifts to a tag, this
+      # step fails closed BEFORE we waste the rest of the job.
+      - name: Extract pinned digest from docker-compose.yml
+        id: digest
+        run: |
+          set -euo pipefail
+          line=$(grep -E '^\s*image:\s*vllm/vllm-openai@sha256:[a-f0-9]{64}' docker-compose.yml || true)
+          if [ -z "$line" ]; then
+            echo "::error file=docker-compose.yml::qwen-inference image is not pinned by sha256 digest. Expected literal 'vllm/vllm-openai@sha256:<64-hex>'."
+            exit 1
+          fi
+          digest=$(printf '%s' "$line" | grep -oE 'sha256:[a-f0-9]{64}' | head -n1)
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          short="${digest#sha256:}"
+          echo "short=${short:0:12}" >> "$GITHUB_OUTPUT"
+          echo "Pinned digest: $digest"
+
+      # Cross-check that release-compose, values.yaml, and the deployment
+      # template all reference the SAME digest as docker-compose.yml. A
+      # mismatched pin between dev and release surfaces the silent-drift
+      # supply-chain bug this task exists to prevent.
+      - name: Verify all references agree on the digest
+        env:
+          DIGEST: ${{ steps.digest.outputs.digest }}
+        run: |
+          set -euo pipefail
+          fail=0
+          for f in docker-compose.release.yml cordum-helm/values.yaml cordum-helm/templates/deployment-qwen-inference.yaml; do
+            if ! grep -q "$DIGEST" "$f"; then
+              echo "::error file=$f::Does not reference the pinned digest $DIGEST"
+              fail=1
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then exit 1; fi
+          echo "All four references agree on $DIGEST."
+
+      - name: Pull pinned image
+        env:
+          DIGEST: ${{ steps.digest.outputs.digest }}
+        run: |
+          set -euo pipefail
+          docker pull "vllm/vllm-openai@$DIGEST"
+          docker image inspect "vllm/vllm-openai@$DIGEST" >/dev/null
+
+      # Trivy scan with explicit fail thresholds. CRITICAL+HIGH covers the
+      # bar set by DoD #3. ignore-unfixed=true means we only block on
+      # actionable findings. The waiver file lets security-team override
+      # individual CVEs by PR review (PR review IS the approval mechanism).
+      - name: Scan pinned image for vulnerabilities (Trivy)
+        id: trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: vllm/vllm-openai@${{ steps.digest.outputs.digest }}
+          format: sarif
+          output: trivy-vllm.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+          ignorefile: tools/scripts/vllm-vuln-waivers.yaml
+
+      - name: Upload Trivy SARIF
+        if: always() && hashFiles('trivy-vllm.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-vllm.sarif
+          category: trivy-vllm
+
+      # SBOM generation via Syft against the same digest. SPDX JSON is the
+      # interchange format Trivy + most SCA tools consume; 90-day retention
+      # is enough to trace any production incident back to the package set.
+      - name: Generate SBOM (Syft, SPDX JSON)
+        id: sbom
+        uses: anchore/sbom-action@v0
+        with:
+          image: vllm/vllm-openai@${{ steps.digest.outputs.digest }}
+          format: spdx-json
+          output-file: vllm-sbom-${{ steps.digest.outputs.short }}.spdx.json
+          upload-artifact: true
+          upload-artifact-retention: 90
+          artifact-name: vllm-sbom-${{ steps.digest.outputs.short }}
+
+      # Sanity check that the SBOM actually enumerates the vllm Python
+      # package — a zero-package SBOM has happened on Syft tooling
+      # regressions and would silently mean we're shipping no inventory.
+      - name: Sanity-check SBOM contains the vllm package
+        run: |
+          set -euo pipefail
+          sbom="vllm-sbom-${{ steps.digest.outputs.short }}.spdx.json"
+          if [ ! -s "$sbom" ]; then
+            echo "::error::SBOM file is missing or empty"
+            exit 1
+          fi
+          if ! jq -e '.packages | map(.name) | index("vllm")' "$sbom" >/dev/null; then
+            echo "::error::SBOM does not enumerate the 'vllm' package — Syft regression?"
+            exit 1
+          fi
+          pkg_count=$(jq '.packages | length' "$sbom")
+          echo "SBOM enumerates $pkg_count packages including vllm."
+
+      # Waiver hygiene. A waiver with an expired expires_at is a silent
+      # accept that's no longer reviewed; fail-closed so they can't rot.
+      - name: Check waiver expiry dates
+        run: |
+          set -euo pipefail
+          waivers="tools/scripts/vllm-vuln-waivers.yaml"
+          if [ ! -f "$waivers" ]; then
+            echo "Waiver file missing — treating as zero waivers."
+            exit 0
+          fi
+          today=$(date -u +%F)
+          # yq is preinstalled on ubuntu-latest. Each waiver entry must
+          # carry an expires_at; entries past today fail the job.
+          expired=$(yq eval '[.waivers[] | select(.expires_at != null and .expires_at < strenv(today))] | .[] | .cve' "$waivers" || true)
+          if [ -n "$expired" ]; then
+            echo "::error file=tools/scripts/vllm-vuln-waivers.yaml::The following waivers expired on or before $today: $expired"
+            exit 1
+          fi
+          echo "All waivers within their expires_at window."
+
+      - name: Pin + scan summary
+        if: success()
+        env:
+          DIGEST: ${{ steps.digest.outputs.digest }}
+        run: |
+          echo "## vLLM supply-chain gate: PASS" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Pinned digest: \`$DIGEST\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Trivy: CRITICAL+HIGH fixable scan clean (or fully waivered)." >> "$GITHUB_STEP_SUMMARY"
+          echo "- SBOM: vllm-sbom-${{ steps.digest.outputs.short }}.spdx.json (90-day retention)." >> "$GITHUB_STEP_SUMMARY"
+          echo "- Waivers: all within their \`expires_at\` window." >> "$GITHUB_STEP_SUMMARY"

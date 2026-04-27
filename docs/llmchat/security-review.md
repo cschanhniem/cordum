@@ -4,6 +4,8 @@ Date: 2026-04-26
 Task: `task-6cda949c`
 Scope: `cordum-llm-chat`, dashboard chat widget, qwen-inference/vLLM packaging, MCP authorization path.
 
+> **Supply-chain follow-up (task-991597a4)**: image-provenance assessment of the vLLM image was out of scope for the runtime probes here. The follow-up landed a digest pin + Trivy/Syft CI gate documented in [`supply-chain.md`](supply-chain.md); operators upgrading vLLM should follow that procedure.
+
 ## Executive summary
 
 Result: **BLOCKED for the live senior-security checkpoint**.

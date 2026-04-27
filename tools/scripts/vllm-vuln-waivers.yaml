@@ -1,0 +1,32 @@
+# vllm-vuln-waivers.yaml — Trivy ignore file for the qwen-inference vLLM
+# image (task-991597a4 supply-chain gate).
+#
+# Each waiver suppresses one CVE for the pinned vLLM image scan. The waiver
+# is in version control: ADDING ONE REQUIRES A PR with security-team
+# review. PR review IS the approval mechanism — there is no out-of-band
+# approval channel.
+#
+# Schema for entries under `waivers:`:
+#   - cve:         CVE-YYYY-NNNN — the CVE ID Trivy reports.
+#     reason:      Free-form justification. State why the finding does not
+#                  apply to our deployment (e.g. "vector requires unsanitized
+#                  network ingress; we run vLLM on loopback only").
+#     expires_at:  YYYY-MM-DD (UTC). The supply-chain CI workflow fails if
+#                  any waiver's expires_at is in the past — stale waivers
+#                  rot into silent accepts. Default 90 days; renew via PR.
+#     approved_by: GitHub principal who approved the waiver in the PR.
+#     fixed_in:    Optional. Upstream version that ships the fix; lets us
+#                  drop the waiver mechanically when we bump the pin.
+#
+# Trivy ignorefile format: it consumes the top-level `cves:` list (legacy)
+# or any line not starting with `#` that looks like a CVE ID. To stay
+# forward-compatible while keeping the structured `waivers:` block above,
+# every active waiver MUST also list its CVE ID under `cves:` below.
+#
+# Out of scope: this file is for *image-scan* waivers only. Application-
+# code findings ride the existing Cordum security review flow.
+
+waivers: []
+
+# Trivy reads CVE IDs from this list. Keep it in sync with `waivers:`.
+cves: []
