@@ -26,12 +26,12 @@ backend and keep vLLM-specific panels as opt-in.
 | 2 | Prometheus metrics + cardinality | **PASS** | `out/llmchat-ops/probe-02/evidence.txt` |
 | 3 | Trace propagation / Jaeger | **FAIL (P1)** | `out/llmchat-ops/probe-03/evidence.txt` |
 | 4 | Admin session viewer + audit | **FAIL (P1)** | `out/llmchat-ops/probe-04/evidence.txt` |
-| 5 | Chat frame protocol stability | TODO | `out/llmchat-ops/probe-05/evidence.txt` |
+| 5 | Chat frame protocol stability | **FAIL (P1)** | `out/llmchat-ops/probe-05/evidence.txt` |
 | 6 | Ops runbook | **PASS** | `docs/llmchat/ops-runbook.md` |
 | 7 | Grafana dashboard | **PASS (static); import not run** | `cordum-helm/dashboards/llm-chat.json` |
-| 8 | SIEM export | TODO | `out/llmchat-ops/probe-08/evidence.txt` |
+| 8 | SIEM export | **PASS (static); live sinks not run** | `out/llmchat-ops/probe-08/evidence.txt` |
 | 9 | Alert rules | **PASS (static)** | `cordum-helm/alerts/llm-chat.yaml` |
-| 10 | Cost / usage visibility | TODO | `out/llmchat-ops/probe-10/evidence.txt` |
+| 10 | Cost / usage visibility | **FAIL (P1)** | `out/llmchat-ops/probe-10/evidence.txt` |
 | 11 | Admin debug dump | **FAIL (P1)** | `out/llmchat-ops/probe-11/evidence.txt` |
 | 12 | Log sampling / volume bounds | **PASS (static); live load not run** | `out/llmchat-ops/probe-12/evidence.txt` |
 
@@ -190,13 +190,22 @@ approval frames are not treated as production-default requirements after the
 **Procedure:** `scripts/ops-probes/probe-05.sh` checks static frame schema tests
 and, in live mode, sends a deliberately unsupported version frame.
 
-**Actual:** TODO
+**Actual:** Added `docs/llmchat/protocol-versioning.md` with the intended v1
+contract and v2 upgrade plan. Static probe found no top-level `json:"v"` frame
+field in Go/dashboard chat frame definitions and no `unsupported_protocol_version`
+handler string. Live websocket version rejection was not run because
+`LLMCHAT_WS_URL`/live mode were not configured.
 
-**Verdict:** TODO
+**Verdict:** **FAIL (P1).** The protocol-versioning document now exists, but the
+runtime/client frame contract is not pinned to `v: 1` and unknown versions do not
+fail closed.
 
-**Evidence:** `out/llmchat-ops/probe-05/evidence.txt`
+**Evidence:** `out/llmchat-ops/probe-05/evidence.txt`,
+`docs/llmchat/protocol-versioning.md`
 
-**Findings / tasks:** TODO
+**Findings / tasks:** File/track follow-up to add a `v: 1` field to chat frames,
+accept/reject client versions explicitly, and return `unsupported_protocol_version`
+for unknown versions.
 
 ## Probe 6 — Ops runbook
 
@@ -255,13 +264,24 @@ through the existing audit sinks. Retired `mcp.tool_invocation` and
 **Procedure:** `scripts/ops-probes/probe-08.sh` checks constants/tests and, when
 sinks are configured, captures webhook/syslog/Datadog/CloudWatch examples.
 
-**Actual:** TODO
+**Actual:** Static probe found canonical `chat.session_started` and
+`chat.session_closed` action constants in `core/audit/siem_actions.go`. It
+records `chat.approval_required` as retired under informational-only default and
+found `mcp.tool_invocation` outside the default chat path. Existing audit sinks
+and tests are present for webhook, syslog, Datadog, and CloudWatch. Unit
+serialization/exporter coverage passed:
+`go test ./core/audit -run 'Test.*(Webhook|Syslog|Datadog|CloudWatch|SIEMAction)' -count=1`.
+End-to-end live sink exports were not run because no sink endpoints were
+configured.
 
-**Verdict:** TODO
+**Verdict:** **PASS (static), LIVE SINKS NOT RUN.** Retained chat lifecycle
+SIEM format is centralized and exporter tests pass. This does not prove customer
+sink delivery without configured webhook/syslog/Datadog/CloudWatch endpoints.
 
 **Evidence:** `out/llmchat-ops/probe-08/evidence.txt`
 
-**Findings / tasks:** TODO
+**Findings / tasks:** No P0/P1 for static retained SIEM export. Live sink capture
+remains customer/staging evidence.
 
 ## Probe 9 — Alert rules
 
@@ -297,13 +317,20 @@ compatibility).
 **Procedure:** `scripts/ops-probes/probe-10.sh` checks for admin API routes and,
 in live mode, verifies per-tenant counters.
 
-**Actual:** TODO
+**Actual:** Static scan found no `admin/chat/usage`, `ChatUsage`, `chat_usage`,
+`tokens_in`, `tokens_out`, or usage-counter implementation in core/gateway/
+dashboard code. Hits in the evidence are unrelated license/session-token docs or
+ops-review/runbook text. Live `/admin/chat/usage?tenant=...` check was not run
+because `CORDUM_API_KEY` and live mode were not configured.
 
-**Verdict:** TODO
+**Verdict:** **FAIL (P1).** Per-tenant chat usage/cost visibility is not
+implemented.
 
 **Evidence:** `out/llmchat-ops/probe-10/evidence.txt`
 
-**Findings / tasks:** TODO
+**Findings / tasks:** File/track follow-up for per-tenant chat usage counters and
+admin API (messages, tokens in/out, backend calls; legacy tool-call count only if
+legacy path remains installed).
 
 ## Probe 11 — Admin debug dump
 
@@ -361,6 +388,8 @@ is still required if the task is completed under the original DoD wording.
 | P1 | TODO | 3 | No llm-chat OTEL/Jaeger exporter evidence; trace-propagation DoD unmet. |
 | P1 | TODO | 4 | Admin session viewer lacks concrete `chat.admin_session_viewed` audit event and search by user/tenant/session_id. |
 | P1 | TODO | 11 | Admin session debug dump/support bundle endpoint/UI is not implemented. |
+| P1 | TODO | 5 | Chat frame protocol lacks top-level `v: 1` and unknown-version rejection. |
+| P1 | TODO | 10 | Per-tenant chat usage counters/admin API are not implemented. |
 
 ## Final verification log
 
