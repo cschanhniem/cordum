@@ -13,6 +13,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+#### LLM Chat Assistant — Knowledge-pack ingestion (task-a72bdedf)
+- **`core/llmchat/knowledge/`** — local, zero-egress APISubstituter + SiteSubstituter pipeline that fills `{{api_summary}}` and `{{cordum_io_summary}}` from the checked-in OpenAPI spec and docs-site content. The loader redacts secret-shaped content, caches the resolved prompt for the service lifetime, logs token counts at boot, and fails closed when source files are missing or token budgets are exceeded. Refs Yaron's 2026-04-25 knowledge-pack directive and the 2026-04-28 informational-only pivot.
+- **Compose/Helm packaging** — `cordum-llm-chat` now receives `LLMCHAT_KNOWLEDGE_API_SPEC_PATH`, `LLMCHAT_KNOWLEDGE_SITE_PATH`, include/exclude globs, and a 24K combined prompt ceiling. Compose mounts the local spec/docs read-only; Helm defaults use the image-baked `/etc/cordum/openapi.yaml` and `/etc/cordum/site-content` paths.
+- **Docs** — `docs/llmchat/knowledge-pack.md` documents default paths, env vars, override mechanics, redaction, token budgets, and smoke-test expectations for informational-only Q&A.
+
 #### LLM Chat Assistant — Senior ops review evidence (task-8eab552b)
 - **`docs/llmchat/ops-review.md`** — 12-probe observability and day-2 operations review for the informational-only/Ollama-default chat assistant. Verdict summary: 0 P0, 6 P1 follow-ups filed, 1 P2 product-routing check, Prometheus cardinality bounded, log secret scan clean, and live Grafana/Jaeger/sink evidence explicitly marked not run where no owned environment was configured.
 - **`scripts/ops-probes/`** — reproducible probe harness for structured logs, metrics cardinality, trace/Jaeger wiring, admin session viewer audit/search, protocol versioning, runbook coverage, Grafana JSON, SIEM export, alert rules, per-tenant usage counters, debug dumps, and log sampling.
