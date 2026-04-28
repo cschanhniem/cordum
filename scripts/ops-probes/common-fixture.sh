@@ -5,8 +5,8 @@ set -euo pipefail
 # Defaults target the local docker-compose stack. Override with env vars in CI.
 
 : "${CORDUM_API_BASE:=https://127.0.0.1:8081/api/v1}"
-: "${LLMCHAT_METRICS_URL:=http://127.0.0.1:8092/metrics}"
-: "${LLMCHAT_HEALTH_URL:=http://127.0.0.1:8092/readyz}"
+: "${LLMCHAT_METRICS_URL:=http://127.0.0.1:8090/metrics}"
+: "${LLMCHAT_HEALTH_URL:=http://127.0.0.1:8090/readyz}"
 : "${LLMCHAT_OUT_DIR:=out/llmchat-ops}"
 : "${LLMCHAT_OPS_LIVE:=0}"
 : "${LLMCHAT_OPS_REQUIRE_LIVE:=0}"

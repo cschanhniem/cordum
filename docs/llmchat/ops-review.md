@@ -105,7 +105,7 @@ is bounded, and no session-like or secret-like value appears in labels.
 checks required families, counts label combinations per family, and scans label
 values for UUID/session/token shapes.
 
-**Actual:** `probe-02.sh` fetched `http://127.0.0.1:8092/metrics` successfully
+**Actual:** `probe-02.sh` fetched `http://127.0.0.1:8090/metrics` successfully
 (~12 KB). Required families were present: `chat_sessions_active`,
 `chat_tool_calls_total`, `chat_approval_required_total`,
 `chat_vllm_latency_seconds`, `chat_token_budget_used_total`, and
@@ -410,4 +410,12 @@ is still required if the task is completed under the original DoD wording.
 
 ## Final verification log
 
-Commands and results will be appended here before `moe.complete_task`.
+Final full-probe rerun from `D:/Cordum/cordum` using Git Bash/MSYS on 2026-04-28T07:01Z:
+
+- `bash -n scripts/ops-probes/common-fixture.sh scripts/ops-probes/probe-{01,02,03,04,05,06,07,08,09,10,11,12}.sh` -> `BASH_N_EXIT=0`.
+- Probe exits: `01=1`, `02=0`, `03=1`, `04=1`, `05=1`, `06=0`, `07=0`, `08=0`, `09=0`, `10=1`, `11=1`, `12=0`.
+- Expected PASS/static-pass probes: 2 (metrics/cardinality), 6 (runbook), 7 (Grafana JSON static), 8 (SIEM exporter static + audit unit test), 9 (alert rules static), 12 (log sampling static).
+- Expected FAIL/P1 probes with filed follow-ups: 1 (`task-848f003a`), 3 (`task-0e73db35`), 4 (`task-83b72a46`), 5 (`task-68a01f28`), 10 (`task-7ee2d5ab`), 11 (`task-53317462`).
+- Metrics endpoint used by the final rerun: `http://127.0.0.1:8090/metrics`, matching the current post-pivot compose service name `llm-chat`. The probes still support `LLMCHAT_METRICS_URL` and `LLMCHAT_LOG_SERVICE` overrides for older `llm-chat-ollama` profile runs.
+- `python -m json.tool cordum-helm/dashboards/llm-chat.json` -> pass.
+- `git diff --check` on all task-owned docs/scripts/chart artifacts -> clean before the final commit.
