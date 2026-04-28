@@ -154,13 +154,20 @@ the Trivy step in the same commit as the waiver population.
   not bound or exercised.
 - **Text-only chat** — Qwen3-Coder is a text/code model; no
   user-supplied image input → no Pillow image-decode path.
-- **Pinned model digest** — model identity is a static config flag
-  (`Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8` via image digest). No
-  user-controlled model-load path → no malicious-model-repo vector.
+- **Static model selection** — Compose/Helm configure the vLLM model IDs
+  (`Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8` and AWQ tier override);
+  chat tenants/users cannot choose a model at runtime. This blocks the
+  user-supplied malicious-model vector, but does **not** pin HuggingFace
+  model repo revisions. CVE-2026-27893 is therefore tracked as an accepted
+  model-provenance risk until a model revision/digest pin or vLLM bump lands.
 - **Cordum gateway upstream of vLLM** — JWT validation, delegation
   tokens and prompt-safety enforcement happen in Cordum
-  before traffic reaches vLLM. PyJWT/xgrammar/policy paths inside
-  vLLM are not exercised on the request hot path.
+  before traffic reaches vLLM. PyJWT/Ray-auth paths inside vLLM are not
+  exercised on the request hot path.
+- **No guided decoding / grammar input** — informational-only chat sends
+  OpenAI-compatible requests with model/messages/stream/temperature/top_p
+  only. It does not send `response_format`, `guided_*` parameters,
+  `tools`, `tool_choice`, or user-supplied grammar definitions to vLLM.
 
 **CVE table.** All 15 waivers expire 2026-07-26 (today + 90 days,
 UTC) and are approved by `yaront1111` via PR review.
@@ -173,9 +180,9 @@ UTC) and are approved by `yaront1111` via PR review.
 | CVE-2026-23268 | HIGH | linux-libc-dev | 5.15.0-173.183 | Kernel headers package; same as CVE-2025-37849 |
 | CVE-2026-23410 | HIGH | linux-libc-dev | 5.15.0-173.183 | Kernel headers package; same as CVE-2025-37849 |
 | CVE-2026-23411 | HIGH | linux-libc-dev | 5.15.0-173.183 | Kernel headers package; same as CVE-2025-37849 |
-| CVE-2026-25048 | HIGH | xgrammar | 0.1.32 | User-supplied grammar definitions vector; we don't expose that path |
+| CVE-2026-25048 | HIGH | xgrammar | 0.1.32 | User-supplied grammar definitions vector; no guided decoding / structured-output request path |
 | CVE-2026-26209 | HIGH | cbor2 | 5.9.0 | CBOR decoding via Ray; single-node deployment, JSON-only API |
-| CVE-2026-27893 | HIGH | vllm | 0.18.0 | `trust_remote_code=True` malicious-model RCE; pinned model only |
+| CVE-2026-27893 | HIGH | vllm | 0.18.0 | `trust_remote_code=True` malicious-model RCE; users cannot select models, but mutable HF revision is accepted risk |
 | CVE-2026-30922 | HIGH | pyasn1 | 0.6.3 | ASN.1 parsing for SSL/Kerberos; loopback-only, no Kerberos |
 | CVE-2026-32597 | HIGH | PyJWT | 2.12.0 | JWT validated by Cordum gateway upstream; vLLM PyJWT for Ray only |
 | CVE-2026-34516 | HIGH | aiohttp | 3.13.4 | Ray runtime_env agent dep; single-node, no Ray agent |
@@ -189,10 +196,13 @@ Bumping the vLLM pin past v0.16.0 was deferred for two reasons:
 v0.17.0 removed the deprecated-but-supported `--disable-log-requests`
 flag (see [`task-6a8680fc`](#) — the no-prompt-leak rail), and a
 v0.18.0+ bump will need a re-run of the static config verification
-and security-review harness on the new image. Tracked as a follow-up
-in `unreleased.md` and via the next time the supply-chain workflow
-auto-rerun fails (i.e. when these waivers expire on 2026-07-26 or
-sooner if a new CRITICAL CVE lands).
+and security-review harness on the new image. CVE-2026-27893 is not
+treated as unreachable via the container image digest; the current
+compensation is static operator-controlled model IDs plus a time-boxed
+accepted-risk waiver until model revision/digest pinning or a fixed vLLM
+image lands. Tracked as a follow-up in `unreleased.md` and via the next
+time the supply-chain workflow auto-rerun fails (i.e. when these waivers
+expire on 2026-07-26 or sooner if a new CRITICAL CVE lands).
 
 ## 5. Cosign signature status
 
@@ -224,7 +234,9 @@ supply-chain workflow.
   and the Tier-2 AWQ variant). Weights are downloaded by the vLLM
   container at start-up and cached in a named volume / PVC. Their
   provenance is a separate concern; a follow-up Moe task should
-  add a model-weights digest pin and revision policy.
+  add a model-weights digest pin and revision policy. Until that lands,
+  CVE-2026-27893 remains a documented accepted risk for the opt-in vLLM
+  profile rather than a non-reachable finding.
 - **Application-code findings.** This file is for image-scan waivers
   only. Cordum's existing security-review flow handles application
   CVEs.

@@ -170,8 +170,10 @@ the chat panel.
   `tools/scripts/vllm-vuln-waivers.yaml` — each waiver cites a
   specific Cordum deployment-posture invariant (loopback-only bind,
   read_only filesystem, single-node deployment with no Ray cluster,
-  text-only chat, pinned model digest, Cordum-gateway upstream JWT
-  validation). `continue-on-error: true` removed from the Trivy step
+  text-only chat, static operator-controlled model IDs, Cordum-gateway
+  upstream JWT validation). CVE-2026-27893 is documented as a time-boxed
+  accepted model-provenance risk until model revision/digest pinning or a
+  fixed vLLM bump lands. `continue-on-error: true` removed from the Trivy step
   in `.github/workflows/supply-chain-vllm.yml` so any new
   CRITICAL+HIGH+fixable finding outside the waiver list now blocks
   merge. Per-CVE reachability table and bump-pin notes in

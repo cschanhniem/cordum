@@ -17,8 +17,8 @@
 # What this does NOT do (out of scope per task rails):
 #   - Add hosted inference. The job runs in CI only. Runtime still pulls the
 #     same local-vLLM image, identified by digest.
-#   - Touch the qwen3_xml parser, the loopback host port mapping, or the
-#     ClusterIP exposure on the deployment.
+#   - Touch the informational-only parser/tool-call posture, the loopback
+#     host port mapping, or the ClusterIP exposure on the deployment.
 #   - Cover model-weight provenance. HuggingFace Qwen3-Coder weights are a
 #     separate concern (filed as a follow-up).
 #

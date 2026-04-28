@@ -32,11 +32,14 @@
 # Initial waiver review (task-2cf6b514) — see docs/llmchat/supply-chain.md
 # "Initial Waiver Review" section for per-CVE reachability analysis. All 15
 # CRITICAL+HIGH+fixable findings on vllm/vllm-openai@sha256:480115...
-# (vLLM v0.16.0) are waived because none are reachable in Cordum's
-# deployment posture: loopback-only vLLM bind, read_only filesystem, no
-# shell access, single-node (no Ray cluster), text-only chat (no Pillow
-# image input), pinned model digest (no user-controlled model load),
+# (vLLM v0.16.0) are waived under the deployment posture below:
+# loopback-only vLLM bind, read_only filesystem, no shell access, single-node
+# (no Ray cluster), text-only chat (no Pillow image input), static
+# operator-controlled model IDs (no user-controlled model selection), and
 # Cordum-gateway JWT validation upstream of vLLM.
+# CVE-2026-27893 is an accepted model-provenance risk until a separate
+# model-revision/digest pin lands; it is not waived as "unreachable" via
+# the container image digest.
 
 waivers:
   - cve: CVE-2025-37849
@@ -70,7 +73,7 @@ waivers:
     approved_by: yaront1111
     fixed_in: 5.15.0-173.183
   - cve: CVE-2026-25048
-    reason: xgrammar structured-output grammar lib. Cordum's pinned `qwen3_xml` tool-call parser does not feed user-controlled grammar definitions to xgrammar; tool schemas are baked into the chat-assistant AgentIdentity AllowedTools at compile time. User chat content reaches the model as natural-language prompts, not as xgrammar grammar input. Vector requires user-supplied grammar definitions, which our deployment does not expose.
+    reason: xgrammar structured-output grammar lib. Cordum informational-only chat does not enable vLLM guided decoding, structured outputs, grammar fields, or OpenAI tools/tool_choice in requests; the provider sends only model/messages/stream/temperature/top_p. User chat content reaches the model as natural-language prompt text, not as xgrammar grammar input. Vector requires user-supplied grammar definitions, which the opt-in vLLM deployment does not expose.
     expires_at: "2026-07-26"
     approved_by: yaront1111
     fixed_in: 0.1.32
@@ -80,7 +83,7 @@ waivers:
     approved_by: yaront1111
     fixed_in: 5.9.0
   - cve: CVE-2026-27893
-    reason: vLLM hardcodes `trust_remote_code=True` for two model implementation files, bypassing `--trust-remote-code=False`. Vector requires loading a malicious model repository. Cordum's deployment pins exactly one model `Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8` via image digest sha256:480115...; model identity is a static config flag, not a user-controlled runtime input. No path for an attacker to inject a malicious model repo.
+    reason: vLLM hardcodes `trust_remote_code=True` for two model implementation files, bypassing `--trust-remote-code=False`. The direct attacker vector is tenant/user-controlled model selection; Cordum's opt-in vLLM deployment exposes no API for users to choose a model and Compose/Helm set static operator-controlled model IDs. The HuggingFace model revision itself is not pinned by the container image digest, so this waiver records accepted model-provenance risk until a separate model revision/digest pin or vLLM bump lands.
     expires_at: "2026-07-26"
     approved_by: yaront1111
     fixed_in: 0.18.0
