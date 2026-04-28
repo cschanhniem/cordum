@@ -307,7 +307,6 @@ require_real_vllm() {
 
   local default_container="cordum-ollama-1"
   local expected_model="qwen2.5-coder:3b-instruct-q4_K_M-ctx32k"
-  local require_qwen_parser="0"
   local backend_label="real Ollama"
   if [ "${LLMCHAT_SECURITY_BACKEND}" = "cpu-vllm-awq" ]; then
     default_container="cordum-qwen-inference-cpu-1"
@@ -318,7 +317,6 @@ require_real_vllm() {
   elif [ "${LLMCHAT_SECURITY_BACKEND}" = "ollama-cpu" ] || [ -z "${LLMCHAT_SECURITY_BACKEND}" ]; then
     default_container="cordum-ollama-1"
     expected_model="qwen2.5-coder:3b-instruct-q4_K_M-ctx32k"
-    require_qwen_parser="0"
     backend_label="real Ollama"
   fi
 
@@ -335,10 +333,12 @@ require_real_vllm() {
   if grep -E 'mock_openai|python.*mock|python:3' "${cmdline_file}" >/dev/null 2>&1; then
     probe_skip "inference service is the dev Python mock, not ${backend_label}; security evidence would be invalid"
   fi
-  if [ "${require_qwen_parser}" = "1" ]; then
-    grep -q -- '--tool-call-parser qwen3_xml' "${cmdline_file}" || probe_fail "real vLLM parser is not qwen3_xml"
+  if [ "${backend_label}" = "real vLLM" ]; then
     if [ -n "${expected_model}" ]; then
       grep -q -- "${expected_model}" "${cmdline_file}" || probe_fail "real vLLM model does not match ${expected_model} for backend=${LLMCHAT_SECURITY_BACKEND}"
+    fi
+    if grep -q -- '--tool-call-parser' "${cmdline_file}"; then
+      probe_fail "informational-only vLLM must not configure a tool-call parser"
     fi
   else
     grep -E 'ollama|/bin/sh|ollama serve' "${cmdline_file}" >/dev/null 2>&1 || probe_fail "Ollama backend cmdline is not recognizable"
