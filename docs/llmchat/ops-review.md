@@ -20,6 +20,8 @@ backend and keep vLLM-specific panels as opt-in.
 
 ## Executive summary
 
+Classification after probes 1-12 (2026-04-28): **0 P0**, **6 P1**, **1 P2**, and no secret/metric-cardinality P0s. P1 follow-ups filed: `task-848f003a` (probe 1 structured JSON logs), `task-0e73db35` (probe 3 OTEL/Jaeger), `task-83b72a46` (probe 4 admin audit/search), `task-68a01f28` (probe 5 protocol v1), `task-7ee2d5ab` (probe 10 usage counters), `task-53317462` (probe 11 debug dump). Probe 4 also records a P2 detail-routing check for `/copilot/sessions`.
+
 | Probe | Surface | Verdict | Evidence |
 |---|---|---:|---|
 | 1 | Structured logs + redaction | **FAIL (P1)** | `out/llmchat-ops/probe-01/evidence.txt` |
@@ -384,12 +386,12 @@ is still required if the task is completed under the original DoD wording.
 
 | Severity | Task | Probe | Summary |
 |---|---|---|---|
-| P1 | TODO | 1 | llm-chat runtime logs are text-prefixed slog, not JSON structured logs with required safe correlation keys. |
-| P1 | TODO | 3 | No llm-chat OTEL/Jaeger exporter evidence; trace-propagation DoD unmet. |
-| P1 | TODO | 4 | Admin session viewer lacks concrete `chat.admin_session_viewed` audit event and search by user/tenant/session_id. |
-| P1 | TODO | 11 | Admin session debug dump/support bundle endpoint/UI is not implemented. |
-| P1 | TODO | 5 | Chat frame protocol lacks top-level `v: 1` and unknown-version rejection. |
-| P1 | TODO | 10 | Per-tenant chat usage counters/admin API are not implemented. |
+| P1 | task-848f003a | 1 | llm-chat runtime logs are text-prefixed slog, not JSON structured logs with required safe correlation keys. |
+| P1 | task-0e73db35 | 3 | No llm-chat OTEL/Jaeger exporter evidence; trace-propagation DoD unmet. |
+| P1 | task-83b72a46 | 4 | Admin session viewer lacks concrete `chat.admin_session_viewed` audit event and search by user/tenant/session_id. |
+| P1 | task-53317462 | 11 | Admin session debug dump/support bundle endpoint/UI is not implemented. |
+| P1 | task-68a01f28 | 5 | Chat frame protocol lacks top-level `v: 1` and unknown-version rejection. |
+| P1 | task-7ee2d5ab | 10 | Per-tenant chat usage counters/admin API are not implemented. |
 
 ## Final verification log
 
