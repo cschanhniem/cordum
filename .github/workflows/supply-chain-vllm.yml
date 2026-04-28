@@ -143,7 +143,10 @@ jobs:
       # outside the waiver list fails this step and blocks merge. Adding a
       # waiver requires a PR with security-team review per the file header.
       # SARIF is still uploaded to the Security tab unconditionally so
-      # findings are visible to security review immediately.
+      # findings are visible to security review immediately. Keep
+      # limit-severities-for-sarif=true: trivy-action defaults SARIF to all
+      # severities, which would make unrelated LOW/MEDIUM findings trip the
+      # exit-code even though this gate explicitly enforces CRITICAL+HIGH.
       - name: Scan pinned image for vulnerabilities (Trivy)
         id: trivy
         uses: aquasecurity/trivy-action@v0.36.0
@@ -155,6 +158,7 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
           trivyignores: tools/scripts/vllm-vuln-waivers.yaml
+          limit-severities-for-sarif: true
 
       - name: Upload Trivy SARIF
         if: always() && hashFiles('trivy-vllm.sarif') != ''

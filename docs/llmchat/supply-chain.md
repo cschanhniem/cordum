@@ -78,7 +78,10 @@ When a new vLLM version becomes available:
    - Cross-file consistency: fails if release-compose, values.yaml,
      or the deployment template disagree with `docker-compose.yml`.
    - Trivy scan: `severity: CRITICAL,HIGH`, `ignore-unfixed: true`,
-     SARIF upload to the Security tab.
+     SARIF upload to the Security tab. The SARIF step sets
+     `limit-severities-for-sarif: true` because trivy-action otherwise
+     expands SARIF output to all severities and lets unrelated LOW/MEDIUM
+     findings affect this CRITICAL/HIGH gate.
    - Syft SBOM: SPDX JSON, 90-day artifact retention.
    - Waiver expiry check.
 5. **Merge** once CI is green and a reviewer has signed off.
