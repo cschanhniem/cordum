@@ -49,7 +49,7 @@ if [ -z "${DEFERRED_PROBES}" ] && [ "${LLMCHAT_OPS_BACKEND}" = "ollama-cpu" ]; t
   # Ollama box. Defer them with the same reason as the cpu-vllm-awq path.
   DEFERRED_PROBES="llmchat_probe_02_vllm_crash.sh llmchat_probe_06_tier1_capacity.sh llmchat_probe_07_gpu_oom.sh llmchat_probe_13_hf_cache_loss.sh llmchat_probe_14_tier2_awq.sh llmchat_probe_15_tier3_a100.sh"
 fi
-if [ -z "${DEFERRED_PROBES}" ] && [ "${LLMCHAT_OPS_BACKEND}" = "gpu-fp8" ]; then
+if [ -z "${DEFERRED_PROBES}" ] && { [ "${LLMCHAT_OPS_BACKEND}" = "gpu-fp8" ] || [ "${LLMCHAT_OPS_BACKEND}" = "vllm-gpu" ]; }; then
   # Probe 19 is Ollama-specific; defer cleanly on the GPU profile.
   DEFERRED_PROBES="llmchat_probe_19_ollama_cold_start.sh"
 fi

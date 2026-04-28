@@ -13,7 +13,7 @@ VLLM_URL="${LLMCHAT_VLLM_URL:-http://127.0.0.1:8000}"
 OLLAMA_URL="${LLMCHAT_OLLAMA_URL:-http://127.0.0.1:11434}"
 CURL_TIMEOUT_SECONDS="${LLMCHAT_CURL_TIMEOUT_SECONDS:-10}"
 # LLMCHAT_OPS_BACKEND legal values:
-#   gpu-fp8        — vLLM + Qwen3-Coder-30B-FP8 (production GPU profile)
+#   vllm-gpu/gpu-fp8 — vLLM + Qwen3-Coder-30B-FP8 (opt-in GPU profile)
 #   cpu-vllm-awq   — vLLM + Qwen3-Coder-30B-AWQ (CPU/16-24GB RAM)
 #   ollama-cpu     — Ollama + Qwen2.5-Coder-3B-Q4_K_M (CPU/~2GB RAM, default)
 LLMCHAT_OPS_BACKEND="${LLMCHAT_OPS_BACKEND:-ollama-cpu}"
@@ -135,9 +135,9 @@ require_live_stack() {
 require_real_vllm() {
   require_live_stack
   case "${LLMCHAT_OPS_BACKEND}" in
-    gpu-fp8|cpu-vllm-awq) ;;
+    vllm-gpu|gpu-fp8|cpu-vllm-awq) ;;
     ollama-cpu) probe_skip "probe is vLLM-specific; backend=ollama-cpu uses require_real_ollama instead" ;;
-    *) probe_fail "unsupported LLMCHAT_OPS_BACKEND=${LLMCHAT_OPS_BACKEND}; allowed: gpu-fp8, cpu-vllm-awq, ollama-cpu" ;;
+    *) probe_fail "unsupported LLMCHAT_OPS_BACKEND=${LLMCHAT_OPS_BACKEND}; allowed: vllm-gpu/gpu-fp8, cpu-vllm-awq, ollama-cpu" ;;
   esac
   local cmdline_file="${PROBE_OUT_DIR}/qwen-cmdline.txt"
   local default_container="cordum-qwen-inference-1"
@@ -157,7 +157,9 @@ require_real_vllm() {
   if grep -E 'mock_openai|python.*mock|python:3' "${cmdline_file}" >/dev/null 2>&1; then
     probe_skip 'qwen-inference is the dev Python mock, not real vLLM; runtime evidence would be invalid'
   fi
-  grep -q -- '--tool-call-parser qwen3_xml' "${cmdline_file}" || probe_fail 'real vLLM parser is not qwen3_xml'
+  if grep -q -E -- '--tool-call-parser|--enable-auto-tool-choice' "${cmdline_file}"; then
+    probe_fail 'real vLLM cmdline still enables retired tool-call parser flags; informational-only chat must run without tool parsing'
+  fi
   grep -q -- "${expected_model}" "${cmdline_file}" || probe_fail "real vLLM model does not match ${expected_model} for backend=${LLMCHAT_OPS_BACKEND}"
 }
 
@@ -168,8 +170,8 @@ require_real_ollama() {
   require_live_stack
   case "${LLMCHAT_OPS_BACKEND}" in
     ollama-cpu) ;;
-    gpu-fp8|cpu-vllm-awq) probe_skip "probe is Ollama-specific; backend=${LLMCHAT_OPS_BACKEND} uses require_real_vllm" ;;
-    *) probe_fail "unsupported LLMCHAT_OPS_BACKEND=${LLMCHAT_OPS_BACKEND}; allowed: gpu-fp8, cpu-vllm-awq, ollama-cpu" ;;
+    vllm-gpu|gpu-fp8|cpu-vllm-awq) probe_skip "probe is Ollama-specific; backend=${LLMCHAT_OPS_BACKEND} uses require_real_vllm" ;;
+    *) probe_fail "unsupported LLMCHAT_OPS_BACKEND=${LLMCHAT_OPS_BACKEND}; allowed: vllm-gpu/gpu-fp8, cpu-vllm-awq, ollama-cpu" ;;
   esac
   local cmdline_file="${PROBE_OUT_DIR}/ollama-cmdline.txt"
   local default_container="cordum-ollama-1"

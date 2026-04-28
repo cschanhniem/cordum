@@ -884,7 +884,7 @@ services:
       # binding so the inference endpoint is not exposed off-host.
       - "127.0.0.1:11434:11434"
     healthcheck:
-      test: ["CMD-SHELL", "wget --spider -q http://127.0.0.1:11434/api/tags || exit 1"]
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 5
