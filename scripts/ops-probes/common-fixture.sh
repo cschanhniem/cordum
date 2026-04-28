@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Shared helpers for task-8eab552b llm-chat observability probes.
+# Defaults target the local docker-compose stack. Override with env vars in CI.
+
+: "${CORDUM_API_BASE:=https://127.0.0.1:8081/api/v1}"
+: "${LLMCHAT_METRICS_URL:=http://127.0.0.1:8092/metrics}"
+: "${LLMCHAT_HEALTH_URL:=http://127.0.0.1:8092/readyz}"
+: "${LLMCHAT_OUT_DIR:=out/llmchat-ops}"
+: "${LLMCHAT_OPS_LIVE:=0}"
+: "${LLMCHAT_OPS_REQUIRE_LIVE:=0}"
+
+probe_name="${PROBE_NAME:-unknown}"
+probe_dir="${LLMCHAT_OUT_DIR}/${probe_name}"
+evidence_file="${probe_dir}/evidence.txt"
+mkdir -p "${probe_dir}"
+: >"${evidence_file}"
+
+log_evidence() {
+  printf '%s\n' "$*" | tee -a "${evidence_file}"
+}
+
+probe_pass() {
+  log_evidence "RESULT=PASS"
+  exit 0
+}
+
+probe_fail() {
+  log_evidence "RESULT=FAIL reason=$*"
+  exit 1
+}
+
+probe_skip() {
+  log_evidence "RESULT=SKIP reason=$*"
+  if [[ "${LLMCHAT_OPS_REQUIRE_LIVE}" == "1" ]]; then
+    exit 1
+  fi
+  exit 77
+}
+
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || probe_fail "missing required command: $1"
+}
+
+curl_common=(--silent --show-error --location --max-time "${LLMCHAT_CURL_TIMEOUT:-15}")
+if [[ "${CORDUM_API_BASE}" == https://* ]]; then
+  curl_common+=(--insecure)
+fi
+
+curl_api() {
+  if [[ -z "${CORDUM_API_KEY:-}" ]]; then
+    probe_fail "CORDUM_API_KEY is required for API call $*"
+  fi
+  curl "${curl_common[@]}" -H "X-API-Key: ${CORDUM_API_KEY}" "$@"
+}
+
+fetch_metrics() {
+  require_cmd curl
+  curl "${curl_common[@]}" "${LLMCHAT_METRICS_URL}"
+}
+
+assert_metric_family() {
+  local metrics_file="$1"
+  local family="$2"
+  grep -Eq "^(# HELP ${family}|${family})([ {]|$)" "${metrics_file}" || probe_fail "missing metric family ${family}"
+}
+
+count_metric_series() {
+  local metrics_file="$1"
+  local family="$2"
+  grep -E "^${family}(\{| |$)" "${metrics_file}" | wc -l | tr -d ' '
+}
+
+scan_for_secret_patterns() {
+  local target="$1"
+  if [[ ! -s "${target}" ]]; then
+    log_evidence "secret_scan_target_empty=${target}"
+    return 0
+  fi
+  local pattern='(Bearer[[:space:]]+[A-Za-z0-9._-]+|eyJ[A-Za-z0-9._-]+\.[A-Za-z0-9._-]+\.[A-Za-z0-9._-]+|sk-[A-Za-z0-9_-]{12,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA |EC |OPENSSH |)PRIVATE KEY-----)'
+  if grep -EIn "${pattern}" "${target}" >"${target}.secret_hits"; then
+    sed -E 's/(Bearer[[:space:]]+)[A-Za-z0-9._-]+/\1<redacted>/g; s/eyJ[A-Za-z0-9._-]+/<jwt-redacted>/g; s/sk-[A-Za-z0-9_-]+/<sk-redacted>/g; s/AKIA[0-9A-Z]+/<akia-redacted>/g' "${target}.secret_hits" | head -20 >>"${evidence_file}"
+    return 1
+  fi
+  log_evidence "secret_scan=zero_hits target=${target}"
+}
+
+live_required_or_skip() {
+  if [[ "${LLMCHAT_OPS_LIVE}" != "1" ]]; then
+    probe_skip "live stack required; set LLMCHAT_OPS_LIVE=1"
+  fi
+}
+
+write_probe_header() {
+  log_evidence "probe=${probe_name}"
+  log_evidence "timestamp_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  log_evidence "api_base=${CORDUM_API_BASE}"
+  log_evidence "metrics_url=${LLMCHAT_METRICS_URL}"
+  log_evidence "live=${LLMCHAT_OPS_LIVE} require_live=${LLMCHAT_OPS_REQUIRE_LIVE}"
+}
