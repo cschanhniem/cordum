@@ -9,7 +9,7 @@ write_probe_header
 log_evidence "title=log sampling / volume bounds"
 require_docker_compose
 
-service="${LLMCHAT_LOG_SERVICE:-llm-chat-ollama}"
+service="$(resolve_llmchat_log_service)"
 before="${probe_dir}/logs-before.txt"
 after="${probe_dir}/logs-after.txt"
 docker_compose logs --no-color --since "${LLMCHAT_LOG_SINCE:-10m}" "${service}" >"${before}" 2>/dev/null || probe_skip "cannot read compose logs for ${service}"

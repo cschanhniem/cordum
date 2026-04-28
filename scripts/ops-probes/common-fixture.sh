@@ -90,6 +90,23 @@ require_docker_compose() {
   fi
 }
 
+resolve_llmchat_log_service() {
+  if [[ -n "${LLMCHAT_LOG_SERVICE:-}" ]]; then
+    printf '%s\n' "${LLMCHAT_LOG_SERVICE}"
+    return 0
+  fi
+  local services
+  services="$(docker_compose config --services 2>/dev/null || true)"
+  local candidate
+  for candidate in llm-chat-ollama llm-chat; do
+    if grep -Fxq "${candidate}" <<<"${services}"; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+  printf '%s\n' "llm-chat"
+}
+
 curl_common=(--silent --show-error --location --max-time "${LLMCHAT_CURL_TIMEOUT:-15}")
 if [[ "${CORDUM_API_BASE}" == https://* ]]; then
   curl_common+=(--insecure)
@@ -125,9 +142,9 @@ scan_for_secret_patterns() {
     log_evidence "secret_scan_target_empty=${target}"
     return 0
   fi
-  local pattern='(Bearer[[:space:]]+[A-Za-z0-9._-]+|eyJ[A-Za-z0-9._-]+\.[A-Za-z0-9._-]+\.[A-Za-z0-9._-]+|sk-[A-Za-z0-9_-]{12,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA |EC |OPENSSH |)PRIVATE KEY-----)'
+  local pattern='(Bearer[[:space:]]+[A-Za-z0-9._-]+|[Xx]-?[Aa][Pp][Ii]-?[Kk][Ee][Yy][=:[:space:]]+[A-Za-z0-9._-]{12,}|[Cc][Oo][Rr][Dd][Uu][Mm]_[Aa][Pp][Ii]_[Kk][Ee][Yy][=:[:space:]]+[A-Za-z0-9._-]{12,}|eyJ[A-Za-z0-9._-]+\.[A-Za-z0-9._-]+\.[A-Za-z0-9._-]+|sk-[A-Za-z0-9_-]{12,}|AKIA[0-9A-Z]{16}|\b[a-fA-F0-9]{64,}\b|-----BEGIN (RSA |EC |OPENSSH |)PRIVATE KEY-----)'
   if grep -EIn "${pattern}" "${target}" >"${target}.secret_hits"; then
-    sed -E 's/(Bearer[[:space:]]+)[A-Za-z0-9._-]+/\1<redacted>/g; s/eyJ[A-Za-z0-9._-]+/<jwt-redacted>/g; s/sk-[A-Za-z0-9_-]+/<sk-redacted>/g; s/AKIA[0-9A-Z]+/<akia-redacted>/g' "${target}.secret_hits" | head -20 >>"${evidence_file}"
+    sed -E 's/(Bearer[[:space:]]+)[A-Za-z0-9._-]+/\1<redacted>/g; s/([Xx]-?[Aa][Pp][Ii]-?[Kk][Ee][Yy][=:[:space:]]+)[A-Za-z0-9._-]+/\1<api-key-redacted>/g; s/([Cc][Oo][Rr][Dd][Uu][Mm]_[Aa][Pp][Ii]_[Kk][Ee][Yy][=:[:space:]]+)[A-Za-z0-9._-]+/\1<api-key-redacted>/g; s/eyJ[A-Za-z0-9._-]+/<jwt-redacted>/g; s/sk-[A-Za-z0-9_-]+/<sk-redacted>/g; s/AKIA[0-9A-Z]+/<akia-redacted>/g; s/[a-fA-F0-9]{64,}/<hex-secret-redacted>/g' "${target}.secret_hits" | head -20 >>"${evidence_file}"
     return 1
   fi
   log_evidence "secret_scan=zero_hits target=${target}"

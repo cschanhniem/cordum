@@ -22,7 +22,7 @@ backend and keep vLLM-specific panels as opt-in.
 
 Classification after probes 1-12 (2026-04-28): **0 P0**, **6 P1**, **1 P2**, and no secret/metric-cardinality P0s. P1 follow-ups filed: `task-848f003a` (probe 1 structured JSON logs), `task-0e73db35` (probe 3 OTEL/Jaeger), `task-83b72a46` (probe 4 admin audit/search), `task-68a01f28` (probe 5 protocol v1), `task-7ee2d5ab` (probe 10 usage counters), `task-53317462` (probe 11 debug dump). Probe 4 also records a P2 detail-routing check for `/copilot/sessions`.
 
-Outcome counts: **6 PASS/static-pass probes** (2, 6, 7, 8, 9, 12), **6 FAIL/P1 probes** (1, 3, 4, 5, 10, 11), **0 BLOCKED**, **0 P0**. Log-redaction grep result: probe 1 secret scan returned zero hits against sampled `llm-chat-ollama` logs; probe 12 found no INFO/WARN token-delta log spam. Jaeger trace screenshot: **not available** because probe 3 found no llm-chat OTEL/Jaeger exporter configuration.
+Outcome counts: **6 PASS/static-pass probes** (2, 6, 7, 8, 9, 12), **6 FAIL/P1 probes** (1, 3, 4, 5, 10, 11), **0 BLOCKED**, **0 P0**. Log-redaction grep result: probe 1 secret scan returned zero hits against sampled llm-chat logs; probe 12 found no INFO/WARN token-delta log spam. Jaeger trace screenshot: **not available** because probe 3 found no llm-chat OTEL/Jaeger exporter configuration.
 
 | Probe | Surface | Verdict | Evidence |
 |---|---|---:|---|
@@ -79,9 +79,7 @@ INFO.
 or records the non-JSON format as evidence, and runs the shared secret-pattern
 scanner.
 
-**Actual:** `probe-01.sh` ran from Git Bash/MSYS against `llm-chat-ollama` logs
-(`LLMCHAT_LOG_SERVICE=llm-chat-ollama`, default 1-hour window). It captured 5
-recent log lines and the secret scanner returned zero hits. JSON validation
+**Actual:** `probe-01.sh` ran from Git Bash/MSYS against the auto-detected chat log service (`llm-chat` in the current post-pivot compose config; `llm-chat-ollama` in earlier profile configs). It captured recent log lines and the secret scanner returned zero hits. JSON validation
 failed on every sampled line because the service emits text-prefixed slog output,
 for example `[LLM-CHAT-SERVER] INFO llmchat/agent: turn_start session_id=...`
 rather than a JSON object. The lines also use `principal=` instead of the
@@ -367,8 +365,8 @@ at INFO; correlation IDs remain available even when detail logs are sampled out.
 **Procedure:** `scripts/ops-probes/probe-12.sh` counts log lines during a small
 chat load test and records whether DEBUG-level token deltas are bounded.
 
-**Actual:** `probe-12.sh` captured current `llm-chat-ollama` logs before and
-after the static check. It found 4 lines before, 4 lines after, and no
+**Actual:** `probe-12.sh` captured current auto-detected chat-service logs before and
+after the static check. It found no token-delta/chunk log lines and no
 `assistant_delta`, `token_delta`, stream-chunk, or chunk-delta log lines at
 INFO/WARN. The 10-message load subcheck was **not run** in this pass
 (`LLMCHAT_OPS_LIVE=1 LLMCHAT_OPS_RUN_LOAD=1` was not set); therefore the
@@ -383,6 +381,21 @@ full load-bound DoD until the small live load can complete on an owned stack.
 
 **Findings / tasks:** No immediate P0/P1 from static evidence. Live load evidence
 is still required if the task is completed under the original DoD wording.
+
+
+## Adversarial self-review (step 9)
+
+| # | Attack-minded question | Verdict | Action |
+|---:|---|---|---|
+| 1 | Does probe 1 catch token shapes beyond `eyJ` JWTs (EdDSA hex, raw API keys without `Bearer`)? | **FIX-APPLIED** | Expanded `scan_for_secret_patterns` to catch `X-API-Key`, `CORDUM_API_KEY`, and 64+ hex material, and to redact those hits in evidence before display. |
+| 2 | Does probe 2 count exponential cardinality candidates such as histogram bucket series? | **PASS** | Probe 2 counts `chat_vllm_latency_seconds_bucket`, `_sum`, and `_count` separately; bucket series are fixed (11 buckets) and no unbounded session/principal labels appear. |
+| 3 | Does probe 3 cover sad-path traces, not just happy path? | **FAIL-CAPTURED** | No OTEL/Jaeger exporter exists, so both happy and sad-path trace coverage are blocked by P1 follow-up `task-0e73db35`. |
+| 4 | Does admin-viewer audit identify the exact view (page/cursor/search) for forensics? | **FIX-APPLIED TO FOLLOW-UP** | P1 follow-up `task-83b72a46` now carries a comment requiring page/cursor/search attributes on `chat.admin_session_viewed`. |
+| 5 | Does the `v=2` reject test verify close-frame reason, not just close? | **PASS/FOLLOW-UP-SCOPED** | P1 follow-up `task-68a01f28` requires stable `unsupported_protocol_version` error/close behavior; current probe fails until implemented. |
+| 6 | Do SIEM tests verify event ordering under concurrent sessions? | **GAP-DOCUMENTED** | Probe 8 is static/exporter-unit evidence only; live sink ordering under concurrent sessions remains unproven until configured sink endpoints exist. |
+| 7 | Did promtool validate alert thresholds against actual baselines? | **GAP-DOCUMENTED** | Probe 9 passes static alert presence but records `promtool=not_available`; baseline threshold tuning remains a CI/staging follow-up, not claimed complete. |
+| 8 | Does debug-dump testing verify cleanup/retention? | **PASS/FOLLOW-UP-SCOPED** | P1 follow-up `task-53317462` DoD explicitly includes bounded retention/cleanup semantics and secret scanning. |
+| 9 | Does log sampling preserve correlation IDs when detail logs are sampled out? | **FIX-APPLIED TO FOLLOW-UP** | Missing `trace_id`/correlation fields are already captured by probe 1 P1; follow-up `task-848f003a` now carries a comment requiring correlation IDs to survive sampling. |
 
 ## Follow-up task log
 

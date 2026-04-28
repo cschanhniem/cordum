@@ -9,7 +9,7 @@ write_probe_header
 log_evidence "title=structured logs + redaction"
 require_docker_compose
 
-service="${LLMCHAT_LOG_SERVICE:-llm-chat-ollama}"
+service="$(resolve_llmchat_log_service)"
 log_file="${probe_dir}/llm-chat.log"
 if ! docker_compose logs --no-color --since "${LLMCHAT_LOG_SINCE:-1h}" "${service}" >"${log_file}" 2>"${probe_dir}/docker-logs.stderr"; then
   cat "${probe_dir}/docker-logs.stderr" >>"${evidence_file}" || true
