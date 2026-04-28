@@ -65,11 +65,21 @@ fails closed above 12K.
 
 ### Site summary
 
-The site substituter walks `.md` and `.mdx` files in stable order. It strips
-frontmatter, import/export lines, JSX/MDX layout tags, JSX comments, and HTML
-comments while preserving headings, prose, and fenced code blocks. The target is
-<= 6K estimated tokens; it truncates deterministically at line boundaries and
-fails closed above 9K.
+The site substituter walks `.md` and `.mdx` files in stable order, then places
+required grounding docs ahead of large background docs before applying the
+token budget. The current priority set is:
+
+- `concepts/enterprise.md` for Enterprise/license entitlement answers.
+- `concepts/glossary.md` for Cordum-specific epic and task definitions.
+- `operations/llm-chat-knowledge-pack.md` for operator-facing knowledge-pack
+  configuration.
+
+It strips frontmatter, import/export lines, JSX/MDX layout tags, JSX comments,
+and HTML comments while preserving headings, prose, and fenced code blocks. The
+target is <= 6K estimated tokens; it truncates deterministically at line
+boundaries and fails closed above 9K. Regression tests load the real default
+docs corpus and fail if the resolved prompt loses `/api/v1/jobs`, Enterprise
+license content, or the Cordum epic/task definitions.
 
 ## Redaction
 
@@ -96,7 +106,8 @@ Recommended smoke prompts against a running local Ollama backend:
 1. `what does GET /api/v1/jobs return?` — answer should include
    `/api/v1/jobs`.
 2. `what's the Enterprise tier license entitlement?` — answer should cite
-   Enterprise features from the docs.
+   Enterprise features and signed-license/tier enforcement from the docs.
 3. `what's the difference between an epic and a task?` — answer should include
-   both terms. If answers are generic, strengthen the checked-in docs content
-   before treating this smoke as product-ready.
+   the Cordum glossary definitions: an epic is a planning container for a
+   delivery stream, and a task is the executable unit inside an epic with DoD,
+   rails, assignment, review status, and QA history.

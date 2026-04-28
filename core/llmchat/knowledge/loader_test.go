@@ -3,6 +3,8 @@ package knowledge
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -81,5 +83,46 @@ func TestLoaderPropagatesSubstituterError(t *testing.T) {
 	_, err := loader.Load(context.Background())
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Load() error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestDefaultKnowledgeCorpusGroundsRequiredSmokePrompts(t *testing.T) {
+	apiPath, err := filepath.Abs(filepath.Join("..", "..", "..", "docs", "api", "openapi", "cordum-api.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	siteRoot, err := filepath.Abs(filepath.Join("..", "..", "..", "docs-site", "docs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{apiPath, siteRoot} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("required default corpus path %s: %v", path, err)
+		}
+	}
+
+	loader := NewLoader(
+		&staticLoader{text: "API:\n{{api_summary}}\nSITE:\n{{cordum_io_summary}}"},
+		NewAPISubstituter(apiPath),
+		NewSiteSubstituter(siteRoot,
+			WithSiteGlobs(
+				[]string{"concepts/*.md", "getting-started/*.md", "operations/*.md"},
+				[]string{"concepts/adr/**"},
+			),
+		),
+	)
+	got, err := loader.Load(context.Background())
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	assertContains(t, got, "GET /api/v1/jobs")
+	assertContains(t, got, "/api/v1/jobs")
+	assertContains(t, got, "Enterprise features ship in cordum core")
+	assertContains(t, got, "signed license")
+	assertContains(t, got, "A Cordum epic is a planning container")
+	assertContains(t, got, "A Cordum task is the executable unit")
+	if stats := loader.Stats(); stats.APITokens == 0 || stats.SiteTokens == 0 || stats.CombinedTokens == 0 || stats.CombinedTokens > defaultCombinedPromptMaxTokens {
+		t.Fatalf("Stats() = %+v, want non-zero counts under %d combined tokens", stats, defaultCombinedPromptMaxTokens)
 	}
 }

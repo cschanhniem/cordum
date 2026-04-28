@@ -233,8 +233,28 @@ func (s *SiteSubstituter) siteFiles() ([]siteFile, error) {
 	if err != nil {
 		return nil, fmt.Errorf("walk site content %s: %w", root, err)
 	}
-	sort.Slice(files, func(i, j int) bool { return files[i].rel < files[j].rel })
+	sort.Slice(files, func(i, j int) bool {
+		leftPriority := siteFilePriority(files[i].rel)
+		rightPriority := siteFilePriority(files[j].rel)
+		if leftPriority != rightPriority {
+			return leftPriority < rightPriority
+		}
+		return files[i].rel < files[j].rel
+	})
 	return files, nil
+}
+
+func siteFilePriority(rel string) int {
+	switch filepath.ToSlash(rel) {
+	case "concepts/enterprise.md":
+		return 0
+	case "concepts/glossary.md":
+		return 1
+	case "operations/llm-chat-knowledge-pack.md":
+		return 2
+	default:
+		return 100
+	}
 }
 
 func isMarkdownFile(path string) bool {

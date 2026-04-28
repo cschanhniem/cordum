@@ -66,6 +66,33 @@ func TestSiteSubstituterPathAndGlobsFromEnv(t *testing.T) {
 	assertNotContains(t, got, "getting-started/quickstart.md")
 }
 
+func TestSiteSubstituterDefaultCorpusIncludesSmokeGrounding(t *testing.T) {
+	siteRoot, err := filepath.Abs(filepath.Join("..", "..", "..", "docs-site", "docs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub := NewSiteSubstituter(siteRoot,
+		WithSiteGlobs(
+			[]string{"concepts/*.md", "getting-started/*.md", "operations/*.md"},
+			[]string{"concepts/adr/**"},
+		),
+	)
+	got, err := sub.Load(context.Background())
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	assertContains(t, got, "## concepts/enterprise.md")
+	assertContains(t, got, "Enterprise features ship in cordum core")
+	assertContains(t, got, "signed license")
+	assertContains(t, got, "## concepts/glossary.md")
+	assertContains(t, got, "A Cordum epic is a planning container")
+	assertContains(t, got, "A Cordum task is the executable unit")
+	if tokens := estimateTokens(got); tokens > defaultSiteTargetTokens {
+		t.Fatalf("default corpus tokens = %d, want <= %d", tokens, defaultSiteTargetTokens)
+	}
+}
+
 func TestSiteSubstituterMissingPathFailsClosed(t *testing.T) {
 	sub := NewSiteSubstituter(filepath.Join("testdata", "missing-site"))
 	_, err := sub.Load(context.Background())
