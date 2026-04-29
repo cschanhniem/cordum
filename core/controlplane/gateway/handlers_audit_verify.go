@@ -2,6 +2,9 @@ package gateway
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -12,7 +15,10 @@ import (
 
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/redis/go-redis/v9"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -29,6 +35,37 @@ const (
 	// one go — callers paginate by since/until if they need more.
 	maxVerifySinceUntilSpread = 30 * 24 * time.Hour
 )
+
+var auditVerifyChainFn = audit.VerifyChain
+
+var auditVerifyDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+	Namespace: "cordum",
+	Subsystem: "audit_verify",
+	Name:      "duration_seconds",
+	Help:      "Seconds spent walking the audit hash chain for /api/v1/audit/verify leader calls.",
+	Buckets:   []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
+}, []string{"status"})
+
+var auditVerifyEventsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+	Namespace: "cordum",
+	Subsystem: "audit_verify",
+	Name:      "events_total",
+	Help:      "Number of audit-chain events scanned by /api/v1/audit/verify leader calls.",
+}, []string{"status"})
+
+var auditVerifyInflight = promauto.NewGauge(prometheus.GaugeOpts{
+	Namespace: "cordum",
+	Subsystem: "audit_verify",
+	Name:      "inflight",
+	Help:      "Number of active audit-chain verify walks.",
+})
+
+var auditVerifyCoalescedTotal = promauto.NewCounter(prometheus.CounterOpts{
+	Namespace: "cordum",
+	Subsystem: "audit_verify",
+	Name:      "coalesced_total",
+	Help:      "Number of /api/v1/audit/verify callers served by another in-flight identical verify walk.",
+})
 
 // handleAuditVerify implements GET /api/v1/audit/verify.
 //
@@ -101,35 +138,104 @@ func (s *server) handleAuditVerify(w http.ResponseWriter, r *http.Request) {
 		opts.HMACKey = s.auditChainer.HMACKeyForVerify()
 	}
 
-	result, err := audit.VerifyChain(r.Context(), client, streamKey, opts)
+	key := auditVerifySingleflightKey(tenant, opts)
+	leader := false
+	resultCh := s.auditVerifyCoalesce.DoChan(key, func() (any, error) {
+		leader = true
+		auditVerifyInflight.Inc()
+		start := time.Now()
+		status := "error"
+		defer func() {
+			auditVerifyDuration.WithLabelValues(status).Observe(time.Since(start).Seconds())
+			auditVerifyInflight.Dec()
+		}()
+
+		verifyCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		if s.shutdownCh != nil {
+			go func() {
+				select {
+				case <-s.shutdownCh:
+					cancel()
+				case <-verifyCtx.Done():
+				}
+			}()
+		}
+		defer cancel()
+
+		result, err := auditVerifyChainFn(verifyCtx, client, streamKey, opts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Fail-closed safety net: if the scanned range contains HMAC-tagged
+		// events but this process has no HMAC key configured, the HMAC
+		// verification branch was skipped entirely. Surface this as a
+		// degraded result so operators don't see a false-green. Uses
+		// result.HMACSeen (set by the verification loop) instead of a
+		// separate Redis probe, so it catches all mixed-rollout scenarios.
+		if len(opts.HMACKey) == 0 && result.HMACSeen {
+			slog.Warn("audit verify: chain contains HMAC-tagged events but CORDUM_AUDIT_HMAC_KEY is not configured — HMAC verification skipped",
+				"tenant", tenant,
+				"total_events", result.TotalEvents,
+			)
+			// Don't override a compromised status, but downgrade ok → partial
+			// so the caller knows verification was incomplete.
+			if result.Status == audit.VerifyStatusOK {
+				result.Status = audit.VerifyStatusPartial
+			}
+		}
+
+		// Surface the operator-configured retention window so the caller
+		// can decide whether the oldest present event's timestamp is
+		// within policy — the boundary seq alone is not enough context.
+		result.RetentionWindowHours = auditChainRetention().Hours()
+		status = string(result.Status)
+		auditVerifyEventsTotal.WithLabelValues(status).Add(float64(result.TotalEvents))
+		return result, nil
+	})
+
+	var sfResult singleflight.Result
+	select {
+	case sfResult = <-resultCh:
+	case <-r.Context().Done():
+		return
+	}
+	value, err, shared := sfResult.Val, sfResult.Err, sfResult.Shared
+	if shared && !leader {
+		auditVerifyCoalescedTotal.Inc()
+	}
 	if err != nil {
 		writeInternalError(w, r, "audit verify: walk chain", err)
 		return
 	}
 
-	// Fail-closed safety net: if the scanned range contains HMAC-tagged
-	// events but this process has no HMAC key configured, the HMAC
-	// verification branch was skipped entirely. Surface this as a
-	// degraded result so operators don't see a false-green. Uses
-	// result.HMACSeen (set by the verification loop) instead of a
-	// separate Redis probe, so it catches all mixed-rollout scenarios.
-	if len(opts.HMACKey) == 0 && result.HMACSeen {
-		slog.Warn("audit verify: chain contains HMAC-tagged events but CORDUM_AUDIT_HMAC_KEY is not configured — HMAC verification skipped",
-			"tenant", tenant,
-			"total_events", result.TotalEvents,
-		)
-		// Don't override a compromised status, but downgrade ok → partial
-		// so the caller knows verification was incomplete.
-		if result.Status == audit.VerifyStatusOK {
-			result.Status = audit.VerifyStatusPartial
-		}
+	result, ok := value.(*audit.VerifyResult)
+	if !ok || result == nil {
+		writeInternalError(w, r, "audit verify: walk chain", fmt.Errorf("singleflight returned %T", value))
+		return
 	}
-
-	// Surface the operator-configured retention window so the caller
-	// can decide whether the oldest present event's timestamp is
-	// within policy — the boundary seq alone is not enough context.
-	result.RetentionWindowHours = auditChainRetention().Hours()
 	writeJSON(w, result)
+}
+
+func auditVerifySingleflightKey(tenant string, opts audit.VerifyOptions) string {
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = audit.DefaultVerifyLimit
+	}
+	if limit > audit.MaxVerifyLimit {
+		limit = audit.MaxVerifyLimit
+	}
+	hmacFingerprint := "none"
+	if len(opts.HMACKey) > 0 {
+		sum := sha256.Sum256(opts.HMACKey)
+		hmacFingerprint = hex.EncodeToString(sum[:])
+	}
+	return tenant +
+		"|" + strconv.FormatInt(opts.SinceMs, 10) +
+		"|" + strconv.FormatInt(opts.UntilMs, 10) +
+		"|" + strconv.FormatInt(limit, 10) +
+		"|" + strconv.FormatInt(opts.RetentionBoundarySeq, 10) +
+		"|" + hmacFingerprint
 }
 
 // verifyHTTPError pairs a status code with a message so parseVerifyQuery

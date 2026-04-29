@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { broadcastSync } from "../hooks/useCrossTabSync";
+import { safeLocalStorage } from "../lib/storage";
 
 export type Theme = "light" | "dark" | "system";
 export type ResolvedTheme = "light" | "dark";
@@ -13,6 +14,10 @@ function resolveTheme(pref: Theme): ResolvedTheme {
     return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   }
   return pref;
+}
+
+function isTheme(value: string | null): value is Theme {
+  return value === "light" || value === "dark" || value === "system";
 }
 
 interface UiState {
@@ -31,15 +36,10 @@ interface UiState {
   setShortcutsHelpOpen: (open: boolean) => void;
 }
 
-const stored =
-  typeof window !== "undefined"
-    ? (window.localStorage.getItem("cordum-theme") as Theme | null)
-    : null;
+const rawStoredTheme = safeLocalStorage.getItem("cordum-theme");
+const stored = isTheme(rawStoredTheme) ? rawStoredTheme : null;
 
-const storedAgentsView =
-  typeof window !== "undefined"
-    ? (window.localStorage.getItem("cordum-agents-view") as AgentsView | null)
-    : null;
+const storedAgentsView = safeLocalStorage.getItem("cordum-agents-view") as AgentsView | null;
 
 // Default to 'system' if no preference saved
 const initialTheme: Theme = stored ?? "system";
@@ -56,14 +56,14 @@ export const useUiStore = create<UiState>((set) => ({
       const next: Theme =
         s.theme === "light" ? "dark" : s.theme === "dark" ? "system" : "light";
       const resolved = resolveTheme(next);
-      window.localStorage.setItem("cordum-theme", next);
+      safeLocalStorage.setItem("cordum-theme", next);
       broadcastSync({ type: "theme-change", theme: next });
       return { theme: next, resolvedTheme: resolved };
     }),
   setTheme: (theme) =>
     set(() => {
       const resolved = resolveTheme(theme);
-      window.localStorage.setItem("cordum-theme", theme);
+      safeLocalStorage.setItem("cordum-theme", theme);
       return { theme, resolvedTheme: resolved };
     }),
   syncSystemTheme: () =>
@@ -74,7 +74,7 @@ export const useUiStore = create<UiState>((set) => ({
   setGlobalSearch: (value) => set({ globalSearch: value }),
   setCommandOpen: (open) => set({ commandOpen: open }),
   setAgentsView: (view) => {
-    window.localStorage.setItem("cordum-agents-view", view);
+    safeLocalStorage.setItem("cordum-agents-view", view);
     set({ agentsView: view });
   },
   setShortcutsHelpOpen: (open) => set({ shortcutsHelpOpen: open }),

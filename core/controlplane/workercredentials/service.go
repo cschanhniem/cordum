@@ -31,6 +31,13 @@ const (
 	argonMemoryKiB  = 64 * 1024
 	argonIterations = 3
 	argonParallel   = 1
+
+	// Verification-time safety caps prevent hostile PHC inputs from forcing
+	// excessive Argon2 CPU or memory use during authentication.
+	maxPHCMemoryKiB    = uint64(1_048_576) // 1 GiB
+	maxPHCIterations   = uint64(10_000)
+	maxPHCParallelism  = uint64(16)
+	maxPHCEncodedBytes = 1024
 )
 
 var ErrCredentialNotFound = errors.New("worker credential not found")
@@ -403,7 +410,11 @@ func verifyToken(phc, token string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	candidate := argon2.IDKey([]byte(strings.TrimSpace(token)), salt, params.iterations, params.memory, params.parallelism, uint32(len(expected)))
+	if len(expected) > maxPHCEncodedBytes {
+		return false, fmt.Errorf("argon2 hash too large")
+	}
+	keyLen := uint32(len(expected)) // #nosec G115 -- len(expected) is bounded by maxPHCEncodedBytes above.
+	candidate := argon2.IDKey([]byte(strings.TrimSpace(token)), salt, params.iterations, params.memory, params.parallelism, keyLen)
 	return subtle.ConstantTimeCompare(candidate, expected) == 1, nil
 }
 
@@ -461,8 +472,20 @@ func parsePHC(phc string) (argonParams, []byte, []byte, error) {
 	if memory == 0 || iterations == 0 || parallelism == 0 {
 		return argonParams{}, nil, nil, fmt.Errorf("argon2 params incomplete")
 	}
+	if memory > maxPHCMemoryKiB {
+		return argonParams{}, nil, nil, fmt.Errorf("argon2 memory cost exceeds cap %d KiB", maxPHCMemoryKiB)
+	}
+	if iterations > maxPHCIterations {
+		return argonParams{}, nil, nil, fmt.Errorf("argon2 iterations exceed cap %d", maxPHCIterations)
+	}
+	if parallelism > maxPHCParallelism {
+		return argonParams{}, nil, nil, fmt.Errorf("argon2 parallelism exceeds cap %d", maxPHCParallelism)
+	}
 	if len(salt) == 0 || len(hash) == 0 {
 		return argonParams{}, nil, nil, fmt.Errorf("argon2 salt/hash required")
+	}
+	if len(hash) > maxPHCEncodedBytes {
+		return argonParams{}, nil, nil, fmt.Errorf("argon2 hash too large")
 	}
 
 	return argonParams{

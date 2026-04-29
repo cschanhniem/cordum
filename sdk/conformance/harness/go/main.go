@@ -30,7 +30,7 @@ import (
 	"time"
 )
 
-const defaultAPIKey = "conformance-api-key"
+const defaultAPIKey = "conformance-api-key" // #nosec G101 -- deterministic simulator-only test credential.
 const defaultTenant = "default"
 
 func main() {
@@ -153,12 +153,16 @@ func waitForReady(url string, timeout time.Duration) error {
 	for time.Now().Before(deadline) {
 		resp, err := http.Get(url + "/healthz")
 		if err == nil {
-			resp.Body.Close()
+			if closeErr := resp.Body.Close(); closeErr != nil {
+				lastErr = closeErr
+			}
 			if resp.StatusCode == 200 {
 				return nil
 			}
 		}
-		lastErr = err
+		if err != nil {
+			lastErr = err
+		}
 		time.Sleep(50 * time.Millisecond)
 	}
 	if lastErr == nil {
@@ -230,7 +234,7 @@ type Failure struct {
 func newReport(name string) *TestSuite { return &TestSuite{Name: name} }
 
 func writeReport(path string, suite *TestSuite) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
 	f, err := os.Create(path)

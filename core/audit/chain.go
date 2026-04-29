@@ -13,6 +13,7 @@ import (
 	"math/rand/v2"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -74,9 +75,9 @@ var (
 )
 
 // Chainer builds and persists a per-tenant append-only SHA-256 hash chain of
-// audit events in Redis. One Chainer is safe to share across goroutines; the
-// CAS-based Lua append below serialises writers on a given tenant's head
-// pointer, while different tenants proceed independently.
+// audit events in Redis. One Chainer is safe to share across goroutines; local
+// per-tenant locks avoid self-contention while the CAS-based Lua append still
+// protects the head pointer across processes.
 //
 // When an HMAC key is configured (via WithHMACKey), every appended event also
 // receives an HMAC-SHA256 tag computed over the canonical event payload. The
@@ -84,9 +85,15 @@ var (
 // closing the threat model gap where an attacker with Redis write access could
 // forge a valid SHA-256 chain by recomputing hashes from an arbitrary point.
 type Chainer struct {
-	client    redis.UniversalClient
-	keyPrefix string
-	hmacKey   []byte // nil = HMAC disabled
+	client          redis.UniversalClient
+	keyPrefix       string
+	hmacKey         []byte // nil = HMAC disabled
+	headCacheMu     sync.Mutex
+	headCacheValid  bool
+	headCacheTenant string
+	headCacheRaw    string
+	tenantLocksMu   sync.Mutex
+	tenantLocks     map[string]*sync.Mutex
 }
 
 // ChainerOption configures optional Chainer behaviour.
@@ -164,14 +171,58 @@ func (c *Chainer) HeadKey(tenant string) string {
 	return c.keyPrefix + chainHeadInfix + tenant
 }
 
+func (c *Chainer) cachedHead(tenant string) (string, bool) {
+	c.headCacheMu.Lock()
+	defer c.headCacheMu.Unlock()
+	if !c.headCacheValid || c.headCacheTenant != tenant {
+		return "", false
+	}
+	return c.headCacheRaw, true
+}
+
+func (c *Chainer) storeCachedHead(tenant, rawHead string) {
+	c.headCacheMu.Lock()
+	defer c.headCacheMu.Unlock()
+	c.headCacheValid = true
+	c.headCacheTenant = tenant
+	c.headCacheRaw = rawHead
+}
+
+func (c *Chainer) invalidateCachedHead(tenant, rawHead string) {
+	c.headCacheMu.Lock()
+	defer c.headCacheMu.Unlock()
+	if c.headCacheValid && c.headCacheTenant == tenant && c.headCacheRaw == rawHead {
+		c.headCacheValid = false
+		c.headCacheTenant = ""
+		c.headCacheRaw = ""
+	}
+}
+
+func (c *Chainer) lockTenant(tenant string) func() {
+	c.tenantLocksMu.Lock()
+	if c.tenantLocks == nil {
+		c.tenantLocks = make(map[string]*sync.Mutex)
+	}
+	mu := c.tenantLocks[tenant]
+	if mu == nil {
+		mu = &sync.Mutex{}
+		c.tenantLocks[tenant] = mu
+	}
+	c.tenantLocksMu.Unlock()
+
+	mu.Lock()
+	return mu.Unlock
+}
+
 // chainAppendScript is a CAS (check-and-set) Lua append. Go precomputes the
 // event_hash using the just-read head as PrevHash input; the script only
 // commits if the head has not shifted between read and write.
 //
 // KEYS[1] = head key      ARGV[1] = expected_head ("seq:hash" or empty)
 // KEYS[2] = stream key    ARGV[2] = new_seq (string int)
-//                         ARGV[3] = new_hash (64-char hex)
-//                         ARGV[4] = event JSON payload
+//
+//	ARGV[3] = new_hash (64-char hex)
+//	ARGV[4] = event JSON payload
 //
 // Returns 1 on commit, 0 on CAS miss (caller re-reads head and retries).
 // Using a Lua script for the critical section keeps the check-XADD-update
@@ -215,6 +266,8 @@ func (c *Chainer) Append(ctx context.Context, event *SIEMEvent) error {
 	if event.TenantID == "" {
 		return ErrTenantRequired
 	}
+	unlockTenant := c.lockTenant(event.TenantID)
+	defer unlockTenant()
 
 	headKey := c.HeadKey(event.TenantID)
 	streamKey := c.StreamKey(event.TenantID)
@@ -224,12 +277,16 @@ func (c *Chainer) Append(ctx context.Context, event *SIEMEvent) error {
 			return err
 		}
 
-		rawHead, err := c.client.Get(ctx, headKey).Result()
-		if err != nil && !errors.Is(err, redis.Nil) {
-			return fmt.Errorf("audit chain: read head: %w", err)
-		}
-		if errors.Is(err, redis.Nil) {
-			rawHead = ""
+		rawHead, ok := c.cachedHead(event.TenantID)
+		if !ok {
+			var err error
+			rawHead, err = c.client.Get(ctx, headKey).Result()
+			if err != nil && !errors.Is(err, redis.Nil) {
+				return fmt.Errorf("audit chain: read head: %w", err)
+			}
+			if errors.Is(err, redis.Nil) {
+				rawHead = ""
+			}
 		}
 
 		headSeq, headHash, err := parseChainHead(rawHead)
@@ -271,12 +328,14 @@ func (c *Chainer) Append(ctx context.Context, event *SIEMEvent) error {
 			return fmt.Errorf("audit chain: script run: %w", err)
 		}
 		if res == 1 {
+			c.storeCachedHead(event.TenantID, strconv.FormatInt(event.Seq, 10)+":"+eventHash)
 			return nil
 		}
 		// CAS miss: another writer beat us. Clear the in-place
 		// mutations so a retry does not carry stale state if the
 		// subsequent read errors, then back off with jitter so
 		// contending producers stop retrying in lockstep.
+		c.invalidateCachedHead(event.TenantID, rawHead)
 		event.Seq = 0
 		event.PrevHash = ""
 		event.EventHash = ""
@@ -299,7 +358,7 @@ func sleepCASBackoff(ctx context.Context, attempt int) error {
 	if base <= 0 || base > chainCASBackoffMax {
 		base = chainCASBackoffMax
 	}
-	jitter := time.Duration(rand.Int64N(int64(base)))
+	jitter := time.Duration(rand.Int64N(int64(base))) // #nosec G404 -- CAS retry jitter is not security-sensitive.
 	d := jitter + chainCASBackoffMin
 	if d > chainCASBackoffMax {
 		d = chainCASBackoffMax

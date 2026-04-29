@@ -2614,12 +2614,11 @@ func TestSetPolicyRejectsNilContext(t *testing.T) {
 		cache:        map[string]cacheEntry{},
 		cacheMaxSize: 100,
 	}
-	//nolint:staticcheck // SA1012 — passing nil is the behaviour under test.
-	if err := srv.setPolicy(nil, nil, "should-not-apply"); err == nil {
+	var nilCtx context.Context
+	if err := srv.setPolicy(nilCtx, nil, "should-not-apply"); err == nil {
 		t.Fatal("setPolicy(nil ctx) must return an error, got nil")
 	}
-	//nolint:staticcheck // SA1012 — passing nil is the behaviour under test.
-	if err := srv.setPolicyWithBundleCount(nil, nil, "should-not-apply", 0); err == nil {
+	if err := srv.setPolicyWithBundleCount(nilCtx, nil, "should-not-apply", 0); err == nil {
 		t.Fatal("setPolicyWithBundleCount(nil ctx) must return an error, got nil")
 	}
 }
