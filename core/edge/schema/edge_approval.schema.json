@@ -1,0 +1,104 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cordum.io/schemas/edge/edge_approval.schema.json",
+  "title": "EdgeApproval",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "approval_ref",
+    "tenant_id",
+    "session_id",
+    "execution_id",
+    "event_id",
+    "principal_id",
+    "requester",
+    "status",
+    "rule_id",
+    "policy_snapshot",
+    "action_hash",
+    "input_hash",
+    "created_at",
+    "expires_at",
+    "labels",
+    "metadata"
+  ],
+  "properties": {
+    "approval_ref": { "type": "string", "minLength": 1 },
+    "tenant_id": { "type": "string", "minLength": 1 },
+    "session_id": { "type": "string", "minLength": 1 },
+    "execution_id": { "type": "string", "minLength": 1 },
+    "event_id": { "type": "string", "minLength": 1 },
+    "principal_id": { "type": "string", "minLength": 1 },
+    "requester": { "type": "string", "minLength": 1 },
+    "resolver_id": { "type": "string" },
+    "resolved_by": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "approved", "rejected", "expired", "invalidated"]
+    },
+    "decision": {
+      "type": "string",
+      "enum": ["", "approve", "reject", "expire", "invalidate"]
+    },
+    "reason": { "type": "string" },
+    "resolution_reason": { "type": "string" },
+    "rule_id": { "type": "string", "minLength": 1 },
+    "policy_snapshot": { "type": "string", "minLength": 1 },
+    "action_hash": { "type": "string", "minLength": 1 },
+    "input_hash": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": ["string", "null"], "format": "date-time" },
+    "resolved_at": { "type": ["string", "null"], "format": "date-time" },
+    "consumed_at": { "type": ["string", "null"], "format": "date-time" },
+    "labels": {
+      "type": "object",
+      "maxProperties": 64,
+      "propertyNames": { "type": "string", "minLength": 1, "maxLength": 128 },
+      "additionalProperties": { "type": "string", "maxLength": 512 }
+    },
+    "metadata": {
+      "type": "object",
+      "maxProperties": 64,
+      "propertyNames": { "type": "string", "minLength": 1, "maxLength": 128 },
+      "additionalProperties": { "type": "string", "maxLength": 512 }
+    }
+  },
+  "allOf": [
+    {
+      "comment": "Pending approvals must not carry resolution data; terminal approvals must.",
+      "if": {
+        "properties": { "status": { "const": "pending" } },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "decision": { "type": "string", "enum": [""] },
+          "resolver_id": { "type": "string", "maxLength": 0 },
+          "resolved_by": { "type": "string", "maxLength": 0 },
+          "resolution_reason": { "type": "string", "maxLength": 0 },
+          "resolved_at": { "type": "null" },
+          "consumed_at": { "type": "null" }
+        }
+      },
+      "else": {
+        "required": [
+          "decision",
+          "resolver_id",
+          "resolved_by",
+          "resolution_reason",
+          "resolved_at"
+        ],
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": ["approve", "reject", "expire", "invalidate"]
+          },
+          "resolver_id": { "type": "string", "minLength": 1 },
+          "resolved_by": { "type": "string", "minLength": 1 },
+          "resolution_reason": { "type": "string", "minLength": 1 },
+          "resolved_at": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  ]
+}

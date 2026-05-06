@@ -23,6 +23,8 @@ tags:
   description: Job submission, listing, and lifecycle
 - name: Copilot
   description: Copilot session transcripts and linked operational context
+- name: Edge
+  description: Edge session and agent execution evidence APIs
 - name: DLQ
   description: Dead-letter queue management (admin only)
 - name: Workflows
@@ -475,6 +477,990 @@ paths:
                 $ref: '#/components/schemas/Error'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /api/v1/edge/sessions:
+    post:
+      operationId: createEdgeSession
+      summary: Create an Edge session and initial execution
+      description: |
+        EDGE-060 — supports `Idempotency-Key`. A retry with the same key
+        and identical body returns the SAME `session_id` /
+        `execution_id` / `trace_id` (cached replay, 201). A retry with
+        the same key but different body returns 409
+        `idempotency_conflict`. Missing key falls back to non-idempotent
+        behavior (every call generates fresh UUIDs).
+      tags:
+      - Edge
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EdgeSessionCreateRequest'
+      responses:
+        '201':
+          description: Edge session created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeSessionCreateResponse'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '409':
+          $ref: '#/components/responses/EdgeConflict'
+        '413':
+          $ref: '#/components/responses/EdgePayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/EdgeEventCapExceeded'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+    get:
+      operationId: listEdgeSessions
+      summary: List Edge sessions for a tenant
+      tags:
+      - Edge
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: principal_id
+        in: query
+        schema:
+          type: string
+      - name: cursor
+        in: query
+        schema:
+          type: string
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+      responses:
+        '200':
+          description: Edge session page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeSessionPageResponse'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/sessions/{session_id}:
+    get:
+      operationId: getEdgeSession
+      summary: Get an Edge session
+      tags:
+      - Edge
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      responses:
+        '200':
+          description: Edge session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeSession'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '404':
+          $ref: '#/components/responses/EdgeNotFound'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/sessions/{session_id}/heartbeat:
+    post:
+      operationId: heartbeatEdgeSession
+      summary: Refresh an Edge session heartbeat
+      tags:
+      - Edge
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      responses:
+        '200':
+          description: Heartbeat refreshed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeHeartbeatResponse'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '404':
+          $ref: '#/components/responses/EdgeNotFound'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/sessions/{session_id}/end:
+    post:
+      operationId: endEdgeSession
+      summary: End an Edge session
+      tags:
+      - Edge
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EdgeEndSessionRequest'
+      responses:
+        '200':
+          description: Ended Edge session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeSession'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '404':
+          $ref: '#/components/responses/EdgeNotFound'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/executions:
+    get:
+      operationId: listEdgeExecutions
+      summary: List Edge agent executions for a tenant
+      tags:
+      - Edge
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: session_id
+        in: query
+        schema:
+          type: string
+      - name: job_id
+        in: query
+        schema:
+          type: string
+      - name: trace_id
+        in: query
+        schema:
+          type: string
+      - name: workflow_run_id
+        in: query
+        schema:
+          type: string
+      - name: cursor
+        in: query
+        schema:
+          type: string
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+      responses:
+        '200':
+          description: Edge execution page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeExecutionPageResponse'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+    post:
+      operationId: createEdgeExecution
+      summary: Create an Edge agent execution
+      description: |
+        EDGE-060 — supports `Idempotency-Key`. A retry with the same
+        key and identical body returns the SAME `execution_id` (cached
+        replay, 201) without burning against the per-session execution
+        cap. A retry with the same key but different body returns 409
+        `idempotency_conflict`. Missing key falls back to non-idempotent
+        behavior (every call generates a fresh `execution_id`).
+      tags:
+      - Edge
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EdgeExecutionCreateRequest'
+      responses:
+        '201':
+          description: Edge execution created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeAgentExecution'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '404':
+          $ref: '#/components/responses/EdgeNotFound'
+        '413':
+          $ref: '#/components/responses/EdgePayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/EdgeMaxExecutionsExceeded'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/executions/{execution_id}:
+    get:
+      operationId: getEdgeExecution
+      summary: Get an Edge agent execution
+      tags:
+      - Edge
+      parameters:
+      - name: execution_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      responses:
+        '200':
+          description: Edge execution
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeAgentExecution'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '404':
+          $ref: '#/components/responses/EdgeNotFound'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/executions/{execution_id}/end:
+    post:
+      operationId: endEdgeExecution
+      summary: End an Edge agent execution
+      tags:
+      - Edge
+      parameters:
+      - name: execution_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EdgeEndExecutionRequest'
+      responses:
+        '200':
+          description: Ended Edge execution
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeAgentExecution'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '404':
+          $ref: '#/components/responses/EdgeNotFound'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/approvals:
+    get:
+      operationId: listEdgeApprovals
+      summary: List Edge action approvals
+      description: >-
+        Lists tenant-scoped Edge approval records for action-level governance.
+        Non-admin/non-operator callers receive only approvals whose
+        `principal_id` matches the authenticated `auth.PrincipalID`; admin and
+        operator callers may list all approvals in the tenant for operations and
+        forensics. Status, tuple, cursor, and limit filters are applied within
+        that visibility scope so list pagination remains principal-stable. Raw
+        action payloads are never returned; actions are represented by
+        `event_id`, `action_hash`, `input_hash`, and `policy_snapshot`.
+      tags:
+      - Edge
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: status
+        in: query
+        schema:
+          type: string
+          enum: [pending, approved, rejected, expired, invalidated]
+      - name: session_id
+        in: query
+        description: Optional tuple filter; must be supplied with `execution_id` and `action_hash`.
+        schema:
+          type: string
+      - name: execution_id
+        in: query
+        description: Optional tuple filter; must be supplied with `session_id` and `action_hash`.
+        schema:
+          type: string
+      - name: action_hash
+        in: query
+        description: Optional tuple filter; must be supplied with `session_id` and `execution_id`.
+        schema:
+          type: string
+      - name: cursor
+        in: query
+        schema:
+          type: string
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      responses:
+        '200':
+          description: Edge approval page scoped to the caller's principal unless the caller has admin/operator visibility.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeApprovalPageResponse'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/approvals/{approval_ref}:
+    get:
+      operationId: getEdgeApproval
+      summary: Get an Edge action approval
+      description: >-
+        Returns one tenant-scoped Edge approval record. Detail reads are
+        principal-bound: the caller must be the original requester principal
+        (`auth.PrincipalID` matches the approval `principal_id`) or hold an
+        admin/operator role. Cross-tenant requests and same-tenant callers that
+        fail this binding are reported as not found and no raw tool/action
+        payload is exposed.
+      tags:
+      - Edge
+      parameters:
+      - name: approval_ref
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^edge_appr_[A-Za-z0-9_-]+$
+      - $ref: '#/components/parameters/TenantID'
+      responses:
+        '200':
+          description: Edge approval
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeApproval'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '404':
+          description: Edge approval not found, cross-tenant, or caller is not the original requester principal and lacks admin/operator role. The same not_found envelope is used to prevent tenant-insider enumeration of approval timing or decisions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeError'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/approvals/{approval_ref}/approve:
+    post:
+      operationId: approveEdgeApproval
+      summary: Approve an Edge action approval
+      description: |
+        Resolves a pending Edge approval as approved for one retry/consume. Requires approval/admin permission, enforces tenant scope and self-approval protection, and fails with 409 if the session/execution/event/action hash or policy snapshot is stale.
+
+        EDGE-060 — supports `Idempotency-Key` for safe retry against
+        the resolution state transition. Same key + same body returns
+        the SAME cached 200 response (replay), NOT 409 "already
+        approved" — this is the EDGE-060 DoD #7 invariant. A different
+        key against an already-terminal approval still surfaces the
+        existing 409 path.
+      tags:
+      - Edge
+      parameters:
+      - name: approval_ref
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^edge_appr_[A-Za-z0-9_-]+$
+      - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EdgeApprovalDecisionRequest'
+      responses:
+        '200':
+          description: Approved Edge approval
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeApproval'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          description: Approval permission denied or self-approval rejected (`code=self_approval_denied`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeError'
+        '404':
+          $ref: '#/components/responses/EdgeNotFound'
+        '409':
+          $ref: '#/components/responses/EdgeConflict'
+        '413':
+          $ref: '#/components/responses/EdgePayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/EdgeEventCapExceeded'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/approvals/{approval_ref}/wait:
+    post:
+      operationId: waitEdgeApproval
+      summary: Bounded blocking wait for an Edge approval to leave Pending
+      description: >-
+        Agentd/local-dev affordance that polls the Edge approval store until the
+        approval is non-pending or the bounded timeout elapses, then returns the
+        current EdgeApproval. The wait is principal-bound: the caller must be the
+        original requester principal (`auth.PrincipalID` matches the approval
+        `principal_id`) or hold an admin/operator role. The server clamps
+        `timeout_ms` to a 5 minute maximum and uses a 30 second default when
+        omitted or non-positive. Tenant isolation is enforced; cross-tenant
+        references and same-tenant callers that fail the principal binding return
+        404 with no metadata leakage. This endpoint is not required by the
+        dashboard approve/reject UX — callers there should use the standard
+        list/detail/approve/reject flow.
+      tags:
+      - Edge
+      parameters:
+      - name: approval_ref
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^edge_appr_[A-Za-z0-9_-]+$
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                timeout_ms:
+                  type: integer
+                  minimum: 0
+                  description: Caller-requested wait budget. Server clamps to a 5-minute max and uses a 30s default when omitted or non-positive.
+      responses:
+        '200':
+          description: Current Edge approval after the wait (resolved if approved/rejected/expired/invalidated; otherwise still pending).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeApproval'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '404':
+          description: Edge approval not found, cross-tenant, or caller is not the original requester principal and lacks admin/operator role. The same not_found envelope is used to prevent tenant-insider enumeration of approval timing or decisions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeError'
+        '409':
+          $ref: '#/components/responses/EdgeConflict'
+        '413':
+          $ref: '#/components/responses/EdgePayloadTooLarge'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/approvals/{approval_ref}/reject:
+    post:
+      operationId: rejectEdgeApproval
+      summary: Reject an Edge action approval
+      description: |
+        Resolves a pending Edge approval as rejected. Requires approval/admin permission, enforces tenant scope and self-approval protection, and fails with 409 if the referenced Edge session/execution/event is stale.
+
+        EDGE-060 — supports `Idempotency-Key` for safe retry against
+        the resolution state transition. Same key + same body returns
+        the SAME cached 200 response (replay), NOT 409 "already
+        rejected".
+      tags:
+      - Edge
+      parameters:
+      - name: approval_ref
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^edge_appr_[A-Za-z0-9_-]+$
+      - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EdgeApprovalDecisionRequest'
+      responses:
+        '200':
+          description: Rejected Edge approval
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeApproval'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          description: Approval permission denied or self-approval rejected (`code=self_approval_denied`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeError'
+        '404':
+          $ref: '#/components/responses/EdgeNotFound'
+        '409':
+          $ref: '#/components/responses/EdgeConflict'
+        '413':
+          $ref: '#/components/responses/EdgePayloadTooLarge'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/evaluate:
+    post:
+      operationId: evaluateEdgeAction
+      summary: Evaluate an Edge action with Safety Kernel policy
+      description: Classifies a bounded, redacted agent action for an existing Edge session/execution, calls the Safety Kernel using the Edge policy topic, persists a redacted policy decision or degraded event, and returns hook-friendly allow/deny fields. Raw `tool_input`, raw transcripts, and unredacted payloads are rejected; large evidence must use artifact pointers.
+      tags:
+      - Edge
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EdgeEvaluateRequest'
+      responses:
+        '200':
+          description: Hook-friendly Edge policy decision. Safety outages may still return 200 with `degraded=true` when policy mode permits and degraded evidence was persisted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeEvaluateResponse'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '404':
+          $ref: '#/components/responses/EdgeNotFound'
+        '409':
+          $ref: '#/components/responses/EdgeConflict'
+        '413':
+          $ref: '#/components/responses/EdgePayloadTooLarge'
+        '502':
+          $ref: '#/components/responses/EdgeBadGateway'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/events:
+    post:
+      operationId: createEdgeEvent
+      summary: Append a single Edge agent action event
+      description: >-
+        Writes a redacted AgentActionEvent for an existing Edge session/execution.
+        Raw tool inputs, raw tool results, and transcripts must not be sent inline;
+        send bounded `input_redacted` details and reference large evidence with
+        `artifact_ptrs`. Optional `Idempotency-Key` retries are scoped by tenant
+        and endpoint: the same normalized request replays the first 201 response
+        without appending a duplicate event, while the same key with a different
+        normalized request returns 409 `idempotency_conflict`. The append and
+        replay record commit in one Redis transaction. If the replay record has
+        expired and the same logical `event_id` is already present, the API
+        returns 409 `idempotency_window_expired` and does not append a duplicate
+        event.
+      tags:
+      - Edge
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EdgeAgentActionEventWriteRequest'
+      responses:
+        '201':
+          description: Edge event appended
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeAgentActionEvent'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '404':
+          $ref: '#/components/responses/EdgeNotFound'
+        '409':
+          $ref: '#/components/responses/EdgeConflict'
+        '413':
+          $ref: '#/components/responses/EdgePayloadTooLarge'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/events/batch:
+    post:
+      operationId: createEdgeEventsBatch
+      summary: Append a batch of Edge agent action events
+      description: >-
+        Appends a fully prevalidated, ordered batch for existing Edge
+        session/execution parents. Mixed-tenant or invalid items are rejected
+        before append where possible. Large raw payloads must be stored separately
+        and referenced by `artifact_ptrs`. Optional `Idempotency-Key` retries are
+        scoped by tenant and endpoint: the same normalized batch replays the
+        first 201 response without partial append or duplicate events, while the
+        same key with a different normalized batch returns 409
+        `idempotency_conflict`. The append and replay record commit in one Redis
+        transaction. If the replay record has expired and any same logical
+        `event_id` is already present, the API returns 409
+        `idempotency_window_expired` and does not append duplicate events.
+      tags:
+      - Edge
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EdgeAgentActionEventBatchRequest'
+      responses:
+        '201':
+          description: Edge events appended in input order
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeAgentActionEventBatchResponse'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '404':
+          $ref: '#/components/responses/EdgeNotFound'
+        '409':
+          $ref: '#/components/responses/EdgeConflict'
+        '413':
+          $ref: '#/components/responses/EdgePayloadTooLarge'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/sessions/{session_id}/events:
+    get:
+      operationId: listEdgeSessionEvents
+      summary: List Edge events for a session
+      description: Returns tenant-scoped events across executions in the session with cursor pagination and optional kind, decision, and RFC3339 time-window filters.
+      tags:
+      - Edge
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      - name: cursor
+        in: query
+        schema:
+          type: string
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - name: kind
+        in: query
+        description: Optional event kind filter; event kinds are open-ended non-empty strings such as `hook.pre_tool_use`.
+        schema:
+          type: string
+      - name: decision
+        in: query
+        schema:
+          type: string
+          enum: [ALLOW, DENY, REQUIRE_APPROVAL, THROTTLE, CONSTRAIN, RECORDED]
+      - name: since
+        in: query
+        description: Inclusive lower timestamp bound.
+        schema:
+          type: string
+          format: date-time
+      - name: until
+        in: query
+        description: Inclusive upper timestamp bound.
+        schema:
+          type: string
+          format: date-time
+      responses:
+        '200':
+          description: Edge event page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeAgentActionEventPageResponse'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '404':
+          $ref: '#/components/responses/EdgeNotFound'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/sessions/{session_id}/export:
+    post:
+      operationId: exportEdgeSession
+      summary: Assemble an Edge session evidence bundle
+      description: |
+        Returns a `SessionExportBundle` for the named session — session record,
+        executions, ordered AgentActionEvents, approvals, and a metadata-only
+        manifest of every artifact pointer attached to those events. Bundles
+        contain artifact metadata (URI, sha256, size, content_type, retention,
+        redaction level) but never raw artifact bodies. Cross-tenant probes
+        receive 404 indistinguishable from missing-session.
+      tags:
+      - Edge
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                max_events:
+                  type: integer
+                  minimum: 1
+                  maximum: 10000
+                  default: 5000
+                  description: |
+                    Caps the number of events the bundle carries. When the
+                    session has more, `truncation.events_truncated = true`
+                    and `truncation.event_count` records the actual total.
+                    Values above 10000 are rejected with HTTP 400 +
+                    `code=max_events_too_large` (EDGE-065 request-validation
+                    bound). Values <= 0 fall back to the assembler default
+                    (5000).
+      responses:
+        '200':
+          description: Edge session export bundle
+          content:
+            application/json:
+              schema:
+                type: object
+                description: |
+                  SessionExportBundle. See docs/edge-export.md for full schema
+                  including artifact_type catalog and missing_artifacts reasons.
+                additionalProperties: true
+                required:
+                - manifest_version
+                - generated_at
+                - tenant_id
+                - session
+                properties:
+                  manifest_version:
+                    type: string
+                    example: edge.export.v1
+                  generated_at:
+                    type: string
+                    format: date-time
+                  tenant_id:
+                    type: string
+                  redaction_level:
+                    type: string
+                    enum: [standard, strict]
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '404':
+          $ref: '#/components/responses/EdgeNotFound'
+        '413':
+          description: Bundle exceeds `CORDUM_EDGE_EXPORT_MAX_BYTES`; reduce `max_events` and retry.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeError'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/executions/{execution_id}/events:
+    get:
+      operationId: listEdgeExecutionEvents
+      summary: List Edge events for an execution
+      description: Returns tenant-scoped events for one execution in ascending sequence order with cursor pagination and optional kind, decision, and RFC3339 time-window filters.
+      tags:
+      - Edge
+      parameters:
+      - name: execution_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      - name: cursor
+        in: query
+        schema:
+          type: string
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - name: kind
+        in: query
+        description: Optional event kind filter; event kinds are open-ended non-empty strings such as `hook.pre_tool_use`.
+        schema:
+          type: string
+      - name: decision
+        in: query
+        schema:
+          type: string
+          enum: [ALLOW, DENY, REQUIRE_APPROVAL, THROTTLE, CONSTRAIN, RECORDED]
+      - name: since
+        in: query
+        description: Inclusive lower timestamp bound.
+        schema:
+          type: string
+          format: date-time
+      - name: until
+        in: query
+        description: Inclusive upper timestamp bound.
+        schema:
+          type: string
+          format: date-time
+      responses:
+        '200':
+          description: Edge event page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeAgentActionEventPageResponse'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '404':
+          $ref: '#/components/responses/EdgeNotFound'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
   /api/v1/jobs:
     post:
       operationId: submitJob
@@ -1636,6 +2622,66 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/policy/global:
+    get:
+      operationId: getPolicyGlobal
+      summary: Read the unified Global policy authority
+      description: |
+        EDGE-052 — returns the five-section view of the Global policy
+        authority that all four evaluators (Cordum job, Edge action, MCP
+        tool, output scan) consult. Each section is a YAML SafetyPolicy
+        fragment persisted under a dedicated `secops/`-prefixed bundle key.
+      tags:
+      - Policy
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      responses:
+        '200':
+          description: Unified Global policy snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyGlobalDocument'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    put:
+      operationId: updatePolicyGlobal
+      summary: Atomically update the unified Global policy authority
+      description: |
+        EDGE-052 — atomically writes one or more sections of the Global
+        policy. Sections not present in the request body are left
+        unchanged. A `snapshot_version` field on the request acts as
+        optimistic concurrency: when non-empty and != the current
+        snapshot the request is rejected with 409 Conflict.
+      tags:
+      - Policy
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePolicyGlobalRequest'
+      responses:
+        '200':
+          description: Unified Global policy updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyGlobalDocument'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: snapshot_version mismatch (optimistic concurrency)
         '500':
           $ref: '#/components/responses/InternalServerError'
   /api/v1/policy/bundles:
@@ -6237,10 +7283,11 @@ components:
       name: Idempotency-Key
       in: header
       required: false
-      description: Optional idempotency key for safe retries.
+      description: Optional idempotency key for safe retries. Edge event create/batch scopes keys by tenant and endpoint, replays the first response for the same normalized request, and returns 409 `idempotency_conflict` if the same key is reused with a different normalized request. Callers SHOULD send a UUID (per the original Job submit contract); the Edge runtime additionally accepts any non-empty string up to 512 bytes for backward-compatible local-dev keys.
       schema:
         type: string
         format: uuid
+        maxLength: 512
     JobID:
       name: id
       in: path
@@ -6397,6 +7444,82 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+    EdgeBadRequest:
+      description: Edge bad request — invalid or missing parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EdgeError'
+    EdgeUnauthorized:
+      description: Edge unauthorized — missing or invalid credentials
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EdgeError'
+    EdgeForbidden:
+      description: Edge forbidden — insufficient permissions or tenant access denied
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EdgeError'
+    EdgeNotFound:
+      description: Edge resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EdgeError'
+    EdgeConflict:
+      description: Edge conflict — resource state or idempotency conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EdgeError'
+    EdgePayloadTooLarge:
+      description: Edge payload too large
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EdgeError'
+    EdgeInternalServerError:
+      description: Edge internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EdgeError'
+    EdgeBadGateway:
+      description: Edge bad gateway — upstream service error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EdgeError'
+    EdgeServiceUnavailable:
+      description: Edge service unavailable
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EdgeError'
+    EdgeMaxExecutionsExceeded:
+      description: |
+        The target Edge session already holds the maximum number of
+        AgentExecution rows allowed by the gateway. Configure the cap via
+        CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION; default 100. End the session
+        and start a new one to continue recording executions. Error envelope
+        `code` is `max_executions_exceeded`; `details` carries
+        `{limit, current}`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EdgeError'
+    EdgeEventCapExceeded:
+      description: |
+        The target Edge execution already holds the maximum number of
+        AgentActionEvent rows allowed by the store (default 5000). End the
+        execution or start a new session to continue recording evidence. Error
+        envelope `code` is `event_cap_exceeded`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EdgeError'
     TierLimit:
       description: Forbidden by current license entitlements
       content:
@@ -6410,6 +7533,743 @@ components:
           schema:
             $ref: '#/components/schemas/GovernanceHealth'
   schemas:
+    EdgeSessionCreateRequest:
+      type: object
+      properties:
+        tenant_id:
+          type: string
+          description: Optional body tenant; when present it must match X-Tenant-ID.
+        principal_id:
+          type: string
+        principal_type:
+          type: string
+          enum: [human, service, unknown]
+        agent_product:
+          type: string
+        agent_version:
+          type: string
+        mode:
+          type: string
+          enum: [local-dev, enterprise-managed, workflow, ci, prod-runner]
+        repo:
+          type: string
+        git_remote:
+          type: string
+        git_branch:
+          type: string
+        git_sha:
+          type: string
+        cwd:
+          type: string
+        host_id:
+          type: string
+        device_id:
+          type: string
+        trace_id:
+          type: string
+        workflow_run_id:
+          type: string
+        job_id:
+          type: string
+        policy_snapshot:
+          type: string
+          description: Redacted policy snapshot identifier or summary; raw secrets are redacted before persistence/response.
+        enforcement_layers:
+          $ref: '#/components/schemas/EdgeEnforcementLayers'
+        policy_mode:
+          type: string
+          enum: [observe, enforce, enterprise-strict]
+        labels:
+          $ref: '#/components/schemas/EdgeLabels'
+    EdgeSessionCreateResponse:
+      type: object
+      required: [session_id, execution_id, trace_id, policy_snapshot, dashboard_url, session, execution]
+      properties:
+        session_id:
+          type: string
+        execution_id:
+          type: string
+        trace_id:
+          type: string
+        policy_snapshot:
+          type: string
+          description: Redacted policy snapshot identifier or summary; raw secrets are redacted before persistence/response.
+        dashboard_url:
+          type: string
+          description: Relative dashboard URL for the Edge session.
+        session:
+          $ref: '#/components/schemas/EdgeSession'
+        execution:
+          $ref: '#/components/schemas/EdgeAgentExecution'
+    EdgeSessionPageResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/EdgeSession'
+        next_cursor:
+          type: string
+          nullable: true
+    EdgeExecutionPageResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/EdgeAgentExecution'
+        next_cursor:
+          type: string
+          nullable: true
+    EdgeHeartbeatResponse:
+      type: object
+      required: [session_id, heartbeat_alive]
+      properties:
+        session_id:
+          type: string
+        heartbeat_alive:
+          type: boolean
+    EdgeEndSessionRequest:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ended, failed]
+          default: ended
+        ended_at:
+          type: string
+          format: date-time
+    EdgeExecutionCreateRequest:
+      type: object
+      required: [session_id]
+      properties:
+        tenant_id:
+          type: string
+          description: Optional body tenant; when present it must match X-Tenant-ID.
+        session_id:
+          type: string
+        adapter:
+          type: string
+          enum: [claude-code-hook, mcp-gateway, llm-proxy, runtime-sidecar, sdk-runner]
+        mode:
+          type: string
+          enum: [local-dev, enterprise-managed, workflow, ci, prod-runner]
+        workflow_run_id:
+          type: string
+        step_id:
+          type: string
+        job_id:
+          type: string
+        attempt:
+          type: integer
+          minimum: 0
+        trace_id:
+          type: string
+        worker_id:
+          type: string
+        policy_snapshot:
+          type: string
+          description: Redacted policy snapshot identifier or summary; raw secrets are redacted before persistence/response.
+        labels:
+          $ref: '#/components/schemas/EdgeLabels'
+    EdgeEndExecutionRequest:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [succeeded, failed, cancelled, timeout]
+          default: succeeded
+        ended_at:
+          type: string
+          format: date-time
+    EdgeApprovalDecisionRequest:
+      type: object
+      description: Human resolver note for approving or rejecting an Edge action approval.
+      properties:
+        reason:
+          type: string
+          maxLength: 4096
+    EdgeApprovalPageResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/EdgeApproval'
+        next_cursor:
+          type: string
+          nullable: true
+    EdgeApproval:
+      type: object
+      description: Tenant-scoped action approval bound to an Edge session/execution/event, action hash, and policy snapshot. Raw action/tool payloads are not stored here; use hashes and artifact pointers for evidence.
+      required: [approval_ref, tenant_id, session_id, execution_id, event_id, principal_id, requester, status, reason, rule_id, policy_snapshot, action_hash, input_hash, created_at, expires_at]
+      properties:
+        approval_ref:
+          type: string
+          pattern: ^edge_appr_[A-Za-z0-9_-]+$
+        tenant_id:
+          type: string
+        session_id:
+          type: string
+        execution_id:
+          type: string
+        event_id:
+          type: string
+        principal_id:
+          type: string
+          description: Principal that requested the governed action.
+        requester:
+          type: string
+          description: Authenticated requester identity used for self-approval protection.
+        resolver_id:
+          type: string
+          description: Principal that approved/rejected/expired the approval.
+        resolved_by:
+          type: string
+          description: Display/audit identity for the resolver.
+        status:
+          type: string
+          enum: [pending, approved, rejected, expired, invalidated]
+        decision:
+          type: string
+          enum: ["", approve, reject, expire, invalidate]
+          description: Empty while pending; terminal decisions match status.
+        reason:
+          type: string
+          description: Trigger reason explaining why approval was required.
+        resolution_reason:
+          type: string
+          description: Resolver-provided reason or system expiry reason for terminal records.
+        rule_id:
+          type: string
+        policy_snapshot:
+          type: string
+          description: Redacted policy snapshot identifier; used to reject stale approvals.
+        action_hash:
+          type: string
+          description: Stable action hash. The raw action payload is not stored.
+        input_hash:
+          type: string
+          description: Stable hash of the redacted/bounded action input used for evidence correlation.
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        resolved_at:
+          type: string
+          format: date-time
+          nullable: true
+        consumed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Set once an approved approval is atomically claimed by the agent retry path.
+        labels:
+          $ref: '#/components/schemas/EdgeLabels'
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+    EdgeSession:
+      type: object
+      required: [session_id, tenant_id, principal_type, mode, trace_id, policy_mode, status, risk_summary, started_at]
+      properties:
+        session_id:
+          type: string
+        tenant_id:
+          type: string
+        principal_id:
+          type: string
+        principal_type:
+          type: string
+          enum: [human, service, unknown]
+        agent_product:
+          type: string
+        agent_version:
+          type: string
+        mode:
+          type: string
+          enum: [local-dev, enterprise-managed, workflow, ci, prod-runner]
+        repo:
+          type: string
+        git_remote:
+          type: string
+        git_branch:
+          type: string
+        git_sha:
+          type: string
+        cwd:
+          type: string
+        host_id:
+          type: string
+        device_id:
+          type: string
+        trace_id:
+          type: string
+        workflow_run_id:
+          type: string
+        job_id:
+          type: string
+        policy_snapshot:
+          type: string
+          description: Redacted policy snapshot identifier or summary; raw secrets are redacted before persistence/response.
+        enforcement_layers:
+          $ref: '#/components/schemas/EdgeEnforcementLayers'
+        policy_mode:
+          type: string
+          enum: [observe, enforce, enterprise-strict]
+        status:
+          type: string
+          enum: [starting, running, waiting_for_approval, degraded, ended, failed]
+        risk_summary:
+          $ref: '#/components/schemas/EdgeRiskSummary'
+        started_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: string
+          format: date-time
+          nullable: true
+        labels:
+          $ref: '#/components/schemas/EdgeLabels'
+    EdgeAgentExecution:
+      type: object
+      required: [execution_id, session_id, tenant_id, adapter, mode, status, started_at]
+      properties:
+        execution_id:
+          type: string
+        session_id:
+          type: string
+        tenant_id:
+          type: string
+        adapter:
+          type: string
+          enum: [claude-code-hook, mcp-gateway, llm-proxy, runtime-sidecar, sdk-runner]
+        mode:
+          type: string
+          enum: [local-dev, enterprise-managed, workflow, ci, prod-runner]
+        workflow_run_id:
+          type: string
+        step_id:
+          type: string
+        job_id:
+          type: string
+        attempt:
+          type: integer
+          minimum: 0
+        trace_id:
+          type: string
+        worker_id:
+          type: string
+        policy_snapshot:
+          type: string
+        status:
+          type: string
+          enum: [running, waiting_for_approval, succeeded, failed, cancelled, timeout, degraded]
+        started_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: string
+          format: date-time
+          nullable: true
+        metrics:
+          $ref: '#/components/schemas/EdgeExecutionMetrics'
+        labels:
+          $ref: '#/components/schemas/EdgeLabels'
+    EdgeEvaluateRequest:
+      type: object
+      description: Redacted Edge action evaluation request for an existing session/execution. Do not send raw `tool_input`, `tool_result`, `raw_input`, `raw_transcript`, or `transcript`; send bounded `input_redacted`/`tool_input_redacted` plus `artifact_ptrs`.
+      required: [session_id, execution_id, principal_id, layer, kind]
+      properties:
+        event_id:
+          type: string
+          description: Optional caller-supplied event ID; omitted values are generated by the server.
+        tenant_id:
+          type: string
+          description: Optional body tenant; when present it must match X-Tenant-ID.
+        principal_id:
+          type: string
+        session_id:
+          type: string
+        execution_id:
+          type: string
+        agent_product:
+          type: string
+        layer:
+          type: string
+          enum: [hook, mcp, llm, runtime, workflow, system]
+        kind:
+          type: string
+          description: Non-empty Edge event kind such as `hook.pre_tool_use`.
+        tool_name:
+          type: string
+          description: Hook tool name such as `Bash`; required for hook-layer tool evaluations.
+        tool_use_id:
+          type: string
+        input_redacted:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: Bounded, redacted action input. The server re-redacts and computes the persisted `input_hash`.
+        tool_input_redacted:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: Claude-hook-friendly alias for `input_redacted`.
+        input_hash:
+          type: string
+          description: Optional client hash. When redacted input is supplied, the server computes/overwrites the persisted `sha256:` hash from accepted redacted input.
+        tool_input_hash:
+          type: string
+          description: Claude-hook-friendly alias for `input_hash`.
+        cwd:
+          type: string
+        repo:
+          type: string
+        git_remote:
+          type: string
+        git_branch:
+          type: string
+        git_sha:
+          type: string
+        action_name:
+          type: string
+          description: Optional client hint; ignored/overridden by the server-side classifier when derivable.
+        capability:
+          type: string
+          description: Optional client hint; ignored/overridden by the server-side classifier when derivable.
+        risk_tags:
+          type: array
+          description: Optional client hints. Server-side classifier output is authoritative.
+          items:
+            type: string
+        labels:
+          $ref: '#/components/schemas/EdgeLabels'
+        artifact_ptrs:
+          type: array
+          maxItems: 32
+          description: References to redacted external artifacts for large or sensitive evidence.
+          items:
+            $ref: '#/components/schemas/EdgeArtifactPointer'
+        approval_ttl_seconds:
+          type: integer
+          minimum: 1
+          maximum: 300
+          description: |
+            Optional override of the default 5-minute approval TTL when policy
+            returns REQUIRE_APPROVAL (EDGE-059). Bound to [1, 300] seconds
+            server-side; values outside this range or omitted use the 5-minute
+            default. Callers can ONLY shorten the TTL — values >300 are
+            silently capped at the default. Used by e2e tests that need to
+            exercise approval expiration inside a bounded sleep window.
+          example: 2
+    EdgeEvaluateResponse:
+      type: object
+      required: [decision, permission_decision, exit_code]
+      properties:
+        decision:
+          type: string
+          enum: [ALLOW, DENY, REQUIRE_APPROVAL, THROTTLE, CONSTRAIN]
+        reason:
+          type: string
+        rule_id:
+          type: string
+        policy_snapshot:
+          type: string
+        approval_ref:
+          type: string
+          description: Opaque approval reference from the Safety Kernel/approval integration. This endpoint does not create approval records.
+        constraints:
+          type: object
+          nullable: true
+          additionalProperties: true
+        updated_input:
+          type: object
+          nullable: true
+          additionalProperties: true
+        event_id:
+          type: string
+          description: Persisted Edge decision/degraded event ID.
+        degraded:
+          type: boolean
+          description: True when Safety was unavailable and the response follows policy-mode degraded behavior.
+        error_code:
+          type: string
+          enum: [safety_unavailable]
+        error_message:
+          type: string
+          description: Sanitized bounded error guidance; upstream secret-bearing error strings are not returned.
+        permission_decision:
+          type: string
+          enum: [allow, deny]
+          description: Hook-friendly permission decision.
+        permission_decision_reason:
+          type: string
+        exit_code:
+          type: integer
+          description: Hook/terminal-friendly exit code; zero for allow-like responses and non-zero for deny/block guidance.
+        terminal_title:
+          type: string
+        terminal_message:
+          type: string
+        wait_strategy:
+          type: string
+          enum: [manual_approval, backoff, retry]
+        timeout_ms:
+          type: integer
+          minimum: 0
+    EdgeAgentActionEventWriteRequest:
+      type: object
+      description: Redacted event write payload. Do not send raw `tool_input`, `tool_result`, `raw_input`, `raw_transcript`, or `transcript` fields; large evidence belongs in `artifact_ptrs`.
+      required: [event_id, session_id, execution_id, ts, layer, kind, decision, status]
+      properties:
+        event_id:
+          type: string
+        session_id:
+          type: string
+        execution_id:
+          type: string
+        tenant_id:
+          type: string
+          description: Optional body tenant; when present it must match X-Tenant-ID.
+        principal_id:
+          type: string
+        seq:
+          type: integer
+          minimum: 0
+          description: Optional sequence number. Omit or set 0 for server assignment; explicit values must be the next sequence for the execution.
+        ts:
+          type: string
+          format: date-time
+        layer:
+          type: string
+          enum: [hook, mcp, llm, runtime, workflow, system]
+        kind:
+          type: string
+          description: Open-ended non-empty event kind such as `hook.pre_tool_use` or `mcp.tool.pre`.
+        agent_product:
+          type: string
+        tool_name:
+          type: string
+        tool_use_id:
+          type: string
+        action_name:
+          type: string
+        capability:
+          type: string
+        risk_tags:
+          type: array
+          items:
+            type: string
+        input_redacted:
+          type: object
+          nullable: true
+          description: Bounded, redacted, client-safe input summary. Secrets and large raw payloads are rejected; store large evidence using `artifact_ptrs`.
+          additionalProperties: true
+        input_hash:
+          type: string
+          description: Optional stable hash. When `input_redacted` is present, the server derives a stable `sha256:` hash before persistence.
+        decision:
+          type: string
+          enum: [ALLOW, DENY, REQUIRE_APPROVAL, THROTTLE, CONSTRAIN, RECORDED]
+        decision_reason:
+          type: string
+        rule_id:
+          type: string
+        policy_snapshot:
+          type: string
+        approval_ref:
+          type: string
+        artifact_ptrs:
+          type: array
+          maxItems: 32
+          description: References to redacted external artifacts for transcripts, tool inputs/results, diffs, or evidence bundles that are too large or sensitive for inline event storage.
+          items:
+            $ref: '#/components/schemas/EdgeArtifactPointer'
+        duration_ms:
+          type: integer
+          minimum: 0
+        status:
+          type: string
+          enum: [ok, blocked, failed, degraded]
+        error_code:
+          type: string
+        error_message:
+          type: string
+        labels:
+          $ref: '#/components/schemas/EdgeLabels'
+    EdgeAgentActionEventBatchRequest:
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/EdgeAgentActionEventWriteRequest'
+    EdgeAgentActionEventBatchResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/EdgeAgentActionEvent'
+    EdgeAgentActionEventPageResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/EdgeAgentActionEvent'
+        next_cursor:
+          type: string
+          nullable: true
+    EdgeAgentActionEvent:
+      type: object
+      required: [event_id, session_id, execution_id, tenant_id, seq, ts, layer, kind, decision, status]
+      properties:
+        event_id:
+          type: string
+        session_id:
+          type: string
+        execution_id:
+          type: string
+        tenant_id:
+          type: string
+        principal_id:
+          type: string
+        seq:
+          type: integer
+          minimum: 0
+        ts:
+          type: string
+          format: date-time
+        layer:
+          type: string
+          enum: [hook, mcp, llm, runtime, workflow, system]
+        kind:
+          type: string
+          description: Open-ended non-empty event kind such as `hook.pre_tool_use` or `mcp.tool.pre`.
+        agent_product:
+          type: string
+        tool_name:
+          type: string
+        tool_use_id:
+          type: string
+        action_name:
+          type: string
+        capability:
+          type: string
+        risk_tags:
+          type: array
+          items:
+            type: string
+        input_redacted:
+          type: object
+          nullable: true
+          description: Bounded redacted input summary safe to persist and return.
+          additionalProperties: true
+        input_hash:
+          type: string
+          description: Stable `sha256:` hash for the original input when available.
+        decision:
+          type: string
+          enum: [ALLOW, DENY, REQUIRE_APPROVAL, THROTTLE, CONSTRAIN, RECORDED]
+        decision_reason:
+          type: string
+        rule_id:
+          type: string
+        policy_snapshot:
+          type: string
+        approval_ref:
+          type: string
+        artifact_ptrs:
+          type: array
+          maxItems: 32
+          description: References to redacted external evidence artifacts. Large tool payloads/transcripts are represented here instead of inline raw event fields.
+          items:
+            $ref: '#/components/schemas/EdgeArtifactPointer'
+        duration_ms:
+          type: integer
+          minimum: 0
+        status:
+          type: string
+          enum: [ok, blocked, failed, degraded]
+        error_code:
+          type: string
+        error_message:
+          type: string
+        labels:
+          $ref: '#/components/schemas/EdgeLabels'
+    EdgeArtifactPointer:
+      type: object
+      description: Pointer to redacted evidence stored outside the event row. Its tenant/session/execution/event IDs must match the enclosing event, and the URI must be an internal artifact reference rather than a signed URL or token-bearing external URI.
+      required: [artifact_type, session_id, execution_id, event_id, tenant_id, retention_class, redaction_level, sha256, uri, created_at]
+      properties:
+        artifact_type:
+          type: string
+          enum: [edge.transcript, edge.diff, edge.tool_input, edge.tool_result, edge.evidence_bundle]
+        session_id:
+          type: string
+        execution_id:
+          type: string
+        event_id:
+          type: string
+        tenant_id:
+          type: string
+        retention_class:
+          type: string
+          enum: [short, standard, audit]
+        redaction_level:
+          type: string
+          enum: [standard, strict]
+        sha256:
+          type: string
+        uri:
+          type: string
+          description: Internal artifact URI such as `artifact://...` or `edge-artifact://...`; signed URLs, query-string tokens, userinfo, fragments, and external HTTP(S) storage URLs are rejected before persistence.
+        created_at:
+          type: string
+          format: date-time
+    EdgeRiskSummary:
+      type: object
+      properties:
+        denied_count:
+          type: integer
+        approval_count:
+          type: integer
+        artifact_count:
+          type: integer
+        max_risk:
+          type: string
+          enum: [low, medium, high, critical]
+    EdgeExecutionMetrics:
+      type: object
+      properties:
+        events:
+          type: integer
+        allow:
+          type: integer
+        deny:
+          type: integer
+        require_approval:
+          type: integer
+        artifacts:
+          type: integer
+        llm_cost_usd:
+          type: number
+    EdgeLabels:
+      type: object
+      additionalProperties:
+        type: string
+    EdgeEnforcementLayers:
+      type: object
+      additionalProperties:
+        type: boolean
     ApprovalAnalyticsResponse:
       type: object
       required: [window, summary]
@@ -6593,6 +8453,59 @@ components:
         next_cursor:
           type: string
           nullable: true
+    EdgeError:
+      type: object
+      description: Standard error envelope for all `/api/v1/edge/*` routes. Messages and details are sanitized and must not echo raw tool payloads, API keys, signed URLs, or secrets.
+      required:
+      - code
+      - message
+      - request_id
+      properties:
+        code:
+          type: string
+          description: Stable machine-readable Edge error code.
+          enum:
+          - unauthorized
+          - access_denied
+          - tenant_required
+          - tenant_mismatch
+          - tenant_access_denied
+          - missing_path_param
+          - invalid_request
+          - invalid_json
+          - missing_required_field
+          - not_found
+          - request_too_large
+          - service_unavailable
+          - store_unavailable
+          - internal_error
+          - upstream_error
+          - conflict
+          - session_terminal
+          - execution_terminal
+          - execution_session_mismatch
+          - raw_payload_rejected
+          - artifact_pointer_invalid
+          - approval_conflict
+          - approval_not_actionable
+          - self_approval_denied
+          - idempotency_conflict
+          - idempotency_key_invalid
+          - idempotency_window_expired
+          - max_executions_exceeded
+          - event_cap_exceeded
+          example: idempotency_conflict
+        message:
+          type: string
+          description: Sanitized human-readable message.
+          example: idempotency key already used with a different request
+        request_id:
+          type: string
+          description: Request correlation id from `X-Request-Id`/middleware.
+        details:
+          type: object
+          additionalProperties: true
+          description: Optional sanitized structured details.
     Error:
       type: object
       properties:
@@ -7650,6 +9563,66 @@ components:
           type: string
         message:
           type: string
+    PolicyGlobalSection:
+      type: object
+      description: |
+        One section of the unified Global policy. The bundle_id is the
+        underlying configsvc key (e.g. `secops/global-input`,
+        `secops/invariants`). Empty content means no studio overrides
+        are authored for this section.
+      properties:
+        bundle_id:
+          type: string
+        content:
+          type: string
+          description: YAML SafetyPolicy fragment for this section.
+        sha256:
+          type: string
+        enabled:
+          type: boolean
+    PolicyGlobalDocument:
+      type: object
+      description: |
+        EDGE-052 — five-section view of the Global policy authority. The
+        snapshot_hash matches the cfg:&lt;sha&gt; identifier the kernel
+        propagates on policy decisions; clients pass it back on PUT for
+        optimistic concurrency.
+      properties:
+        snapshot_version:
+          type: string
+        snapshot_hash:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+        sections:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/PolicyGlobalSection'
+          description: Keyed by section name — input_rules, output_rules, edge_action_rules, mcp_tool_rules, invariants.
+    UpdatePolicyGlobalRequest:
+      type: object
+      properties:
+        snapshot_version:
+          type: string
+          description: Optimistic concurrency token. When non-empty and != current snapshot, request is rejected with 409.
+        author:
+          type: string
+        message:
+          type: string
+        sections:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              content:
+                type: string
+                description: YAML SafetyPolicy fragment. Empty content deletes the section's bundle.
+              enabled:
+                type: boolean
+          description: Keyed by section name. Only listed sections are written; absent sections remain unchanged.
+      required:
+      - sections
     PublishPolicyRequest:
       type: object
       properties:

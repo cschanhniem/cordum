@@ -29,6 +29,7 @@ import (
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
+	edgecore "github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/governance"
 	"github.com/cordum/cordum/core/infra/artifacts"
 	"github.com/cordum/cordum/core/infra/buildinfo"
@@ -103,6 +104,8 @@ const (
 	envGRPCServerMaxConnectionAge   = "CORDUM_GRPC_SERVER_MAX_CONNECTION_AGE"
 	envGRPCServerMaxConnectionGrace = "CORDUM_GRPC_SERVER_MAX_CONNECTION_AGE_GRACE"
 	envGRPCServerEnforcementMinTime = "CORDUM_GRPC_SERVER_ENFORCEMENT_MIN_TIME"
+	envEdgeSessionRetentionTTL      = "CORDUM_EDGE_SESSION_RETENTION_TTL"
+	envEdgeSessionSweepInterval     = "CORDUM_EDGE_SESSION_SWEEP_INTERVAL"
 )
 
 var (
@@ -123,6 +126,7 @@ type server struct {
 	pb.UnimplementedCordumApiServer
 	memStore              store.Store
 	jobStore              *store.RedisJobStore // Typed for ListRecentJobs
+	edgeStore             edgecore.Store
 	decisionLogStore      model.DecisionLogStore
 	copilotStore          copilot.Store
 	governanceHealthCache *governance.Cache
@@ -181,13 +185,22 @@ type server struct {
 	auditExporter       audit.AuditSender
 	auditChainer        *audit.Chainer
 	auditVerifyCoalesce singleflight.Group
-	legalHoldStore      *audit.LegalHoldStore
-	statusCacheObj      *statusCache
-	policyShadowStore   *policyshadow.Store
-	mcpDenyRing         *denyEventRing
-	sessionIssuer       *scheduler.SessionTokenIssuer
-	trustResolver       *scheduler.TrustResolver
-	heartbeatMode       scheduler.HeartbeatMode
+
+	// edgeRecorder is the EDGE-014 observability recorder used by Edge
+	// handlers to emit metrics. Defaults to NoopRecorder so a missing
+	// Prometheus registerer never panics on first metric emission;
+	// production wiring sets this to NewPrometheusRecorder via the
+	// metrics initializer.
+	edgeRecorder      edgecore.Recorder
+	edgeSweeperCancel context.CancelFunc
+
+	legalHoldStore    *audit.LegalHoldStore
+	statusCacheObj    *statusCache
+	policyShadowStore *policyshadow.Store
+	mcpDenyRing       *denyEventRing
+	sessionIssuer     *scheduler.SessionTokenIssuer
+	trustResolver     *scheduler.TrustResolver
+	heartbeatMode     scheduler.HeartbeatMode
 
 	apiRL    rateLimiter
 	publicRL rateLimiter
@@ -250,6 +263,9 @@ func (s *server) Close() {
 	if s.instanceRegistry != nil {
 		s.instanceRegistry.Stop()
 	}
+	if s.edgeSweeperCancel != nil {
+		s.edgeSweeperCancel()
+	}
 	s.stopBusTaps()
 	s.stopWorkerExpiry()
 	// Close safety kernel gRPC connection AFTER HTTP shutdown completes so
@@ -302,6 +318,29 @@ func oidcFlowConfiguredFromEnv() bool {
 
 func scimConfiguredFromEnv() bool {
 	return strings.TrimSpace(os.Getenv("CORDUM_SCIM_BEARER_TOKEN")) != ""
+}
+
+func edgeSessionRetentionTTLFromEnv() (time.Duration, error) {
+	return positiveDurationFromEnv(envEdgeSessionRetentionTTL, edgecore.DefaultSessionRetentionTTL)
+}
+
+func edgeSessionSweepIntervalFromEnv() (time.Duration, error) {
+	return positiveDurationFromEnv(envEdgeSessionSweepInterval, edgecore.DefaultSessionSweepInterval)
+}
+
+func positiveDurationFromEnv(key string, fallback time.Duration) (time.Duration, error) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback, nil
+	}
+	duration, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a valid duration: %w", key, err)
+	}
+	if duration <= 0 {
+		return 0, fmt.Errorf("%s must be > 0", key)
+	}
+	return duration, nil
 }
 
 // RunWithAuth starts the gateway with a custom auth provider. When nil, a basic
@@ -595,9 +634,22 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		return fmt.Errorf("init audit exporter: %w", err)
 	}
 
+	// Hoist edgeRecorder before edgeStore so the store and handlers share the
+	// same Recorder instance. EDGE-054 store-level metrics flow through this.
+	edgeRecorder := edgecore.NewNoopRecorder()
+	edgeRetentionTTL, err := edgeSessionRetentionTTLFromEnv()
+	if err != nil {
+		return err
+	}
+	edgeSweepInterval, err := edgeSessionSweepIntervalFromEnv()
+	if err != nil {
+		return err
+	}
+	edgeStore := edgecore.NewRedisStoreFromClient(jobStore.Client(), edgecore.WithRecorder(edgeRecorder))
 	s := &server{
 		memStore:               memStore,
 		jobStore:               jobStore,
+		edgeStore:              edgeStore,
 		decisionLogStore:       decisionLogStore,
 		copilotStore:           copilot.NotImplementedStore{},
 		governanceHealthCache:  governance.NewCache(60 * time.Second),
@@ -636,6 +688,7 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		permChecker:            permChecker,
 		auditExporter:          auditSender,
 		auditChainer:           auditChainer,
+		edgeRecorder:           edgeRecorder,
 		legalHoldStore:         initLegalHoldStore(cfg.RedisURL),
 		statusCacheObj:         newStatusCache(2 * time.Second),
 		policyShadowStore:      policyshadow.NewStore(configSvc),
@@ -788,6 +841,17 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 			slog.Error("grpc server error", "error", err)
 		}
 	}()
+
+	edgeSweeper, err := edgecore.NewSessionSweeper(edgeStore, edgecore.SessionSweeperOptions{
+		RetentionTTL: edgeRetentionTTL,
+		Interval:     edgeSweepInterval,
+	})
+	if err != nil {
+		return fmt.Errorf("init edge session sweeper: %w", err)
+	}
+	edgeSweepCtx, edgeSweepCancel := context.WithCancel(context.Background())
+	s.edgeSweeperCancel = edgeSweepCancel
+	go edgeSweeper.Run(edgeSweepCtx)
 
 	return startHTTPServer(s, httpAddr, metricsAddr, grpcServer)
 }
@@ -1227,6 +1291,28 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 	s.registerRoute(mux, "POST /api/v1/jobs/{id}/cancel", s.instrumented("/api/v1/jobs/{id}/cancel", s.handleCancelJob))
 	s.registerRoute(mux, "POST /api/v1/jobs/{id}/remediate", s.instrumented("/api/v1/jobs/{id}/remediate", s.handleRemediateJob))
 
+	// 4.25 Edge session/execution APIs and action event APIs.
+	s.registerRoute(mux, "POST /api/v1/edge/sessions", s.instrumented("/api/v1/edge/sessions", s.handleCreateEdgeSession))
+	s.registerRoute(mux, "GET /api/v1/edge/sessions", s.instrumented("/api/v1/edge/sessions", s.handleListEdgeSessions))
+	s.registerRoute(mux, "GET /api/v1/edge/sessions/{session_id}", s.instrumented("/api/v1/edge/sessions/{session_id}", s.handleGetEdgeSession))
+	s.registerRoute(mux, "POST /api/v1/edge/sessions/{session_id}/heartbeat", s.instrumented("/api/v1/edge/sessions/{session_id}/heartbeat", s.handleHeartbeatEdgeSession))
+	s.registerRoute(mux, "POST /api/v1/edge/sessions/{session_id}/end", s.instrumented("/api/v1/edge/sessions/{session_id}/end", s.handleEndEdgeSession))
+	s.registerRoute(mux, "POST /api/v1/edge/executions", s.instrumented("/api/v1/edge/executions", s.handleCreateEdgeExecution))
+	s.registerRoute(mux, "GET /api/v1/edge/executions", s.instrumented("/api/v1/edge/executions", s.handleListEdgeExecutions))
+	s.registerRoute(mux, "GET /api/v1/edge/executions/{execution_id}", s.instrumented("/api/v1/edge/executions/{execution_id}", s.handleGetEdgeExecution))
+	s.registerRoute(mux, "POST /api/v1/edge/executions/{execution_id}/end", s.instrumented("/api/v1/edge/executions/{execution_id}/end", s.handleEndEdgeExecution))
+	s.registerRoute(mux, "GET /api/v1/edge/approvals", s.instrumented("/api/v1/edge/approvals", s.handleListEdgeApprovals))
+	s.registerRoute(mux, "GET /api/v1/edge/approvals/{approval_ref}", s.instrumented("/api/v1/edge/approvals/{approval_ref}", s.handleGetEdgeApproval))
+	s.registerRoute(mux, "POST /api/v1/edge/approvals/{approval_ref}/approve", s.instrumented("/api/v1/edge/approvals/{approval_ref}/approve", s.handleApproveEdgeApproval))
+	s.registerRoute(mux, "POST /api/v1/edge/approvals/{approval_ref}/reject", s.instrumented("/api/v1/edge/approvals/{approval_ref}/reject", s.handleRejectEdgeApproval))
+	s.registerRoute(mux, "POST /api/v1/edge/approvals/{approval_ref}/wait", s.instrumented("/api/v1/edge/approvals/{approval_ref}/wait", s.handleWaitEdgeApproval))
+	s.registerRoute(mux, "POST /api/v1/edge/evaluate", s.instrumented("/api/v1/edge/evaluate", s.handleEdgeEvaluate))
+	s.registerRoute(mux, "POST /api/v1/edge/events", s.instrumented("/api/v1/edge/events", s.handleCreateEdgeEvent))
+	s.registerRoute(mux, "POST /api/v1/edge/events/batch", s.instrumented("/api/v1/edge/events/batch", s.handleCreateEdgeEventsBatch))
+	s.registerRoute(mux, "GET /api/v1/edge/sessions/{session_id}/events", s.instrumented("/api/v1/edge/sessions/{session_id}/events", s.handleListEdgeSessionEvents))
+	s.registerRoute(mux, "GET /api/v1/edge/executions/{execution_id}/events", s.instrumented("/api/v1/edge/executions/{execution_id}/events", s.handleListEdgeExecutionEvents))
+	s.registerRoute(mux, "POST /api/v1/edge/sessions/{session_id}/export", s.instrumented("/api/v1/edge/sessions/{session_id}/export", s.handleExportEdgeSession))
+
 	// 4.5 Memory pointers (debug)
 	s.registerRoute(mux, "GET /api/v1/memory", s.instrumented("/api/v1/memory", s.handleGetMemory))
 	// 4.6 Artifact store
@@ -1325,6 +1411,12 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 	s.registerRoute(mux, "POST /api/v1/policy/velocity-rules", s.instrumented("/api/v1/policy/velocity-rules", s.handleCreateVelocityRule))
 	s.registerRoute(mux, "PUT /api/v1/policy/velocity-rules/{id}", s.instrumented("/api/v1/policy/velocity-rules/{id}", s.handlePutVelocityRule))
 	s.registerRoute(mux, "DELETE /api/v1/policy/velocity-rules/{id}", s.instrumented("/api/v1/policy/velocity-rules/{id}", s.handleDeleteVelocityRule))
+	// EDGE-052 — unified Global policy authority. /api/v1/policy/global
+	// surfaces the five-section view (input, output, edge_action,
+	// mcp_tool, invariants) consumed by the four evaluators. The
+	// per-bundle endpoints below remain as backward-compat aliases.
+	s.registerRoute(mux, "GET /api/v1/policy/global", s.instrumented("/api/v1/policy/global", s.handleGetPolicyGlobal))
+	s.registerRoute(mux, "PUT /api/v1/policy/global", s.instrumented("/api/v1/policy/global", s.handlePutPolicyGlobal))
 	s.registerRoute(mux, "GET /api/v1/policy/bundles", s.instrumented("/api/v1/policy/bundles", s.handlePolicyBundles))
 	s.registerRoute(mux, "GET /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handleGetPolicyBundle))
 	s.registerRoute(mux, "PUT /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handlePutPolicyBundle))
@@ -1510,6 +1602,7 @@ var tenantRoutePrefixes = []string{
 	"/api/v1/artifacts",
 	"/api/v1/auth/logout",
 	"/api/v1/auth/password",
+	"/api/v1/edge",
 	"/api/v1/evals",
 	"/api/v1/governance/approvals/analytics",
 	"/api/v1/governance/decisions",

@@ -73,6 +73,8 @@ func main() {
 		runDelegationCmd(args)
 	case "governance":
 		runGovernanceCmd(args)
+	case "edge":
+		os.Exit(runEdgeCmd(args))
 	default:
 		usage()
 		os.Exit(1)
@@ -424,6 +426,9 @@ Usage:
   cordumctl doctor [--json] [--verbose] [--strict] [--timeout SEC] [--skip-workers] [--fix]
   cordumctl delegation <subcommand> [...]
   cordumctl governance <subcommand> [...]
+  cordumctl edge init [--cwd path] [--force] [--gateway URL] [--tenant id] [--principal id] [--api-key-env NAME] [--no-wrapper] [--non-interactive]
+  cordumctl edge claude [--policy-mode enforce] [--dry-run|--no-launch] [--settings-output path|-] [--claude-path path] [-- --claude-args]
+  cordumctl edge doctor [--json] [--policy-mode enforce] [--settings-path path] [--claude-path path]
 
 Global flags:
   --gateway    Gateway base URL (default from CORDUM_GATEWAY)

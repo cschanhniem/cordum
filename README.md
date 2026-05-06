@@ -10,7 +10,8 @@
 
 <p align="center">
   <strong>Know What Your AI Agents Are Doing. Before They Do It.</strong><br/>
-  The Source-Available <strong>Agent Control Plane</strong> for Governance, Safety, and Trust.
+  The Source-Available <strong>Agent Control Plane</strong> for Governance, Safety, and Trust.<br/>
+  <em>Includes <strong>Cordum Edge</strong> — a Compliance Firewall for Claude Code and other local AI-agent actions.</em>
 </p>
 
 <p align="center">
@@ -84,6 +85,29 @@ exercises every safety-kernel decision class in under 30 seconds:
 Full walkthrough, rule-by-rule explanation, and extension recipe:
 [demo/quickstart/README.md](demo/quickstart/README.md).
 
+### Edge Quickstart (Compliance Firewall for Claude Code)
+
+Cordum Edge governs Claude Code tool calls in the developer's terminal — the
+hook denies risky actions before they run, requires approval on edits, and
+exports a redacted evidence bundle for every session. Once the platform stack
+is up (above), point Claude Code at Cordum:
+
+```bash
+export CORDUM_GATEWAY=https://localhost:8081
+export CORDUM_API_KEY=$(grep CORDUM_API_KEY .env | cut -d= -f2)
+export CORDUM_TENANT_ID=default
+./bin/cordumctl edge claude
+```
+
+The wrapper renders a temporary `settings.json`, spawns `cordum-agentd` on a
+local loopback nonce, and starts Claude Code with the command hook installed.
+Read .env is denied; Edit/Write requires approval; safe reads pass through
+untouched. The dashboard shows the live session timeline at
+[/edge/sessions](http://localhost:8082/edge/sessions).
+
+Full 30-minute walkthrough: [docs/quickstart-edge.md](docs/quickstart-edge.md).
+Reference: [docs/edge/README.md](docs/edge/README.md).
+
 ---
 
 ## The Problem: The Agent Risk Gap
@@ -153,6 +177,23 @@ graph LR
 - **BEFORE (Governance)**: Define declarative policies that evaluate job requests *before* an agent executes. Trigger safety kernel checks, throttle risky actions, or flag operations for human approval.
 - **DURING (Safety)**: Real-time visibility into active agent runs. Monitor progress, handle step-level approvals, and enforce timeouts or circuit breakers on the fly.
 - **ACROSS (Observability)**: Manage your entire fleet from a single control plane. Aggregate audit trails, track capability-based routing, and observe agent pool health in real-time.
+
+
+### Cordum Edge: Compliance Firewall for AI agents
+
+Cordum Edge extends the control plane to local AI-agent actions. For Claude Code,
+`cordumctl edge claude` launches the real P0 path — command hook, local
+`cordum-agentd`, Gateway Edge APIs, Safety Kernel policy/evaluate, approvals,
+artifact pointers, and dashboard evidence.
+
+Cordum stays quiet until governance matters. Developers see Cordum exactly when
+it protects them, their team, and production: before risky tools run, when an
+action needs approval, and when evidence must be exported. The wrapper is the
+developer/demo path; enterprise enforcement requires managed Claude settings and
+endpoint controls.
+
+Start here: [Edge overview](docs/edge.md), [Claude Code guide](docs/edge-claude-code.md),
+[manual demo](docs/demo-edge-claude.md), and [Edge API](docs/edge/api.md).
 
 ## Quickstart
 
@@ -337,6 +378,7 @@ Other useful contributor commands:
 | **Deterministic Audit** | Prove exactly *why* a decision was made with a full chain-of-thought audit trail. |
 | **Governance Policies** | Declarative YAML-based rules that map enterprise risk to agent behavior. |
 | **Policy Simulator** | Test your governance rules against historical data before rolling them out to production. |
+| **Cordum Edge** | Compliance Firewall for local AI-agent actions (Claude Code today, more agents next): hook → local agentd → Gateway evaluate → approvals → redacted evidence export. See [docs/edge/README.md](docs/edge/README.md). |
 
 ## Architecture
 
@@ -373,6 +415,8 @@ cordum/
 | [MCP Server](docs/mcp-server.md) | MCP stdio + HTTP/SSE integration |
 | [Pack Format](docs/pack.md) | How to package agent capabilities |
 | [Local E2E](docs/LOCAL_E2E.md) | Full local walkthrough |
+| [Edge Quickstart](docs/quickstart-edge.md) | New-engineer 30-min path: clone → live stack → governed Claude session |
+| [Edge Reference](docs/edge/README.md) | Cordum Edge product, API, CLI, demo, runbook |
 | [Production Guide](docs/production.md) | TLS, HA, backups, incident runbooks |
 
 ## Protocol: CAP — The Open Standard for Agent Governance
@@ -502,6 +546,7 @@ See [CHANGELOG.md](CHANGELOG.md) for a detailed log of all changes by version.
 | Deterministic audit trail | ✅ | ❌ | ❌ | ⚠️ Manual |
 | Framework agnostic | ✅ Any via CAP | ❌ Python only | ❌ NVIDIA stack | ❌ |
 | MCP governance | ✅ Bridge + Gateway | ❌ | ❌ | ❌ |
+| Local agent-action firewall | ✅ Cordum Edge (Claude Code hook today) | ❌ | ❌ | ⚠️ DIY |
 
 [See detailed comparisons →](docs/comparison.md)
 

@@ -57,23 +57,40 @@ import (
 type server struct {
 	pb.UnimplementedSafetyKernelServer
 	pb.UnimplementedOutputPolicyServiceServer
-	mu                sync.RWMutex
-	policy            *config.SafetyPolicy
-	outputRules       []compiledOutputRule
-	inputRules        []compiledInputRule
-	scanners          map[string]OutputScanner
-	snapshot          string
-	snapshots         []string
-	resultClient      redis.UniversalClient
-	velocityChecker   *velocityChecker
-	policyVersion     atomic.Uint64
-	cacheMu           sync.Mutex
-	cacheTTL          time.Duration
-	cache             map[string]cacheEntry
-	cacheMaxSize      int
-	entitlements      *licensing.EntitlementResolver
-	customBundleCount int
-	shadowEvaluator   *ShadowEvaluator
+	mu sync.RWMutex
+	// policy is the merged SafetyPolicy with invariants already applied
+	// (DENYs prepended, ALLOWs appended). The kernel evaluator iterates
+	// policy.Rules with first-match semantics, so this layout makes
+	// invariant DENY uncrossable without changing the matchers.
+	policy *config.SafetyPolicy
+	// global is the typed cross-evaluator view exposed via the
+	// /api/v1/policy/global endpoint and consumed by the MCP gate. It
+	// is projected from the BASE merge (without invariants applied)
+	// plus the invariant overlay so the section buckets do not
+	// double-count invariants — see setPolicyWithBundleCount.
+	global *GlobalPolicy
+	// invariantRules / invariantOutputRules are the parsed rules from
+	// the dedicated secops/invariants bundle, retained separately so
+	// the GlobalPolicy view can present them as a distinct section
+	// even though they are also baked into policy.Rules with the
+	// security-floor precedence applied.
+	invariantRules       []config.PolicyRule
+	invariantOutputRules []config.OutputPolicyRule
+	outputRules          []compiledOutputRule
+	inputRules           []compiledInputRule
+	scanners             map[string]OutputScanner
+	snapshot             string
+	snapshots            []string
+	resultClient         redis.UniversalClient
+	velocityChecker      *velocityChecker
+	policyVersion        atomic.Uint64
+	cacheMu              sync.Mutex
+	cacheTTL             time.Duration
+	cache                map[string]cacheEntry
+	cacheMaxSize         int
+	entitlements         *licensing.EntitlementResolver
+	customBundleCount    int
+	shadowEvaluator      *ShadowEvaluator
 
 	// Agent identity store for enriching policy evaluation with agent context.
 	agentStore    *store.AgentIdentityStore
@@ -226,7 +243,7 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	policySource := policySourceFromEnv(cfg.SafetyPolicyPath)
 	loader := newPolicyLoader(cfg, policySource, resolver)
 	defer loader.Close()
-	policy, snapshot, customBundleCount, err := loader.Load(context.Background())
+	policy, invariants, snapshot, customBundleCount, err := loader.Load(context.Background())
 	if err != nil {
 		return fmt.Errorf("load safety policy: %w", err)
 	}
@@ -326,7 +343,7 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
 	defer lifecycleCancel()
 
-	if err := srv.setPolicyWithBundleCount(lifecycleCtx, policy, snapshot, customBundleCount); err != nil {
+	if err := srv.setPolicyWithInvariants(lifecycleCtx, policy, invariants, snapshot, customBundleCount); err != nil {
 		return fmt.Errorf("initial policy load: %w", err)
 	}
 
@@ -555,6 +572,7 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	// so concurrent evaluations still run in parallel.
 	s.mu.RLock()
 	policy := s.policy
+	global := s.global
 	snapshot := s.snapshot
 	inputRules := s.inputRules
 	scanners := s.scanners
@@ -565,11 +583,15 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	}
 	s.mu.RUnlock()
 
+	workflowID, scopedJobID := resolvePolicyScope(req)
+	evalPolicy := scopedPolicyForRequest(policy, global, workflowID, scopedJobID, topic, req.GetLabels())
+	inputRules = selectInputRulesForScope(inputRules, workflowID, scopedJobID)
+
 	// Bypass decision cache when the active policy has effective velocity rules.
 	// Velocity decisions depend on sliding-window state that changes with every
 	// request, so caching any result (even a fallthrough ALLOW) would prevent
 	// the window from advancing correctly.
-	policyHasVelocity := effectiveVelocityRuleCount(policy, s.velocityRuleLimit()) > 0
+	policyHasVelocity := effectiveVelocityRuleCount(evalPolicy, s.velocityRuleLimit()) > 0
 	cacheKey := ""
 	if s.cacheTTL > 0 && !policyHasVelocity {
 		cacheKey = cacheKeyForRequest(req, snapshot)
@@ -670,6 +692,7 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 				policyDecision = config.PolicyDecision{
 					Decision: "deny",
 					Reason:   fmt.Sprintf("policy evaluation panic: %v", r),
+					RuleTier: config.PolicyTierGlobal,
 				}
 			}
 		}()
@@ -677,22 +700,23 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 			policyEvalTestHook()
 		}
 		if policyHasVelocity {
-			policyDecision = s.evaluateRulesWithVelocity(ctx, policy, input, req.GetJobId(), method)
+			policyDecision = s.evaluateRulesWithVelocity(ctx, evalPolicy, input, req.GetJobId(), method)
 		} else {
-			policyDecision = policy.Evaluate(input)
+			policyDecision = evalPolicy.Evaluate(input)
 		}
-		if tp, ok := policy.Tenants[tenant]; ok {
+		if tp, ok := evalPolicy.Tenants[tenant]; ok {
 			if ok, mcpReason := config.MCPAllowed(tp.MCP, input.MCP); !ok {
 				policyDecision.Decision = "deny"
 				policyDecision.Reason = mcpReason
 			}
 		}
 	}()
-	slog.Debug("policy evaluation complete", "component", "safety", "tenant", tenant, "topic", topic, "decision", policyDecision.Decision, "ruleId", policyDecision.RuleID, "duration", time.Since(evalStart).String())
+	slog.Debug("policy evaluation complete", "component", "safety", "tenant", tenant, "topic", topic, "decision", policyDecision.Decision, "ruleId", policyDecision.RuleID, "ruleTier", policyDecision.RuleTier, "duration", time.Since(evalStart).String())
 	evalSpan.SetAttributes(
 		attribute.String("cordum.safety_decision", policyDecision.Decision),
 		attribute.String("cordum.safety_rule_id", policyDecision.RuleID),
 		attribute.String("cordum.safety_rule_name", policyDecision.RuleID),
+		attribute.String("cordum.safety_rule_tier", policyDecision.RuleTier),
 		attribute.String("cordum.safety_reason", policyDecision.Reason),
 	)
 	if strings.HasPrefix(policyDecision.Reason, "no matching rule") {
@@ -745,6 +769,7 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	//
 	// Input rules can only escalate (allow→deny or allow→require_approval), never downgrade.
 	ruleID := policyDecision.RuleID
+	ruleTier := policyDecision.RuleTier
 	if len(inputRules) > 0 {
 		if decision == pb.DecisionType_DECISION_TYPE_ALLOW || decision == pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS {
 			// Mirror the output-policy tracing: wrap input rule evaluation
@@ -785,14 +810,16 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 					decision = pb.DecisionType_DECISION_TYPE_DENY
 					reason = inputRuleReason(rule, findings)
 					ruleID = rule.id
+					ruleTier = rule.tier
 					inputDecision = "deny"
 				case "require_approval", "require-approval", "require_human":
 					decision = pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN
 					reason = inputRuleReason(rule, findings)
 					ruleID = rule.id
+					ruleTier = rule.tier
 					inputDecision = "require_human"
 				}
-				slog.Info("input rule matched", "component", "safety", "rule", rule.id, "decision", rule.decision, "findings", len(findings))
+				slog.Info("input rule matched", "component", "safety", "rule", rule.id, "ruleTier", rule.tier, "decision", rule.decision, "findings", len(findings))
 				break // first matching input rule wins
 			}
 			finishInput(inputDecision, matchedCount)
@@ -821,6 +848,7 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 				Decision:         shadowDecisionName(decision, approvalRequired),
 				Reason:           reason,
 				RuleID:           ruleID,
+				RuleTier:         ruleTier,
 				Constraints:      policyDecision.Constraints,
 				Remediations:     policyDecision.Remediations,
 				ApprovalRequired: approvalRequired,
@@ -831,7 +859,7 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 		)
 	}
 
-	slog.Info("policy evaluation result", "component", "safety", "tenant", tenant, "topic", topic, "jobId", req.GetJobId(), "decision", resp.Decision.String(), "ruleId", resp.RuleId)
+	slog.Info("policy evaluation result", "component", "safety", "tenant", tenant, "topic", topic, "jobId", req.GetJobId(), "decision", resp.Decision.String(), "ruleId", resp.RuleId, "ruleTier", ruleTier)
 
 	if cacheKey != "" && s.cacheTTL > 0 {
 		cacheResp := clonePolicyResponse(resp)
@@ -1248,7 +1276,7 @@ func (s *server) watchPolicy(ctx context.Context, loader *policyLoader, notifyCh
 			slog.Info("safety-kernel: policy reload triggered", "trigger", trigger)
 		}
 
-		policy, snapshot, customBundleCount, err := loader.Load(ctx)
+		policy, invariants, snapshot, customBundleCount, err := loader.Load(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				return
@@ -1260,8 +1288,8 @@ func (s *server) watchPolicy(ctx context.Context, loader *policyLoader, notifyCh
 		current := s.snapshot
 		s.mu.RUnlock()
 		if snapshot != "" && snapshot != current {
-			if err := s.setPolicyWithBundleCount(ctx, policy, snapshot, customBundleCount); err != nil {
-				slog.Error("safety-kernel: setPolicyWithBundleCount failed", "err", err, "trigger", trigger)
+			if err := s.setPolicyWithInvariants(ctx, policy, invariants, snapshot, customBundleCount); err != nil {
+				slog.Error("safety-kernel: setPolicyWithInvariants failed", "err", err, "trigger", trigger)
 				return
 			}
 			slog.Info("safety-kernel: policy snapshot updated", "snapshot", snapshot, "trigger", trigger)
@@ -1295,23 +1323,58 @@ func (s *server) setPolicy(ctx context.Context, policy *config.SafetyPolicy, sna
 	return s.setPolicyWithBundleCount(ctx, policy, snapshot, 0)
 }
 
-// setPolicyWithBundleCount atomically swaps the active policy, trims the
+// setPolicyWithBundleCount is the legacy entrypoint preserved for tests
+// and callers that do not author invariants. It delegates to
+// setPolicyWithInvariants with a nil invariants overlay.
+func (s *server) setPolicyWithBundleCount(ctx context.Context, policy *config.SafetyPolicy, snapshot string, customBundleCount int) error {
+	return s.setPolicyWithInvariants(ctx, policy, nil, snapshot, customBundleCount)
+}
+
+// setPolicyWithInvariants atomically swaps the active policy, trims the
 // snapshot history and persists the new snapshot to Redis for cross-replica
 // consistency. Callers MUST pass a non-nil ctx — the Redis persistence call
 // derives its deadline from the caller so lock-contention paths (policy
 // reload, graceful shutdown) cannot orphan a hung Redis write behind a
 // detached context.Background(). Tests in this package construct a ctx via
 // context.Background() or t.Context() at the call site.
-func (s *server) setPolicyWithBundleCount(ctx context.Context, policy *config.SafetyPolicy, snapshot string, customBundleCount int) error {
+//
+// invariants is the parsed *config.SafetyPolicy from the dedicated
+// kernelInvariantsBundleKey bundle, or nil when no invariants are
+// authored. It is applied with security-floor precedence via
+// applyKernelInvariants and also retained separately on the kernel state
+// so the GlobalPolicy view can present it as a distinct section.
+func (s *server) setPolicyWithInvariants(ctx context.Context, policy *config.SafetyPolicy, invariants *config.SafetyPolicy, snapshot string, customBundleCount int) error {
 	if ctx == nil {
 		return fmt.Errorf("safety-kernel: setPolicyWithBundleCount: nil context")
 	}
 	newVersion := s.policyVersion.Add(1)
 
+	// Combined policy = base + invariants applied with security-floor
+	// precedence. The kernel evaluator iterates combined.Rules with
+	// first-match semantics, so invariant DENYs prepended at the front
+	// are uncrossable. The base (without invariants applied) is also
+	// retained for the GlobalPolicy view so its section buckets do not
+	// double-count invariants.
+	combined := applyKernelInvariants(policy, invariants)
+	var invariantRules []config.PolicyRule
+	var invariantOutputRules []config.OutputPolicyRule
+	if invariants != nil {
+		if len(invariants.Rules) > 0 {
+			invariantRules = append([]config.PolicyRule{}, invariants.Rules...)
+		}
+		if len(invariants.OutputRules) > 0 {
+			invariantOutputRules = append([]config.OutputPolicyRule{}, invariants.OutputRules...)
+		}
+	}
+	global := FromSafetyPolicy(policy, invariantRules, invariantOutputRules, snapshot)
+
 	s.mu.Lock()
-	s.policy = policy
-	s.outputRules = compileOutputRules(policy)
-	s.inputRules = compileInputRules(policy)
+	s.policy = combined
+	s.global = global
+	s.invariantRules = invariantRules
+	s.invariantOutputRules = invariantOutputRules
+	s.outputRules = compileOutputRules(combined)
+	s.inputRules = compileInputRules(combined)
 	s.snapshot = snapshot
 	s.customBundleCount = customBundleCount
 	if snapshot != "" {
@@ -1430,36 +1493,57 @@ func (l *policyLoader) policyBundleLimit() int64 {
 	return licensing.Unlimited
 }
 
-func (l *policyLoader) Load(ctx context.Context) (*config.SafetyPolicy, string, int, error) {
+// Load reads the active policy state and returns:
+//   - merged: the BASE merge of file-loader + studio + pack bundles, WITHOUT
+//     invariants applied. This shape is used to project the typed GlobalPolicy
+//     view so its section buckets do not double-count invariants.
+//   - invariants: the parsed *config.SafetyPolicy from the dedicated
+//     kernelInvariantsBundleKey bundle, or nil when no invariants are
+//     authored. Callers apply this overlay separately via
+//     applyKernelInvariants when constructing the kernel-evaluation policy.
+//   - snapshot: "cfg:<sha256>" identifier folding in ALL bundles (including
+//     invariants) so any change invalidates downstream caches.
+//   - customBundleCount: tier-counted custom bundles for licensing telemetry.
+func (l *policyLoader) Load(ctx context.Context) (*config.SafetyPolicy, *config.SafetyPolicy, string, int, error) {
 	basePolicy, baseSnapshot, err := loadPolicyBundle(l.source)
 	if err != nil {
-		return nil, "", 0, err
+		return nil, nil, "", 0, err
 	}
-	fragmentPolicy, fragmentSnapshot, customBundleCount, err := l.loadFragments(ctx)
+	fragmentPolicy, fragmentInvariants, fragmentSnapshot, customBundleCount, err := l.loadFragments(ctx)
 	if err != nil {
-		return nil, "", 0, err
+		return nil, nil, "", 0, err
 	}
 	merged := mergePolicies(basePolicy, fragmentPolicy)
-	return merged, combineSnapshots(baseSnapshot, fragmentSnapshot), customBundleCount, nil
+	return merged, fragmentInvariants, combineSnapshots(baseSnapshot, fragmentSnapshot), customBundleCount, nil
 }
 
-func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy, string, int, error) {
+// loadFragments returns:
+//   - merged: parsed studio+pack bundles merged with mergePolicies, WITHOUT
+//     invariants applied. The dedicated invariants bundle (if present) is
+//     held aside and returned separately.
+//   - invariants: the parsed *config.SafetyPolicy from the
+//     kernelInvariantsBundleKey bundle, or nil when no invariants are
+//     authored. The snapshot hash still folds in invariants content so any
+//     change invalidates the cfg:<sha> cache key downstream.
+//   - snapshot: "cfg:<sha256>" identifier; "" when no bundles loaded.
+//   - customBundleCount: count of secops/-prefixed bundles within the tier.
+func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy, *config.SafetyPolicy, string, int, error) {
 	if l == nil || l.configSvc == nil {
-		return nil, "", 0, nil
+		return nil, nil, "", 0, nil
 	}
 	doc, err := l.configSvc.Get(ctx, l.configScope, l.configID)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			return nil, "", 0, nil
+			return nil, nil, "", 0, nil
 		}
-		return nil, "", 0, err
+		return nil, nil, "", 0, err
 	}
 	if doc.Data == nil {
-		return nil, "", 0, nil
+		return nil, nil, "", 0, nil
 	}
 	rawBundles, ok := doc.Data[l.configKey].(map[string]any)
 	if !ok || len(rawBundles) == 0 {
-		return nil, "", 0, nil
+		return nil, nil, "", 0, nil
 	}
 	keys := make([]string, 0, len(rawBundles))
 	for key := range rawBundles {
@@ -1468,6 +1552,7 @@ func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy,
 	sort.Strings(keys)
 	hasher := sha256.New()
 	var merged *config.SafetyPolicy
+	var invariants *config.SafetyPolicy
 	var skippedCount int
 	customBundleCount := 0
 	bundleLimit := l.policyBundleLimit()
@@ -1492,7 +1577,7 @@ func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy,
 			}
 		}
 		if err := verifyBundleSignature(key, []byte(content), fragmentSignature(rawBundles[key]), verifier.mode, verifier.store); err != nil {
-			return nil, "", customBundleCount, err
+			return nil, nil, "", customBundleCount, err
 		}
 		policy, err := config.ParseSafetyPolicy([]byte(content))
 		if err != nil {
@@ -1503,9 +1588,24 @@ func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy,
 			skippedCount++
 			continue
 		}
+		// Hash the bundle content regardless of whether it is the
+		// invariants bundle or a regular fragment — any change to
+		// invariants must invalidate downstream caches keyed on the
+		// cfg:<sha> snapshot identifier.
 		hasher.Write([]byte(key))
 		hasher.Write([]byte{0})
 		hasher.Write([]byte(content))
+		if key == kernelInvariantsBundleKey {
+			// Hold invariants aside; setPolicyWithBundleCount applies
+			// them with security-floor precedence via
+			// applyKernelInvariants and also retains the rules in the
+			// GlobalPolicy view as a distinct section.
+			invariants = policy
+			if isCustomBundle {
+				customBundleCount++
+			}
+			continue
+		}
 		merged = mergePolicies(merged, policy)
 		if isCustomBundle {
 			customBundleCount++
@@ -1517,11 +1617,11 @@ func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy,
 			"loaded", len(keys)-skippedCount,
 		)
 	}
-	if merged == nil {
-		return nil, "", customBundleCount, nil
+	if merged == nil && invariants == nil {
+		return nil, nil, "", customBundleCount, nil
 	}
 	hash := hex.EncodeToString(hasher.Sum(nil))
-	return merged, "cfg:" + hash, customBundleCount, nil
+	return merged, invariants, "cfg:" + hash, customBundleCount, nil
 }
 
 func extractPolicyFragment(value any) (string, bool) {
@@ -1584,17 +1684,23 @@ func combineSnapshots(base, extra string) string {
 
 func mergePolicies(base, extra *config.SafetyPolicy) *config.SafetyPolicy {
 	if base == nil {
-		return clonePolicy(extra)
+		return clonePolicyWithTierMetadata(extra)
 	}
 	if extra == nil {
-		return clonePolicy(base)
+		return clonePolicyWithTierMetadata(base)
 	}
-	out := clonePolicy(base)
+	out := clonePolicyWithTierMetadata(base)
+	add := clonePolicyWithTierMetadata(extra)
+	out.Tier = config.PolicyTierGlobal
+	out.Selector = config.PolicySelector{}
 	if out.Version == "" {
-		out.Version = extra.Version
+		out.Version = add.Version
 	}
 	if out.DefaultTenant == "" {
-		out.DefaultTenant = extra.DefaultTenant
+		out.DefaultTenant = add.DefaultTenant
+	}
+	if strings.TrimSpace(out.DefaultDecision) == "" {
+		out.DefaultDecision = strings.TrimSpace(add.DefaultDecision)
 	}
 	// Merge input rules with duplicate detection (last-seen wins)
 	seenInput := make(map[string]int, len(out.Rules))
@@ -1603,7 +1709,7 @@ func mergePolicies(base, extra *config.SafetyPolicy) *config.SafetyPolicy {
 			seenInput[r.ID] = i
 		}
 	}
-	for _, r := range extra.Rules {
+	for _, r := range add.Rules {
 		if r.ID != "" {
 			if idx, dup := seenInput[r.ID]; dup {
 				slog.Warn("duplicate policy rule ID in merge — replacing with latest",
@@ -1623,7 +1729,7 @@ func mergePolicies(base, extra *config.SafetyPolicy) *config.SafetyPolicy {
 			seenOutput[r.ID] = i
 		}
 	}
-	for _, r := range extra.OutputRules {
+	for _, r := range add.OutputRules {
 		if r.ID != "" {
 			if idx, dup := seenOutput[r.ID]; dup {
 				slog.Warn("duplicate output policy rule ID in merge — replacing with latest",
@@ -1642,7 +1748,7 @@ func mergePolicies(base, extra *config.SafetyPolicy) *config.SafetyPolicy {
 			seenInputRules[r.ID] = i
 		}
 	}
-	for _, r := range extra.InputRules {
+	for _, r := range add.InputRules {
 		if r.ID != "" {
 			if idx, dup := seenInputRules[r.ID]; dup {
 				slog.Warn("duplicate input policy rule ID in merge — replacing with latest",
@@ -1654,7 +1760,8 @@ func mergePolicies(base, extra *config.SafetyPolicy) *config.SafetyPolicy {
 		}
 		out.InputRules = append(out.InputRules, r)
 	}
-	out.Tenants = mergeTenantPolicies(out.Tenants, extra.Tenants)
+	out.TierDefaults = append(out.TierDefaults, add.TierDefaults...)
+	out.Tenants = mergeTenantPolicies(out.Tenants, add.Tenants)
 	return out
 }
 
@@ -1664,6 +1771,8 @@ func clonePolicy(policy *config.SafetyPolicy) *config.SafetyPolicy {
 	}
 	out := &config.SafetyPolicy{
 		Version:         policy.Version,
+		Tier:            policy.Tier,
+		Selector:        config.TrimPolicySelector(policy.Selector),
 		DefaultTenant:   policy.DefaultTenant,
 		DefaultDecision: policy.DefaultDecision,
 		InputPolicy:     policy.InputPolicy,
@@ -1671,6 +1780,7 @@ func clonePolicy(policy *config.SafetyPolicy) *config.SafetyPolicy {
 		Rules:           append([]config.PolicyRule{}, policy.Rules...),
 		OutputRules:     append([]config.OutputPolicyRule{}, policy.OutputRules...),
 		InputRules:      append([]config.InputPolicyRule{}, policy.InputRules...),
+		TierDefaults:    append([]config.PolicyTierDefault{}, policy.TierDefaults...),
 		Tenants:         map[string]config.TenantPolicy{},
 	}
 	if policy.Tenants != nil {

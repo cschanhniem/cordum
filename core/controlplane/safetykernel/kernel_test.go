@@ -203,6 +203,348 @@ func TestCheckReturnsRemediations(t *testing.T) {
 	}
 }
 
+func TestEvaluate_WorkflowOverrideBlocksGlobalAllow(t *testing.T) {
+	policy := &config.SafetyPolicy{
+		DefaultDecision: "deny",
+		Rules: []config.PolicyRule{
+			{ID: "global-allow-deploy", Decision: "allow", Match: config.PolicyMatch{Topics: []string{"job.deploy"}}},
+			{
+				ID:       "workflow-deny-deploy",
+				Tier:     config.PolicyTierWorkflow,
+				Selector: config.PolicySelector{WorkflowID: "deploy-prod"},
+				Decision: "deny",
+				Match:    config.PolicyMatch{Topics: []string{"job.deploy"}},
+			},
+		},
+	}
+	srv := newTierEvalServer(policy, nil)
+
+	resp, err := srv.Evaluate(context.Background(), &pb.PolicyCheckRequest{
+		JobId:  "job-1",
+		Topic:  "job.deploy",
+		Tenant: "default",
+		Labels: map[string]string{"workflow_id": "deploy-prod"},
+	})
+	if err != nil {
+		t.Fatalf("Evaluate returned error: %v", err)
+	}
+	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY || resp.GetRuleId() != "workflow-deny-deploy" {
+		t.Fatalf("decision/rule = %v/%q, want DENY/workflow-deny-deploy", resp.GetDecision(), resp.GetRuleId())
+	}
+}
+
+func TestEvaluate_JobOverrideBlocksWorkflowAllow(t *testing.T) {
+	policy := &config.SafetyPolicy{
+		DefaultDecision: "deny",
+		Rules: []config.PolicyRule{
+			{
+				ID:       "workflow-allow-deploy",
+				Tier:     config.PolicyTierWorkflow,
+				Selector: config.PolicySelector{WorkflowID: "deploy-prod"},
+				Decision: "allow",
+				Match:    config.PolicyMatch{Topics: []string{"job.deploy"}},
+			},
+			{
+				ID:       "job-deny-deploy",
+				Tier:     config.PolicyTierJob,
+				Selector: config.PolicySelector{JobID: "job-1"},
+				Decision: "deny",
+				Match:    config.PolicyMatch{Topics: []string{"job.deploy"}},
+			},
+		},
+	}
+	srv := newTierEvalServer(policy, nil)
+
+	resp, err := srv.Evaluate(context.Background(), &pb.PolicyCheckRequest{
+		JobId:  "job-1",
+		Topic:  "job.deploy",
+		Tenant: "default",
+		Labels: map[string]string{"workflow_id": "deploy-prod"},
+	})
+	if err != nil {
+		t.Fatalf("Evaluate returned error: %v", err)
+	}
+	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY || resp.GetRuleId() != "job-deny-deploy" {
+		t.Fatalf("decision/rule = %v/%q, want DENY/job-deny-deploy", resp.GetDecision(), resp.GetRuleId())
+	}
+}
+
+func TestEvaluate_InvariantDenyOverridesAllTiers(t *testing.T) {
+	policy := &config.SafetyPolicy{
+		DefaultDecision: "deny",
+		Rules: []config.PolicyRule{
+			{
+				ID:       "job-allow-secret",
+				Tier:     config.PolicyTierJob,
+				Selector: config.PolicySelector{JobID: "job-1"},
+				Decision: "allow",
+				Match: config.PolicyMatch{
+					Topics: []string{"job.deploy"},
+					Labels: map[string]string{"path.class": "secret"},
+				},
+			},
+		},
+	}
+	invariants := &config.SafetyPolicy{Rules: []config.PolicyRule{
+		{
+			ID:       "inv-deny-secret",
+			Decision: "deny",
+			Match: config.PolicyMatch{
+				Topics: []string{"job.deploy"},
+				Labels: map[string]string{"path.class": "secret"},
+			},
+		},
+	}}
+	srv := newTierEvalServer(policy, invariants)
+
+	resp, err := srv.Evaluate(context.Background(), &pb.PolicyCheckRequest{
+		JobId:  "job-1",
+		Topic:  "job.deploy",
+		Tenant: "default",
+		Labels: map[string]string{"path.class": "secret"},
+	})
+	if err != nil {
+		t.Fatalf("Evaluate returned error: %v", err)
+	}
+	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY || resp.GetRuleId() != "inv-deny-secret" {
+		t.Fatalf("decision/rule = %v/%q, want DENY/inv-deny-secret", resp.GetDecision(), resp.GetRuleId())
+	}
+}
+
+func TestEvaluate_NoTierMatchUsesMostRestrictiveDefault(t *testing.T) {
+	policy := &config.SafetyPolicy{
+		DefaultDecision: "allow",
+		TierDefaults: []config.PolicyTierDefault{
+			{Tier: config.PolicyTierWorkflow, Selector: config.PolicySelector{WorkflowID: "deploy-prod"}, Decision: "deny"},
+			{Tier: config.PolicyTierJob, Selector: config.PolicySelector{JobID: "job-allow"}, Decision: "allow"},
+		},
+	}
+	srv := newTierEvalServer(policy, nil)
+
+	for _, tc := range []struct {
+		name     string
+		jobID    string
+		workflow string
+		want     pb.DecisionType
+	}{
+		{name: "job default wins", jobID: "job-allow", workflow: "deploy-prod", want: pb.DecisionType_DECISION_TYPE_ALLOW},
+		{name: "workflow default wins", workflow: "deploy-prod", want: pb.DecisionType_DECISION_TYPE_DENY},
+		{name: "global default fallback", workflow: "deploy-dev", want: pb.DecisionType_DECISION_TYPE_ALLOW},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := srv.Evaluate(context.Background(), &pb.PolicyCheckRequest{
+				JobId:  tc.jobID,
+				Topic:  "job.deploy",
+				Tenant: "default",
+				Labels: map[string]string{"workflow_id": tc.workflow},
+			})
+			if err != nil {
+				t.Fatalf("Evaluate returned error: %v", err)
+			}
+			if resp.GetDecision() != tc.want {
+				t.Fatalf("decision = %v, want %v", resp.GetDecision(), tc.want)
+			}
+		})
+	}
+}
+
+func TestQA_EDGE053_WorkflowScopedInputRuleDoesNotLeak(t *testing.T) {
+	basePolicy := &config.SafetyPolicy{
+		DefaultDecision: "allow",
+		Rules: []config.PolicyRule{
+			{
+				ID:       "global-allow-default",
+				Tier:     config.PolicyTierGlobal,
+				Decision: "allow",
+				Match:    config.PolicyMatch{Topics: []string{"job.default"}},
+			},
+		},
+	}
+	workflowFragment := &config.SafetyPolicy{
+		Tier:     config.PolicyTierWorkflow,
+		Selector: config.PolicySelector{WorkflowID: "wf-prod"},
+		InputRules: []config.InputPolicyRule{
+			{
+				ID:       "workflow-deny-secret-input",
+				Severity: "high",
+				Decision: "deny",
+				Reason:   "wf-prod secret input blocked",
+				Match: config.InputPolicyMatch{
+					Topics:   []string{"job.default"},
+					Keywords: []string{"secret"},
+				},
+			},
+		},
+	}
+	policy := mergePolicies(basePolicy, workflowFragment)
+	srv := &server{scanners: loadOutputScanners()}
+	if err := srv.setPolicyWithBundleCount(context.Background(), policy, "cfg:input-tiers", 0); err != nil {
+		t.Fatalf("setPolicyWithBundleCount: %v", err)
+	}
+
+	other, err := srv.Evaluate(context.Background(), &pb.PolicyCheckRequest{
+		JobId:  "job-other",
+		Topic:  "job.default",
+		Tenant: "default",
+		Labels: map[string]string{
+			"workflow_id":     "wf-other",
+			"_content.prompt": "contains secret but belongs to another workflow",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Evaluate wf-other returned error: %v", err)
+	}
+	if other.GetDecision() != pb.DecisionType_DECISION_TYPE_ALLOW {
+		t.Fatalf("wf-other decision = %v rule=%q reason=%q, want ALLOW without workflow input_rule leak",
+			other.GetDecision(), other.GetRuleId(), other.GetReason())
+	}
+
+	var logBuf bytes.Buffer
+	origLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	defer slog.SetDefault(origLogger)
+
+	prod, err := srv.Evaluate(context.Background(), &pb.PolicyCheckRequest{
+		JobId:  "job-prod",
+		Topic:  "job.default",
+		Tenant: "default",
+		Labels: map[string]string{
+			"workflow_id":     "wf-prod",
+			"_content.prompt": "contains secret in prod workflow",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Evaluate wf-prod returned error: %v", err)
+	}
+	if prod.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY || prod.GetRuleId() != "workflow-deny-secret-input" {
+		t.Fatalf("wf-prod decision/rule = %v/%q, want DENY/workflow-deny-secret-input",
+			prod.GetDecision(), prod.GetRuleId())
+	}
+	if !strings.Contains(logBuf.String(), "ruleTier=workflow") {
+		t.Fatalf("input-rule audit/log evidence did not record workflow tier: %s", logBuf.String())
+	}
+}
+
+func TestQA_EDGE053_InputRuleTierPrecedenceJobBeforeWorkflow(t *testing.T) {
+	basePolicy := &config.SafetyPolicy{
+		DefaultDecision: "allow",
+		Rules: []config.PolicyRule{
+			{
+				ID:       "global-allow-default",
+				Tier:     config.PolicyTierGlobal,
+				Decision: "allow",
+				Match:    config.PolicyMatch{Topics: []string{"job.default"}},
+			},
+		},
+	}
+	workflowFragment := &config.SafetyPolicy{
+		Tier:     config.PolicyTierWorkflow,
+		Selector: config.PolicySelector{WorkflowID: "wf-prod"},
+		InputRules: []config.InputPolicyRule{
+			{
+				ID:       "workflow-approve-secret-input",
+				Severity: "high",
+				Decision: "require_approval",
+				Reason:   "wf-prod secret input requires approval",
+				Match: config.InputPolicyMatch{
+					Topics:   []string{"job.default"},
+					Keywords: []string{"secret"},
+				},
+			},
+		},
+	}
+	jobFragment := &config.SafetyPolicy{
+		Tier:     config.PolicyTierJob,
+		Selector: config.PolicySelector{JobID: "job/secret/policy"},
+		InputRules: []config.InputPolicyRule{
+			{
+				ID:       "job-deny-secret-input",
+				Severity: "critical",
+				Decision: "deny",
+				Reason:   "job secret input blocked",
+				Match: config.InputPolicyMatch{
+					Topics:   []string{"job.default"},
+					Keywords: []string{"secret"},
+				},
+			},
+		},
+	}
+	policy := mergePolicies(mergePolicies(basePolicy, workflowFragment), jobFragment)
+	srv := &server{scanners: loadOutputScanners()}
+	if err := srv.setPolicyWithBundleCount(context.Background(), policy, "cfg:input-tier-precedence", 0); err != nil {
+		t.Fatalf("setPolicyWithBundleCount: %v", err)
+	}
+
+	var logBuf bytes.Buffer
+	origLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	defer slog.SetDefault(origLogger)
+
+	resp, err := srv.Evaluate(context.Background(), &pb.PolicyCheckRequest{
+		JobId:  "job-prod",
+		Topic:  "job.default",
+		Tenant: "default",
+		Labels: map[string]string{
+			"workflow_id":          "wf-prod",
+			"policy.attachment_id": "job/secret/policy",
+			"_content.prompt":      "contains secret",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Evaluate returned error: %v", err)
+	}
+	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY || resp.GetRuleId() != "job-deny-secret-input" {
+		t.Fatalf("decision/rule = %v/%q, want DENY/job-deny-secret-input; logs=%s",
+			resp.GetDecision(), resp.GetRuleId(), logBuf.String())
+	}
+	if !strings.Contains(logBuf.String(), "ruleTier=job") {
+		t.Fatalf("input-rule audit/log evidence did not record job tier: %s", logBuf.String())
+	}
+}
+
+func TestSelectInputRulesForScopeOrdersByTierPrecedence(t *testing.T) {
+	rules := []compiledInputRule{
+		{id: "workflow-first", tier: config.PolicyTierWorkflow, selector: config.PolicySelector{WorkflowID: "wf-prod"}},
+		{id: "global-first", tier: config.PolicyTierGlobal},
+		{id: "job-first", tier: config.PolicyTierJob, selector: config.PolicySelector{JobID: "job/secret/policy"}},
+		{id: "workflow-second", tier: config.PolicyTierWorkflow, selector: config.PolicySelector{WorkflowID: "wf-prod"}},
+		{id: "job-second", tier: config.PolicyTierJob, selector: config.PolicySelector{JobID: "job/secret/policy"}},
+		{id: "global-second", tier: config.PolicyTierGlobal},
+		{id: "workflow-other", tier: config.PolicyTierWorkflow, selector: config.PolicySelector{WorkflowID: "wf-other"}},
+		{id: "job-other", tier: config.PolicyTierJob, selector: config.PolicySelector{JobID: "job/other/policy"}},
+	}
+
+	selected := selectInputRulesForScope(rules, "wf-prod", "job/secret/policy")
+	got := make([]string, 0, len(selected))
+	for _, rule := range selected {
+		got = append(got, rule.id)
+	}
+	want := []string{
+		"job-first",
+		"job-second",
+		"workflow-first",
+		"workflow-second",
+		"global-first",
+		"global-second",
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("selected input rule order = %v, want %v", got, want)
+	}
+}
+
+func newTierEvalServer(policy, invariants *config.SafetyPolicy) *server {
+	var invariantRules []config.PolicyRule
+	if invariants != nil {
+		invariantRules = append([]config.PolicyRule{}, invariants.Rules...)
+	}
+	return &server{
+		policy:   applyKernelInvariants(policy, invariants),
+		global:   FromSafetyPolicy(policy, invariantRules, nil, "cfg:tiers"),
+		scanners: loadOutputScanners(),
+		snapshot: "cfg:tiers",
+	}
+}
+
 func TestCheckAppliesEffectiveConfigDeny(t *testing.T) {
 	srv := &server{policy: &config.SafetyPolicy{
 		DefaultTenant: "default",
@@ -292,7 +634,7 @@ rules:
 		configID:    "policy",
 		configKey:   "bundles",
 	}
-	policy, snapshot, _, err := loader.loadFragments(context.Background())
+	policy, _, snapshot, _, err := loader.loadFragments(context.Background())
 	if err != nil {
 		t.Fatalf("load fragments: %v", err)
 	}
@@ -351,7 +693,7 @@ default_decision: maybe
 		configID:    "policy",
 		configKey:   "bundles",
 	}
-	policy, snapshot, _, err := loader.loadFragments(context.Background())
+	policy, _, snapshot, _, err := loader.loadFragments(context.Background())
 	// Malformed fragments are now skipped instead of failing all
 	if err != nil {
 		t.Fatalf("expected no error (malformed fragments should be skipped): %v", err)
@@ -438,7 +780,7 @@ func TestPolicyLoaderFromSource(t *testing.T) {
 	}
 
 	loader := &policyLoader{source: path}
-	policy, snapshot, _, err := loader.Load(context.Background())
+	policy, _, snapshot, _, err := loader.Load(context.Background())
 	if err != nil {
 		t.Fatalf("load policy: %v", err)
 	}
@@ -1390,6 +1732,8 @@ func TestMergePolicies_InputRules(t *testing.T) {
 		},
 	}
 	extra := &config.SafetyPolicy{
+		Tier:     config.PolicyTierWorkflow,
+		Selector: config.PolicySelector{WorkflowID: "wf-prod"},
 		InputRules: []config.InputPolicyRule{
 			{ID: "ir2", Severity: "medium", Decision: "require_approval"},
 		},
@@ -1397,6 +1741,10 @@ func TestMergePolicies_InputRules(t *testing.T) {
 	merged := mergePolicies(base, extra)
 	if len(merged.InputRules) != 2 {
 		t.Fatalf("expected 2 input rules, got %d", len(merged.InputRules))
+	}
+	if merged.InputRules[1].Tier != config.PolicyTierWorkflow ||
+		merged.InputRules[1].Selector.WorkflowID != "wf-prod" {
+		t.Fatalf("input rule did not inherit workflow tier/selector: %+v", merged.InputRules[1])
 	}
 }
 
@@ -2318,7 +2666,9 @@ func TestRiskTagSpoofing_TopicWithoutDeriver(t *testing.T) {
 	srv := &server{tagDeriverRegistry: tagRegistry}
 	_ = srv.setPolicyWithBundleCount(context.Background(), policy, "test-snapshot", 0)
 
-	// No deriver for job.cordclaw.exec → client tags used as-is.
+	// CordClaw is a Cordum Edge capability; job.cordclaw.* remains the
+	// stable policy topic namespace. No deriver for job.cordclaw.exec →
+	// client tags used as-is.
 	req := &pb.PolicyCheckRequest{
 		JobId:  "job-claw-1",
 		Topic:  "job.cordclaw.exec",

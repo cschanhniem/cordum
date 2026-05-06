@@ -75,7 +75,7 @@ Tenant access is enforced by middleware and per-handler checks.
 
 For websocket upgrades, API key can be provided as subprotocol:
 
-- `Sec-WebSocket-Protocol: cordum-api-key, <base64url(api_key)>`
+- `Sec-WebSocket-Protocol: cordum-api-key.<base64url(api_key)>`
 
 ## Common Error Format
 
@@ -87,6 +87,22 @@ Most handlers return:
   "status": 400
 }
 ```
+
+All `/api/v1/edge/*` handlers return the Edge contract shape instead:
+
+```json
+{
+  "code": "invalid_request",
+  "message": "sanitized human-readable message",
+  "request_id": "req_...",
+  "details": {}
+}
+```
+
+Edge `details` is optional and sanitized; Edge errors must not echo raw tool payloads,
+API keys, signed URLs, or other secrets. Edge clients should switch on `code`
+(for example `idempotency_conflict`, `not_found`, or `request_too_large`) rather
+than parsing `message`.
 
 Common statuses:
 
@@ -109,7 +125,18 @@ Common statuses:
 
 ## Idempotency
 
-Used by job/workflow submission flows.
+Used by job/workflow submission flows and by Edge event ingestion:
+
+- `POST /api/v1/edge/events`
+- `POST /api/v1/edge/events/batch`
+
+For Edge event ingestion, keys are scoped by tenant and endpoint. A retry with
+the same key and the same normalized/redacted request hash replays the first
+response without appending duplicate events. Reusing the same key with a
+different normalized request returns `409` with Edge error code
+`idempotency_conflict`. Edge idempotency records store request hashes plus
+bounded response metadata/body only; they do not store raw request payloads,
+raw tool input, or raw client-provided idempotency keys.
 
 Accepted keys:
 
@@ -1825,6 +1852,10 @@ curl -sS -X POST http://localhost:8081/api/v1/policy/evaluate \
 
 ### Policy governance endpoints
 
+CordClaw is part of Cordum Edge. The `job.cordclaw.*` topic namespace and
+`cordclaw-*` rule IDs shown below are stable Edge policy identifiers kept for
+wire compatibility; do not treat CordClaw as a separate product surface.
+
 ### POST `/api/v1/policy/replay`
 
 - Auth: required + admin
@@ -2712,8 +2743,10 @@ Note: There are no `/healthz`, `/readyz`, or `/api/v1/system/health` routes in c
 
 - Auth: required + admin role
 - Upgrade: websocket
-- API key via `X-API-Key` or websocket subprotocol (`cordum-api-key, <base64url(key)>`)
-- Streams bus events (`sys.job.*`, `sys.audit.*`) filtered by tenant permissions.
+- API key via `X-API-Key` or websocket subprotocol (`cordum-api-key.<base64url(key)>`)
+- Streams existing CAP BusPacket protojson events (`sys.job.*`, `sys.audit.*`, heartbeats) and dedicated Edge action envelopes filtered by tenant permissions.
+- Edge messages use `{ "type": "edge.event", "tenant_id": "...", "session_id": "...", "execution_id": "...", "event": { ... } }`; the `event` payload matches `core/edge/schema/agent_action_event.schema.json`.
+- Edge stream forwarding is best-effort after successful Edge event persistence. On reconnect, clients should poll the Edge REST APIs for authoritative state.
 - Server sends ping frames every 30 seconds by default (`GATEWAY_WS_PING_INTERVAL`) and expects pong handling to keep the socket alive.
 - Credentials are revalidated every 120 seconds; definitive revocation closes the socket with a policy-violation close frame.
 
@@ -2721,7 +2754,8 @@ Note: There are no `/healthz`, `/readyz`, or `/api/v1/system/health` routes in c
 
 - Auth: required + tenant access to that job
 - Upgrade: websocket
-- Streams only events for the specified job id.
+- Streams only CAP job events for the specified job id.
+- Generic Edge `edge.event` envelopes are not delivered to this endpoint unless a future explicit job-linked mirror is added.
 - Uses the same ping/pong keepalive and credential revalidation behavior as the global stream.
 
 ---

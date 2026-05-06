@@ -5,7 +5,7 @@ PROTO_FILES = api.proto context.proto output_policy.proto
 OPENAPI_OUT = docs/api/openapi
 
 BIN_DIR ?= bin
-SERVICES = cordum-api-gateway cordum-scheduler cordum-safety-kernel cordum-workflow-engine cordum-context-engine cordum-mcp cordumctl
+SERVICES = cordum-api-gateway cordum-scheduler cordum-safety-kernel cordum-workflow-engine cordum-context-engine cordum-mcp cordumctl cordum-hook cordum-agentd cordum-claude
 
 VERSION ?= dev
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -67,6 +67,9 @@ docker:
 smoke:
 	./tools/scripts/platform_smoke.sh
 
+edge-fake-hook-e2e:
+	bash tools/scripts/edge_fake_hook_e2e.sh
+
 verify-images:
 	CORDUM_VERIFY_IMAGES=1 ./tools/scripts/verify_published_images.sh
 
@@ -85,13 +88,31 @@ dev-down:
 dev-logs:
 	docker compose logs -f
 
+# edge-rebuild-e2e rebuilds the local Edge binaries AND the api-gateway image
+# in lockstep, then recreates the api-gateway container. Run BEFORE every
+# `CORDUM_INTEGRATION=1 bash tools/scripts/edge_fake_hook_e2e.sh` invocation
+# whenever cordum-hook, cordum-agentd, or any code under core/edge/* /
+# core/controlplane/gateway/* has changed since the running stack was last
+# built. EDGE-044 root cause: the gateway-side classifier lives in the
+# api-gateway image; rebuilding only ./bin/cordum-hook + ./bin/cordum-agentd
+# produces fresh agentd talking to a stale gateway, and the post-EDGE-041
+# `_redacted` keys silently miss the bare-key classifier in the old image,
+# which falls through to default-deny and breaks every rule match.
+edge-rebuild-e2e:
+	go build -o ./bin/cordum-hook ./cmd/cordum-hook
+	go build -o ./bin/cordum-agentd ./cmd/cordum-agentd
+	go build -o ./bin/cordumctl ./cmd/cordumctl
+	go build -o ./bin/cordum-claude ./cmd/cordum-claude
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml build api-gateway
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --no-deps api-gateway
+
 help:
 	@echo ""
 	@echo "Cordum Makefile targets:"
 	@echo ""
 	@echo "  make help               Show this help message"
 	@echo "  make build              Build all services (runs proto first)"
-	@echo "  make build SERVICE=X    Build a single service (e.g. SERVICE=cordum-scheduler)"
+	@echo "  make build SERVICE=X    Build a single service (e.g. SERVICE=cordum-scheduler, cordum-hook, or cordum-agentd)"
 	@echo "  make proto              Regenerate protobuf Go code"
 	@echo "  make test               Run all Go tests"
 	@echo "  make test-integration   Run integration tests (requires Docker)"
@@ -100,6 +121,7 @@ help:
 	@echo "  make openapi            Validate cordum-api.yaml (Redocly lint)"
 	@echo "  make docker SERVICE=X   Build Docker image for a service"
 	@echo "  make smoke              Run platform smoke tests"
+	@echo "  make edge-fake-hook-e2e Run Edge fake-hook E2E (CI-safe; SKIP without CORDUM_INTEGRATION=1)"
 	@echo "  make verify-images      Verify published GHCR images (pull + cosign + multi-arch)"
 	@echo "  make demo-quickstart-test  End-to-end test for the demo-quickstart pack"
 	@echo "  make demo-mock-bank-test   End-to-end test for the demo-mock-bank pack (all three verdicts)"
@@ -123,4 +145,4 @@ soak-ws-full:
 	@echo "Running 2-hour full WebSocket soak test..."
 	./tools/scripts/ws_soak_test.sh full
 
-.PHONY: help proto build build-all $(SERVICES:%=build-%) test test-integration coverage coverage-core openapi openapi-validate docker smoke verify-images demo-quickstart-test demo-mock-bank-test dev-up dev-down dev-logs soak-ws soak-ws-quick soak-ws-full
+.PHONY: help proto build build-all $(SERVICES:%=build-%) test test-integration coverage coverage-core openapi openapi-validate docker smoke verify-images demo-quickstart-test demo-mock-bank-test dev-up dev-down dev-logs edge-rebuild-e2e soak-ws soak-ws-quick soak-ws-full

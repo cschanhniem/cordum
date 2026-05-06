@@ -27,7 +27,7 @@ User management (admin only):
 - `POST /api/v1/users` - Create a new user
 
 Common endpoints:
-- Status/stream: `GET /api/v1/status`, WebSocket `GET /api/v1/stream`
+- Status/stream: `GET /api/v1/status`, WebSocket `GET /api/v1/stream` (CAP BusPacket protojson plus `edge.event` envelopes)
 - Jobs: `GET /api/v1/jobs`, `GET /api/v1/jobs/{id}`, `GET /api/v1/jobs/{id}/stream` (WebSocket), `GET /api/v1/jobs/{id}/decisions`, `POST /api/v1/jobs`, `POST /api/v1/jobs/{id}/cancel`, `POST /api/v1/jobs/{id}/remediate`
 - Traces: `GET /api/v1/traces/{id}`
 - Workflows: `GET/POST /api/v1/workflows`, `GET/DELETE /api/v1/workflows/{id}`
@@ -43,12 +43,39 @@ Common endpoints:
 - DLQ: `GET /api/v1/dlq`, `GET /api/v1/dlq/page`, `DELETE /api/v1/dlq/{job_id}`, `POST /api/v1/dlq/{job_id}/retry`
 - Memory pointers: `GET /api/v1/memory?ptr=...`
 
+### Edge agent governance APIs
+Tags: edge, agent-governance, compliance-firewall
+
+Cordum Edge P0 routes live under `/api/v1/edge/*` and use the standard Gateway
+auth headers plus `X-Tenant-ID`. They provide tenant-scoped agent sessions,
+executions, action events, policy evaluation, approvals, and evidence export.
+Edge actions are not Cordum Jobs unless linked to a real production
+`job_id`/workflow run.
+
+Route families:
+- Sessions: `POST/GET /api/v1/edge/sessions`, `GET /api/v1/edge/sessions/{session_id}`, `POST /api/v1/edge/sessions/{session_id}/heartbeat`, `POST /api/v1/edge/sessions/{session_id}/end`
+- Executions: `POST /api/v1/edge/executions`, `GET /api/v1/edge/executions/{execution_id}`, `POST /api/v1/edge/executions/{execution_id}/end`
+- Evaluate: `POST /api/v1/edge/evaluate`
+- Approvals: `GET /api/v1/edge/approvals`, `GET /api/v1/edge/approvals/{approval_ref}`, `POST /api/v1/edge/approvals/{approval_ref}/approve`, `POST /api/v1/edge/approvals/{approval_ref}/wait`, `POST /api/v1/edge/approvals/{approval_ref}/reject`
+- Events: `POST /api/v1/edge/events`, `POST /api/v1/edge/events/batch`, `GET /api/v1/edge/sessions/{session_id}/events`, `GET /api/v1/edge/executions/{execution_id}/events`
+- Export: `POST /api/v1/edge/sessions/{session_id}/export`
+
+See [Edge API reference](edge/api.md) for request/response shapes, stable error
+codes, idempotency, approval visibility, and artifact export behavior. The
+canonical schema remains [OpenAPI](api/openapi/cordum-api.yaml).
+
 ### Job event streaming (WebSocket)
 Tags: websocket, jobs, streaming
 
 Use `GET /api/v1/jobs/{id}/stream` to receive job events for a single job. The
 connection uses the same API key WebSocket protocol as `/api/v1/stream` and
 requires `X-Tenant-ID` (or `?tenant_id=`) for tenant scoping.
+
+Use `GET /api/v1/stream` for the global dashboard stream. It emits the existing
+CAP BusPacket protojson messages and dedicated Edge action envelopes with
+`type: "edge.event"`, `tenant_id`, `session_id`, `execution_id`, and `event`
+payloads matching `core/edge/schema/agent_action_event.schema.json`. Generic
+Edge events are not delivered to `/api/v1/jobs/{id}/stream`.
 
 ## gRPC API
 

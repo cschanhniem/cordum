@@ -1,0 +1,28 @@
+apiVersion: cordum.io/v1alpha1
+kind: Pack
+
+metadata:
+  id: cordum-edge-pack
+  version: 0.1.0
+  title: Cordum Edge Policy Templates
+  description: Policy-only Edge templates and simulation fixtures for Claude Code governance.
+
+compatibility:
+  protocolVersion: 1
+  minCoreVersion: 0.6.0
+
+overlays:
+  policy:
+    - name: demo-edge-policy
+      strategy: bundle_fragment
+      path: overlays/policy.fragment.yaml
+    # NOTE: overlays/policy.production.fragment.yaml is intentionally NOT
+    # registered here. It ships in this pack as a COPYABLE TEMPLATE for
+    # customers building their own production overlay, not as an active
+    # policy. Loading both fragments simultaneously caused last-seen-wins
+    # rule merging where the production fragment's `default_decision: deny`
+    # overrode the demo fragment's `default_decision: allow`, breaking the
+    # demo flow (every Claude Glob/Bash/Write call hit "no matching rule"
+    # default-deny). Customers wanting a production overlay should fork
+    # this pack, replace overlays/policy.fragment.yaml with their tuned
+    # rules, and ship as their own pack.

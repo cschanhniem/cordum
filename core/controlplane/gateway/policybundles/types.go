@@ -16,6 +16,14 @@ const (
 	PolicyAuditID        = "policy_audit"
 	PolicyAuditKey       = "entries"
 	PolicyStudioPrefix   = "secops/"
+
+	// PolicyInvariantsBundleKey identifies the dedicated security-floor
+	// bundle authored by SecOps. Rules from this bundle are applied with
+	// DENY-uncrossable precedence by ApplyInvariants — invariant DENY
+	// rules are emitted at the front of merged.Rules so first-match
+	// evaluators short-circuit to deny, and invariant ALLOW rules are
+	// emitted at the back so any explicit DENY (any source) still wins.
+	PolicyInvariantsBundleKey = PolicyStudioPrefix + "invariants"
 )
 
 // ---------------------------------------------------------------------------
@@ -110,6 +118,7 @@ type PolicyAuditEntry struct {
 
 type PolicyRuleSource struct {
 	FragmentID  string `json:"fragment_id"`
+	Tier        string `json:"tier,omitempty"`
 	PackID      string `json:"pack_id,omitempty"`
 	OverlayName string `json:"overlay_name,omitempty"`
 	Version     string `json:"version,omitempty"`

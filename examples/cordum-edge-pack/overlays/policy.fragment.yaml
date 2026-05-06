@@ -1,0 +1,171 @@
+version: edge-policy-demo-v0
+# Default-allow for the DEMO pack. Production deployments MUST override this
+# to default_decision: deny and write explicit allow rules per tool/path.
+# The demo's value-prop is showing the 3 verdicts (allow / deny /
+# require_approval) on common Claude actions; default-deny would block every
+# unmapped tool (Glob, Grep, generic Read, generic Bash) and bury the actual
+# governance story under "no matching rule" denials. The explicit deny rules
+# below still fire first via first-match evaluation, so secret reads,
+# destructive shell, and unknown high-risk actions remain blocked.
+default_decision: allow
+
+rules:
+  # EDGE-008/009 mapping: Claude Read/Edit/Bash actions are classified into
+  # topic job.edge.action with capability/risk_tags plus labels such as
+  # hook.tool_name, path.class, command.class, and command.family. This demo
+  # fragment never matches raw hook payload fields.
+  - id: claude-code.deny-secret-reads
+    match:
+      topics:
+        - job.edge.action
+      risk_tags:
+        - secrets
+      labels:
+        "path.class": secret
+    decision: deny
+    reason: "Claude Code attempted to access a secret-like path; demo policy denies secret reads by default."
+    remediations:
+      - id: redact-secret-access
+        title: "Use redacted configuration evidence"
+        summary: "Do not read .env, SSH, cloud credential, token, or key material. Use a redacted config example or ask a human to provide a safe value."
+
+  # Destructive Bash commands are identified by capability exec.shell,
+  # risk_tags including destructive/filesystem, and command.class=destructive.
+  - id: claude-code.deny-destructive-shell
+    match:
+      topics:
+        - job.edge.action
+      capabilities:
+        - exec.shell
+      risk_tags:
+        - destructive
+      labels:
+        "command.class": destructive
+    decision: deny
+    reason: "Destructive recursive shell operations are denied in the demo policy."
+    remediations:
+      - id: use-safe-cleanup
+        title: "Use a scoped cleanup command"
+        summary: "Replace recursive deletion with a reviewed, path-scoped cleanup or ask for approval outside the demo."
+
+  # File edits are mapped to capability file.write with risk_tags including
+  # write/filesystem/source_code. Demo mode requires a human approval before
+  # edits are allowed.
+  - id: claude-code.require-approval-for-edits
+    match:
+      topics:
+        - job.edge.action
+      capabilities:
+        - file.write
+      risk_tags:
+        - write
+    decision: require_approval
+    reason: "Demo mode requires approval before Claude Code edits files."
+
+  # Git pushes are Bash commands classified as command.family=git_push with
+  # risk_tags deploy/git/network.
+  - id: claude-code.require-approval-for-vcs-push
+    match:
+      topics:
+        - job.edge.action
+      capabilities:
+        - exec.shell
+      risk_tags:
+        - git
+      labels:
+        "command.family": git_push
+    decision: require_approval
+    reason: "Publishing repository state with git push requires approval."
+
+  # Generic network egress such as curl/wget is classified as exec.shell with
+  # command.class=network and risk_tags including network. Demo mode requires
+  # approval rather than silently allowing outbound calls.
+  - id: claude-code.require-approval-for-network
+    match:
+      topics:
+        - job.edge.action
+      capabilities:
+        - exec.shell
+      risk_tags:
+        - network
+      labels:
+        "command.class": network
+    decision: require_approval
+    reason: "Outbound network access from Claude Code requires approval in demo mode."
+
+  # User prompts (UserPromptSubmit, ConfigChange, FileChanged, PolicyDecision,
+  # PermissionRequest) are tool-less hook events that carry session-level
+  # metadata, not tool calls. They're audit/observability surfaces — the
+  # actionable governance happens at the tool-call hooks (PreToolUse,
+  # PostToolUse) above. Without this rule, every user prompt falls through to
+  # default-deny in enforce mode and blocks the entire session before any tool
+  # is ever called. Customers wanting to gate prompts (prompt-injection
+  # screening, jailbreak patterns) can add a more specific rule above this one.
+  - id: claude-code.allow-user-prompt-submit
+    match:
+      topics:
+        - job.edge.action
+      labels:
+        "edge.kind": hook.user_prompt_submit
+    decision: allow
+    reason: "User prompt submitted; recorded for audit. Governance enforces at tool-call hooks."
+
+  - id: claude-code.allow-tool-less-hook-metadata
+    match:
+      topics:
+        - job.edge.action
+      capabilities:
+        - edge.unknown
+      labels:
+        "hook.tool_name": ""
+    decision: allow
+    reason: "Tool-less hook metadata event (config change, file changed, permission request) recorded for audit; no actionable target."
+
+  # Safe local test/build commands are Bash commands classified with
+  # command.class=safe and command.family=test or build. This rule is deliberately
+  # after denies/approvals so first-match policy evaluation remains fail-closed.
+  - id: claude-code.allow-safe-build-test
+    match:
+      topics:
+        - job.edge.action
+      capabilities:
+        - exec.shell
+      risk_tags:
+        - test
+        - build
+      labels:
+        "command.class": safe
+    decision: allow
+    reason: "Safe local test/build commands are allowed by the demo policy."
+
+  # Unknown high-impact hook actions are explicitly denied with a stable rule ID
+  # instead of relying on the default deny fallback. The classifier marks these
+  # as capability edge.unknown, risk_tags unknown/review_required/destructive,
+  # and unknown.impact=high.
+  - id: claude-code.deny-unknown-high-risk
+    match:
+      topics:
+        - job.edge.action
+      capabilities:
+        - edge.unknown
+      risk_tags:
+        - unknown
+        - review_required
+        - destructive
+      labels:
+        "unknown.impact": high
+    decision: deny
+    reason: "Unknown high-impact Claude Code actions are denied until a specific policy classification exists."
+
+  # CATCH-ALL ALLOW (DEMO ONLY) — fires when no preceding rule matches. Lives
+  # at the end so the explicit denies/approvals/safe-allows above all run
+  # first via first-match policy evaluation. Ensures the demo doesn't fall
+  # into the global default_decision (which other co-installed packs may set
+  # to deny). PRODUCTION DEPLOYMENTS MUST REMOVE THIS RULE and rely on
+  # default_decision=deny + explicit allows.
+  - id: claude-code.allow-edge-actions-default
+    match:
+      topics:
+        - job.edge.action
+    decision: allow
+    reason: "Demo catch-all: edge action recorded for audit; no preceding deny/approval rule matched."
