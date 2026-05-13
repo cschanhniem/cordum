@@ -4,8 +4,9 @@ import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentIdentity, AgentStats } from "@/api/types";
+import { ApiError } from "@/api/client";
 import AgentsPage from "./AgentsPage";
-import AgentIdentityDetailPage from "./AgentIdentityDetailPage";
+import AgentIdentityPanel from "@/components/agents/AgentIdentityPanel";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -70,19 +71,6 @@ vi.mock("@/components/agents/PoolGroupedView", () => ({
   PoolGroupedView: () => null,
 }));
 
-// Mock useParams for AgentIdentityDetailPage — MemoryRouter alone
-// doesn't extract path params without a matching Route.
-const { mockParams } = vi.hoisted(() => ({
-  mockParams: { id: "agent-001" } as Record<string, string>,
-}));
-
-vi.mock("react-router-dom", async () => {
-  const actual = await vi.importActual<typeof import("react-router-dom")>("react-router-dom");
-  return {
-    ...actual,
-    useParams: () => mockParams,
-  };
-});
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -147,7 +135,7 @@ function renderPage(route = "/agents") {
   };
 }
 
-function renderDetailPage(id = "agent-001") {
+function renderIdentityPanel(id = "agent-001") {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -156,8 +144,8 @@ function renderDetailPage(id = "agent-001") {
   act(() => {
     root.render(
       <QueryClientProvider client={qc}>
-        <MemoryRouter initialEntries={[`/agents/identity/${id}`]}>
-          <AgentIdentityDetailPage />
+        <MemoryRouter initialEntries={[`/agents/${id}?tab=identity`]}>
+          <AgentIdentityPanel agentId={id} />
         </MemoryRouter>
       </QueryClientProvider>,
     );
@@ -335,7 +323,7 @@ describe("AgentIdentityTab rendered", () => {
 /* Tests: Identity Detail Page (rendered component tests)              */
 /* ------------------------------------------------------------------ */
 
-describe("AgentIdentityDetailPage rendered", () => {
+describe("AgentIdentityPanel rendered", () => {
   beforeEach(() => {
     hookState.identity = {
       data: makeAgent({
@@ -360,7 +348,7 @@ describe("AgentIdentityDetailPage rendered", () => {
   });
 
   it("renders agent name, status badge, and risk tier", () => {
-    const { container, cleanup } = renderDetailPage();
+    const { container, cleanup } = renderIdentityPanel();
     try {
       expect(container.textContent).toContain("fraud-detector");
       expect(container.textContent).toContain("active");
@@ -371,7 +359,7 @@ describe("AgentIdentityDetailPage rendered", () => {
   });
 
   it("renders 7-day activity stats", () => {
-    const { container, cleanup } = renderDetailPage();
+    const { container, cleanup } = renderIdentityPanel();
     try {
       expect(container.textContent).toContain("42");
       expect(container.textContent).toContain("jobs");
@@ -383,11 +371,60 @@ describe("AgentIdentityDetailPage rendered", () => {
   });
 
   it("renders permissions tag lists", () => {
-    const { container, cleanup } = renderDetailPage();
+    const { container, cleanup } = renderIdentityPanel();
     try {
       expect(container.textContent).toContain("job.fraud.scan");
       expect(container.textContent).toContain("pool-risk");
       expect(container.textContent).toContain("pii");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("renders EmptyState (not ErrorBanner) when useAgentIdentity returns 404", () => {
+    hookState.identity = {
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: new ApiError(404, "Not Found"),
+    };
+    const { container, cleanup } = renderIdentityPanel();
+    try {
+      expect(container.textContent).toContain("No identity profile");
+      expect(container.textContent).toContain("cordumctl agents identity create");
+      expect(container.textContent).not.toContain("Failed to load agent identity");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("renders ErrorBanner (not EmptyState) for ApiError 500", () => {
+    hookState.identity = {
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: new ApiError(500, "Internal Server Error"),
+    };
+    const { container, cleanup } = renderIdentityPanel();
+    try {
+      expect(container.textContent).toContain("Internal Server Error");
+      expect(container.textContent).not.toContain("No identity profile");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("renders ErrorBanner (not EmptyState) for a non-ApiError network error", () => {
+    hookState.identity = {
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: new Error("Network failure"),
+    };
+    const { container, cleanup } = renderIdentityPanel();
+    try {
+      expect(container.textContent).toContain("Network failure");
+      expect(container.textContent).not.toContain("No identity profile");
     } finally {
       cleanup();
     }

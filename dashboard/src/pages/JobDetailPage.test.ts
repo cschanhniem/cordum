@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Job } from "@/api/types";
 
-const { queryState, routerState, governanceState } = vi.hoisted(() => ({
+const { queryState, routerState, searchState, governanceState } = vi.hoisted(() => ({
   queryState: {
     current: {
       data: null as Job | null,
@@ -17,6 +17,9 @@ const { queryState, routerState, governanceState } = vi.hoisted(() => ({
     params: { id: "job-123" },
     navigate: vi.fn(),
   },
+  searchState: {
+    current: "",
+  },
   governanceState: {
     render: vi.fn(),
   },
@@ -29,6 +32,24 @@ vi.mock("@tanstack/react-query", () => ({
 vi.mock("react-router-dom", () => ({
   useParams: () => routerState.params,
   useNavigate: () => routerState.navigate,
+  useSearchParams: () => {
+    const [params, setParams] = React.useState(
+      () => new URLSearchParams(searchState.current),
+    );
+    const setSearchParams = (
+      nextInit:
+        | URLSearchParams
+        | ((prev: URLSearchParams) => URLSearchParams),
+    ) => {
+      setParams((prev) => {
+        const next =
+          typeof nextInit === "function" ? nextInit(prev) : nextInit;
+        searchState.current = next.toString();
+        return new URLSearchParams(next);
+      });
+    };
+    return [params, setSearchParams] as const;
+  },
 }));
 
 vi.mock("framer-motion", () => {
@@ -122,6 +143,7 @@ beforeEach(() => {
     refetch: vi.fn(),
   };
   routerState.params = { id: "job-123" };
+  searchState.current = "";
   routerState.navigate.mockReset();
   governanceState.render.mockReset();
 });
@@ -299,7 +321,7 @@ describe("Job status variant mapping", () => {
   });
 });
 
-describe("JobDetailPage governance tab integration", () => {
+describe("JobDetailPage policy trace tab integration", () => {
   it("renders the Agent Executions panel placeholder with the current job id", () => {
     const { container, cleanup } = renderPage();
 
@@ -310,27 +332,172 @@ describe("JobDetailPage governance tab integration", () => {
     }
   });
 
-  it("renders the governance tab and lazy-mounts the timeline on activation", () => {
+  it("renders the required tab set and lazy-mounts the policy trace timeline", () => {
     const { container, cleanup } = renderPage();
 
     try {
-      expect(container.textContent).toContain("Governance");
+      for (const label of ["Overview", "Audit Chain", "Inputs", "Outputs", "Policy Trace"]) {
+        expect(container.textContent).toContain(label);
+      }
       expect(governanceState.render).not.toHaveBeenCalled();
       expect(container.querySelector('[data-testid="governance-timeline"]')).toBeNull();
 
-      const governanceTab = Array.from(container.querySelectorAll("button")).find(
-        (button) => button.textContent?.includes("Governance"),
+      const policyTraceTab = Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent?.includes("Policy Trace"),
       );
-      expect(governanceTab).toBeTruthy();
+      expect(policyTraceTab).toBeTruthy();
 
       act(() => {
-        governanceTab?.dispatchEvent(
+        policyTraceTab?.dispatchEvent(
           new MouseEvent("click", { bubbles: true, cancelable: true }),
         );
       });
 
       expect(governanceState.render).toHaveBeenCalledTimes(1);
       expect(container.querySelector('[data-testid="governance-timeline"]')?.textContent).toContain('"jobId":"job-123"');
+      expect(searchState.current).toBe("tab=policy-trace");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("clicking Audit Chain tab updates URL to ?tab=audit-chain AND renders the audit-chain panel (task-90bb5ef3 reopen #1)", () => {
+    const { container, cleanup } = renderPage();
+    try {
+      // Pre-condition: not on audit-chain yet — Audit Chain heading is not in DOM.
+      expect(container.textContent).not.toContain("Execution Log");
+
+      const auditTab = Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent?.trim() === "Audit Chain",
+      );
+      expect(auditTab).toBeTruthy();
+      act(() => {
+        auditTab?.dispatchEvent(
+          new MouseEvent("click", { bubbles: true, cancelable: true }),
+        );
+      });
+      // URL roundtrip
+      expect(searchState.current).toBe("tab=audit-chain");
+      // Panel content render — the Audit Chain section header lives in the
+      // panel body. Asserting its presence proves the panel mounted, not
+      // just that the URL changed.
+      const auditHeadings = Array.from(container.querySelectorAll("h2"));
+      expect(
+        auditHeadings.some((h) => h.textContent?.trim() === "Audit Chain"),
+      ).toBe(true);
+      // Execution Log subheading is rendered in the audit-chain tab body.
+      expect(container.textContent).toContain("Execution Log");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("clicking Inputs tab updates URL to ?tab=inputs (task-90bb5ef3)", () => {
+    const { container, cleanup } = renderPage();
+    try {
+      const inputsTab = Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent?.trim() === "Inputs",
+      );
+      expect(inputsTab).toBeTruthy();
+      act(() => {
+        inputsTab?.dispatchEvent(
+          new MouseEvent("click", { bubbles: true, cancelable: true }),
+        );
+      });
+      expect(searchState.current).toBe("tab=inputs");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("clicking Outputs tab updates URL to ?tab=outputs (task-90bb5ef3)", () => {
+    const { container, cleanup } = renderPage();
+    try {
+      const outputsTab = Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent?.trim() === "Outputs",
+      );
+      expect(outputsTab).toBeTruthy();
+      act(() => {
+        outputsTab?.dispatchEvent(
+          new MouseEvent("click", { bubbles: true, cancelable: true }),
+        );
+      });
+      expect(searchState.current).toBe("tab=outputs");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("renders the parent runId via CodeBlock inline chip with copy-on-click (task-90bb5ef3 reopen #2)", () => {
+    queryState.current.data = makeJob({
+      workflowRunId: "wfr-banner-001",
+      workflowId: "wf-1",
+    });
+    const { container, cleanup } = renderPage();
+    try {
+      // ParentContextBanner is rendered inside the Overview tab's
+      // SmartContext block. Scope to that subtree so the assertion isn't
+      // confused by the MetadataBar Run chip (different inlineMaxLength).
+      const banner = Array.from(container.querySelectorAll("p")).find(
+        (p) => p.textContent === "Part of Workflow Run",
+      )?.parentElement?.parentElement;
+      expect(banner).toBeTruthy();
+      const chip = banner?.querySelector<HTMLButtonElement>(
+        `button[aria-label="Copy Run ID wfr-banner-001"]`,
+      );
+      expect(chip).not.toBeNull();
+      expect(chip?.textContent).toBe("wfr-banner-0"); // inlineMaxLength=12
+      expect(chip?.tagName).toBe("BUTTON");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("renders the SmartContext agent ID via CodeBlock inline chip with copy-on-click (task-90bb5ef3 reopen #2)", () => {
+    // SmartContext's agent block lives in PaymentContext, which renders
+    // only when context has merchant + total. Seed a payment-shaped job.
+    queryState.current.data = makeJob({
+      context: {
+        merchant: { name: "Acme Co", mcc: "5411" },
+        total: 4200,
+        currency: "USD",
+        agent: { id: "agent-fraud-detector-001", tap_verified: true },
+      },
+    });
+    const { container, cleanup } = renderPage();
+    try {
+      const chip = container.querySelector<HTMLButtonElement>(
+        `button[aria-label="Copy Agent ID agent-fraud-detector-001"]`,
+      );
+      expect(chip).not.toBeNull();
+      expect(chip?.tagName).toBe("BUTTON");
+      // inlineMaxLength=48 > id length, so chip shows full ID.
+      expect(chip?.textContent).toBe("agent-fraud-detector-001");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("clicking Overview tab clears the ?tab param when leaving another tab (task-90bb5ef3)", () => {
+    const { container, cleanup } = renderPage();
+    try {
+      // First navigate away from Overview.
+      const inputsTab = Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent?.trim() === "Inputs",
+      );
+      act(() => {
+        inputsTab?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      });
+      expect(searchState.current).toBe("tab=inputs");
+
+      // Now click Overview — URL should drop the param (default tab is implicit).
+      const overviewTab = Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent?.trim() === "Overview",
+      );
+      act(() => {
+        overviewTab?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      });
+      expect(searchState.current).toBe("");
     } finally {
       cleanup();
     }
@@ -352,8 +519,20 @@ describe("JobDetailPage 4-surface agreement (task-dc086833)", () => {
       // ParentContextBanner: "Part of Workflow Run" header (Run card, not Session fallback)
       expect(container.textContent).toContain("Part of Workflow Run");
       expect(container.textContent).not.toContain("Part of Copilot Session");
-      // ParentContextBanner Run line: "Run: wfr-meta-onl..." (slice(0,12) of "wfr-meta-only" is "wfr-meta-onl")
-      expect(container.textContent).toContain("Run: wfr-meta-onl");
+      // ParentContextBanner Run line: "Run:" label + CodeBlock chip with
+      // the 12-char preview. Post-task-90bb5ef3 reopen #2: the runId value
+      // is now rendered via the shared CodeBlock primitive (copy-on-click)
+      // not as a `${runId.slice(0,12)}...` inline string.
+      expect(container.textContent).toContain("Run:");
+      const banner = Array.from(container.querySelectorAll("p")).find(
+        (p) => p.textContent === "Part of Workflow Run",
+      )?.parentElement?.parentElement;
+      expect(banner).toBeTruthy();
+      const runChip = banner?.querySelector<HTMLButtonElement>(
+        `button[aria-label="Copy Run ID wfr-meta-only"]`,
+      );
+      expect(runChip).not.toBeNull();
+      expect(runChip?.textContent).toBe("wfr-meta-onl");
 
       // MetadataBar Run row PRESENT (the bug-fix surface): label "Run" with the runId value displayed
       const metaLabels = Array.from(
@@ -404,7 +583,20 @@ describe("JobDetailPage 4-surface agreement (task-dc086833)", () => {
     try {
       expect(container.textContent).toContain("Part of Workflow Run");
       expect(container.textContent).not.toContain("Part of Copilot Session");
-      expect(container.textContent).toContain("Run: wfr-label-on");
+      expect(container.textContent).toContain("Run:");
+      // Post-task-90bb5ef3 reopen #2: runId rendered via CodeBlock chip
+      // inside the ParentContextBanner. Scope the chip lookup to the banner
+      // subtree so we don't mis-match the MetadataBar Run chip (which uses
+      // inlineMaxLength=24 and shows the full ID).
+      const banner = Array.from(container.querySelectorAll("p")).find(
+        (p) => p.textContent === "Part of Workflow Run",
+      )?.parentElement?.parentElement;
+      expect(banner).toBeTruthy();
+      const labelChip = banner?.querySelector<HTMLButtonElement>(
+        `button[aria-label="Copy Run ID wfr-label-only"]`,
+      );
+      expect(labelChip).not.toBeNull();
+      expect(labelChip?.textContent).toBe("wfr-label-on");
 
       const metaLabels = Array.from(
         container.querySelectorAll("span.text-\\[10px\\]"),

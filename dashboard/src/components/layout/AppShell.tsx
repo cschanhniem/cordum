@@ -14,10 +14,10 @@ import { useKeyboardShortcuts, G_KEY_MAP } from "@/hooks/useKeyboardShortcuts";
 import { useDialogA11y } from "@/hooks/useDialogA11y";
 import { useReducedMotion } from "framer-motion";
 import { CommandPalette } from "@/components/CommandPalette";
+import { KeyboardShortcutsHelp } from "@/components/KeyboardShortcutsHelp";
 import { NotificationPopover } from "@/components/NotificationPopover";
 import { UserMenu } from "@/components/UserMenu";
 import { ConnectionIndicator } from "@/components/ConnectionIndicator";
-import { KeyboardShortcutsDialog } from "@/components/KeyboardShortcuts";
 import { TierBadge } from "@/components/TierBadge";
 import { TelemetryConsentBanner } from "@/components/TelemetryConsentBanner";
 import {
@@ -29,6 +29,7 @@ import {
   AlertTriangle,
   FileText,
   Settings,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Moon,
@@ -48,12 +49,16 @@ import {
 } from "lucide-react";
 
 /*
- * Navigation Structure — Revision v2
- * OPERATE → ORCHESTRATE → GOVERN → EXTEND → OBSERVE
+ * Navigation Structure — Revision v3 (Dashboard v2.5 IA cut)
+ * RUN → GOVERN → CATALOG → AUDIT → SETTINGS
  *
- * CTO reads top-down and sees their platform.
- * CISO clicks into GOVERN and finds depth.
- * Approvals is in ORCHESTRATE (it's an operational action, not policy authoring).
+ * Customer-task language. Run absorbs Operate+Orchestrate (workflows and
+ * approvals are operational verbs, not a category). Catalog supersedes
+ * Extend (clearer to a buyer). Audit supersedes Observe.
+ *
+ * Sidebar renders as an accordion: one section open at a time. The section
+ * containing the current pathname auto-opens. Collapsed (cmd+B) sidebar
+ * skips the accordion and renders a flat icon list.
  */
 interface NavItem {
   path: string;
@@ -66,27 +71,25 @@ interface NavItem {
 interface NavSection {
   label: string;
   items: NavItem[];
+  /** Route prefixes owned by this section but not rendered as visible nav rows. */
+  matchPaths?: string[];
 }
 
 export const APP_SHELL_NAV_SECTIONS: NavSection[] = [
   {
-    label: "Operate",
+    label: "Run",
     items: [
       { path: "/", label: "Dashboard", icon: LayoutGrid, end: true },
       { path: "/agents", label: "Agents", icon: Cpu },
       { path: "/jobs", label: "Jobs", icon: ListChecks },
       { path: "/edge/sessions", label: "Edge Sessions", icon: ShieldCheck },
-    ],
-  },
-  {
-    label: "Orchestrate",
-    items: [
       { path: "/workflows", label: "Workflows", icon: Workflow },
       { path: "/approvals", label: "Approvals", icon: UserCheck, badge: "approvals" },
     ],
   },
   {
     label: "Govern",
+    matchPaths: ["/govern"],
     items: [
       { path: "/govern/overview", label: "Policy Studio", icon: Shield },
       ...(FEATURE_FLAGS.delegationDashboard
@@ -97,7 +100,7 @@ export const APP_SHELL_NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
-    label: "Extend",
+    label: "Catalog",
     items: [
       { path: "/packs", label: "Packs", icon: Package },
       { path: "/topics", label: "Topics", icon: Hash },
@@ -105,13 +108,55 @@ export const APP_SHELL_NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
-    label: "Observe",
+    label: "Audit",
     items: [
       { path: "/audit", label: "Audit Log", icon: FileText },
-      { path: "/dlq", label: "Dead Letters", icon: AlertTriangle },
+      // Dead Letters folded into JobsPage as a status filter (task-0bcb9411).
+      // The sidebar entry intentionally keeps `path: "/dlq"` rather than
+      // pointing at `/jobs?status=dlq` directly — the App.tsx Navigate
+      // redirect handles the routing, and keeping `/dlq` here preserves the
+      // active-section match (findActiveSection compares pathnames; pointing
+      // the entry at `/jobs?status=dlq` would either fail to match anything
+      // or conflict with the Run > Jobs entry on `/jobs`).
+      { path: "/dlq", label: "Dead Letters", icon: AlertTriangle, badge: "dlq" },
+    ],
+  },
+  {
+    label: "Settings",
+    items: [
+      { path: "/settings", label: "Hub", icon: Settings, end: true },
     ],
   },
 ];
+
+/**
+ * Match the sidebar section that owns the given pathname.
+ *
+ * Note: this intentionally ignores the per-item `end` flag (which exists to
+ * keep NavLink's visual active state from leaking onto sub-routes — e.g.
+ * Dashboard "/" or Settings Hub "/settings"). For SECTION detection we want
+ * any sub-route to count, so /settings/users opens Settings even though the
+ * Hub item is end-flagged. The single special case is root "/", which must
+ * stay exact-match — otherwise every path would also match the Run section
+ * via its Dashboard item.
+ */
+export function findActiveSection(
+  pathname: string,
+  sections: NavSection[],
+): string | null {
+  const pathMatches = (path: string) => {
+    if (path === "/") return pathname === "/";
+    return pathname === path || pathname.startsWith(`${path}/`);
+  };
+
+  for (const section of sections) {
+    const match =
+      section.items.some((item) => pathMatches(item.path)) ||
+      section.matchPaths?.some(pathMatches);
+    if (match) return section.label;
+  }
+  return null;
+}
 
 // g+key navigation map — canonical source is useKeyboardShortcuts, re-exported for tests
 export const APP_SHELL_G_KEY_MAP = G_KEY_MAP;
@@ -142,13 +187,57 @@ export const statusColorMap: Record<SystemStatus, string> = {
   down: "bg-status-error",
 };
 
+export type AggregateBadgeSeverity = "warning" | "error";
+
+const ITEM_BADGE_SEVERITY: Record<NonNullable<NavItem["badge"]>, AggregateBadgeSeverity> = {
+  approvals: "warning",
+  dlq: "error",
+  quarantine: "error",
+};
+
+export const aggregateBadgeClassMap: Record<AggregateBadgeSeverity, string> = {
+  warning: "bg-status-warning/20 text-status-warning",
+  error: "bg-status-error/20 text-status-error",
+};
+
+// aggregateSectionBadgeSeverity returns the highest-severity tier among items
+// whose badge has a non-zero count. error > warning. Returns null when no
+// item contributes (no badge, count is zero, or unknown badge type).
+export function aggregateSectionBadgeSeverity(
+  items: readonly { badge?: NavItem["badge"] }[],
+  getCount: (badge?: string) => number,
+): AggregateBadgeSeverity | null {
+  let result: AggregateBadgeSeverity | null = null;
+  for (const item of items) {
+    if (!item.badge) continue;
+    if (getCount(item.badge) <= 0) continue;
+    const severity = ITEM_BADGE_SEVERITY[item.badge];
+    if (severity === "error") return "error";
+    if (severity === "warning") result = "warning";
+  }
+  return result;
+}
+
 export function AppShell({ children }: AppShellProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [openSection, setOpenSection] = useState<string | null>(() =>
+    findActiveSection(location.pathname, APP_SHELL_NAV_SECTIONS),
+  );
   const theme = useUiStore((s) => s.resolvedTheme);
   const toggleTheme = useUiStore((s) => s.toggleTheme);
+
+  // Auto-open whichever section owns the current route on every navigation.
+  useEffect(() => {
+    const active = findActiveSection(location.pathname, APP_SHELL_NAV_SECTIONS);
+    if (active) setOpenSection(active);
+  }, [location.pathname]);
+
+  const toggleSection = useCallback((label: string) => {
+    setOpenSection((prev) => (prev === label ? null : label));
+  }, []);
 
   // Invalidate worker queries on WebSocket heartbeat events (global listener)
   useWorkerEvents();
@@ -216,7 +305,7 @@ export function AppShell({ children }: AppShellProps) {
         Skip to main content
       </a>
       <CommandPalette />
-      <KeyboardShortcutsDialog />
+      <KeyboardShortcutsHelp />
 
       {/* Mobile hamburger */}
       <button type="button"
@@ -277,58 +366,81 @@ export function AppShell({ children }: AppShellProps) {
                   <X className="w-4 h-4" />
                 </button>
               </div>
-              {/* Mobile nav items */}
-              <nav className="flex-1 py-3 px-2 space-y-4 overflow-y-auto scrollbar-thin">
-                {APP_SHELL_NAV_SECTIONS.map((section) => (
-                  <div key={section.label}>
-                    <p className="px-3 mb-1 text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground/50">
-                      {section.label}
-                    </p>
-                    <div className="space-y-0.5">
-                      {section.items.map((item) => {
-                        const badgeCount = getBadgeCount(item.badge);
-                        return (
-                          <NavLink
-                            key={item.path}
-                            to={item.path}
-                            end={item.end}
-                            className={({ isActive }) =>
-                              cn(
-                                "flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all duration-150",
-                                isActive
-                                  ? "bg-cordum/10 text-cordum"
-                                  : "text-muted-foreground hover:text-foreground hover:bg-surface-2",
-                              )
-                            }
-                          >
-                            <item.icon className="w-4 h-4 shrink-0" />
-                            <span className="flex-1">{item.label}</span>
-                            {badgeCount > 0 && (
-                              <span aria-live="polite" aria-atomic="true" className={cn(
-                                "text-xs font-mono font-bold px-1.5 py-0.5 rounded-full",
-                                item.badge === "approvals"
-                                  ? "bg-status-warning/20 text-status-warning"
-                                  : "bg-status-error/20 text-status-error",
-                              )}>
-                                {badgeCount}
-                              </span>
-                            )}
-                          </NavLink>
-                        );
-                      })}
+              {/* Mobile nav items — accordion */}
+              <nav className="flex-1 py-3 px-2 space-y-1 overflow-y-auto scrollbar-thin">
+                {APP_SHELL_NAV_SECTIONS.map((section) => {
+                  const isOpen = openSection === section.label;
+                  const sectionBadgeCount = section.items.reduce(
+                    (sum, item) => sum + getBadgeCount(item.badge),
+                    0,
+                  );
+                  const sectionBadgeSeverity = aggregateSectionBadgeSeverity(section.items, getBadgeCount);
+                  return (
+                    <div key={section.label}>
+                      <button
+                        type="button"
+                        onClick={() => toggleSection(section.label)}
+                        aria-expanded={isOpen}
+                        aria-controls={`mobile-nav-${section.label.toLowerCase()}`}
+                        className="flex items-center gap-2 w-full px-3 py-2 rounded-xl text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground/70 hover:text-foreground hover:bg-surface-2 transition-colors"
+                      >
+                        <ChevronDown
+                          className={cn(
+                            "w-3.5 h-3.5 shrink-0 transition-transform duration-200",
+                            isOpen ? "rotate-0" : "-rotate-90",
+                          )}
+                        />
+                        <span className="flex-1 text-left">{section.label}</span>
+                        {!isOpen && sectionBadgeCount > 0 && sectionBadgeSeverity && (
+                          <span aria-live="polite" aria-atomic="true" className={cn("text-xs font-mono font-bold px-1.5 py-0.5 rounded-full", aggregateBadgeClassMap[sectionBadgeSeverity])}>
+                            {sectionBadgeCount}
+                          </span>
+                        )}
+                      </button>
+                      {isOpen && (
+                        <div
+                          id={`mobile-nav-${section.label.toLowerCase()}`}
+                          className="mt-1 mb-2 space-y-0.5"
+                        >
+                          {section.items.map((item) => {
+                            const badgeCount = getBadgeCount(item.badge);
+                            return (
+                              <NavLink
+                                key={item.path}
+                                to={item.path}
+                                end={item.end}
+                                className={({ isActive }) =>
+                                  cn(
+                                    "flex items-center gap-3 pl-8 pr-3 py-2 rounded-xl text-sm font-medium transition-all duration-150",
+                                    isActive
+                                      ? "bg-cordum/10 text-cordum"
+                                      : "text-muted-foreground hover:text-foreground hover:bg-surface-2",
+                                  )
+                                }
+                              >
+                                <item.icon className="w-4 h-4 shrink-0" />
+                                <span className="flex-1">{item.label}</span>
+                                {badgeCount > 0 && (
+                                  <span aria-live="polite" aria-atomic="true" className={cn(
+                                    "text-xs font-mono font-bold px-1.5 py-0.5 rounded-full",
+                                    item.badge === "approvals"
+                                      ? "bg-status-warning/20 text-status-warning"
+                                      : "bg-status-error/20 text-status-error",
+                                  )}>
+                                    {badgeCount}
+                                  </span>
+                                )}
+                              </NavLink>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </nav>
               {/* Mobile sidebar footer */}
               <div className="px-2 pb-3 border-t border-border pt-3 space-y-1">
-                <NavLink
-                  to="/settings"
-                  className="flex items-center gap-3 px-3 py-2 rounded-xl text-sm text-muted-foreground hover:text-foreground hover:bg-surface-2 transition-colors"
-                >
-                  <Settings className="w-4 h-4 shrink-0" />
-                  <span>Settings</span>
-                </NavLink>
                 <button type="button"
                   onClick={toggleTheme}
                   className="flex items-center gap-3 w-full px-3 py-2 rounded-xl text-sm text-muted-foreground hover:text-foreground hover:bg-surface-2 transition-colors"
@@ -372,89 +484,110 @@ export function AppShell({ children }: AppShellProps) {
           )}
         </div>
 
-        {/* Nav items */}
-        <nav className="flex-1 py-3 px-2 space-y-4 overflow-y-auto scrollbar-thin">
-          {APP_SHELL_NAV_SECTIONS.map((section) => (
-            <div key={section.label}>
-              {!collapsed && (
-                <p className="px-3 mb-1 text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground/50">
-                  {section.label}
-                </p>
-              )}
-              {collapsed && (
-                <div className="w-6 mx-auto mb-1 border-t border-border/50" />
-              )}
-              <div className="space-y-0.5">
-                {section.items.map((item) => {
-                  const badgeCount = getBadgeCount(item.badge);
-                  return (
-                    <NavLink
-                      key={item.path}
-                      to={item.path}
-                      end={item.end}
-                      aria-label={collapsed ? item.label : undefined}
-                      title={collapsed ? item.label : undefined}
-                      className={({ isActive }) =>
-                        cn(
-                          "flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all duration-150 group relative",
-                          isActive
-                            ? "bg-cordum/10 text-cordum"
-                            : "text-muted-foreground hover:text-foreground hover:bg-surface-2",
-                          collapsed && "justify-center px-0",
-                        )
-                      }
-                    >
-                      {({ isActive }) => (
-                        <>
-                          {isActive && (
-                            <motion.div
-                              layoutId="sidebar-active"
-                              className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 bg-cordum rounded-r-full"
-                              transition={{ type: "spring", stiffness: 350, damping: 30 }}
-                            />
-                          )}
-                          <item.icon className="w-4 h-4 shrink-0" />
-                          {!collapsed && (
-                            <span className="flex-1">{item.label}</span>
-                          )}
-                          {!collapsed && badgeCount > 0 && (
-                            <span aria-live="polite" aria-atomic="true" className={cn(
-                              "text-xs font-mono font-bold px-1.5 py-0.5 rounded-full",
-                              item.badge === "approvals"
-                                ? "bg-status-warning/20 text-status-warning"
-                                : "bg-status-error/20 text-status-error",
-                            )}>
-                              {badgeCount}
-                            </span>
-                          )}
-                          {collapsed && badgeCount > 0 && (
-                            <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-status-warning" />
-                          )}
-                        </>
+        {/* Nav items — accordion when expanded, flat icon list when collapsed (cmd+B) */}
+        <nav className="flex-1 py-3 px-2 space-y-1 overflow-y-auto scrollbar-thin">
+          {APP_SHELL_NAV_SECTIONS.map((section) => {
+            const isOpen = !collapsed && openSection === section.label;
+            const sectionBadgeCount = section.items.reduce(
+              (sum, item) => sum + getBadgeCount(item.badge),
+              0,
+            );
+            const sectionBadgeSeverity = aggregateSectionBadgeSeverity(section.items, getBadgeCount);
+            const renderItems = collapsed || isOpen;
+            return (
+              <div key={section.label}>
+                {!collapsed && (
+                  <button
+                    type="button"
+                    onClick={() => toggleSection(section.label)}
+                    aria-expanded={isOpen}
+                    aria-controls={`nav-${section.label.toLowerCase()}`}
+                    className="flex items-center gap-2 w-full px-3 py-2 rounded-xl text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground/70 hover:text-foreground hover:bg-surface-2 transition-colors"
+                  >
+                    <ChevronDown
+                      className={cn(
+                        "w-3.5 h-3.5 shrink-0 transition-transform duration-200",
+                        isOpen ? "rotate-0" : "-rotate-90",
                       )}
-                    </NavLink>
-                  );
-                })}
+                    />
+                    <span className="flex-1 text-left">{section.label}</span>
+                    {!isOpen && sectionBadgeCount > 0 && sectionBadgeSeverity && (
+                      <span aria-live="polite" aria-atomic="true" className={cn("text-xs font-mono font-bold px-1.5 py-0.5 rounded-full", aggregateBadgeClassMap[sectionBadgeSeverity])}>
+                        {sectionBadgeCount}
+                      </span>
+                    )}
+                  </button>
+                )}
+                {collapsed && (
+                  <div className="w-6 mx-auto mb-1 border-t border-border/50" />
+                )}
+                {renderItems && (
+                  <div
+                    id={`nav-${section.label.toLowerCase()}`}
+                    className={cn(
+                      "space-y-0.5",
+                      !collapsed && "mt-1 mb-2",
+                    )}
+                  >
+                    {section.items.map((item) => {
+                      const badgeCount = getBadgeCount(item.badge);
+                      return (
+                        <NavLink
+                          key={item.path}
+                          to={item.path}
+                          end={item.end}
+                          aria-label={collapsed ? item.label : undefined}
+                          title={collapsed ? item.label : undefined}
+                          className={({ isActive }) =>
+                            cn(
+                              "flex items-center gap-3 py-2 rounded-xl text-sm font-medium transition-all duration-150 group relative",
+                              collapsed ? "justify-center px-0" : "pl-8 pr-3",
+                              isActive
+                                ? "bg-cordum/10 text-cordum"
+                                : "text-muted-foreground hover:text-foreground hover:bg-surface-2",
+                            )
+                          }
+                        >
+                          {({ isActive }) => (
+                            <>
+                              {isActive && (
+                                <motion.div
+                                  layoutId="sidebar-active"
+                                  className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 bg-cordum rounded-r-full"
+                                  transition={{ type: "spring", stiffness: 350, damping: 30 }}
+                                />
+                              )}
+                              <item.icon className="w-4 h-4 shrink-0" />
+                              {!collapsed && (
+                                <span className="flex-1">{item.label}</span>
+                              )}
+                              {!collapsed && badgeCount > 0 && (
+                                <span aria-live="polite" aria-atomic="true" className={cn(
+                                  "text-xs font-mono font-bold px-1.5 py-0.5 rounded-full",
+                                  item.badge === "approvals"
+                                    ? "bg-status-warning/20 text-status-warning"
+                                    : "bg-status-error/20 text-status-error",
+                                )}>
+                                  {badgeCount}
+                                </span>
+                              )}
+                              {collapsed && badgeCount > 0 && (
+                                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-status-warning" />
+                              )}
+                            </>
+                          )}
+                        </NavLink>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </nav>
 
         {/* Sidebar footer */}
         <div className="px-2 pb-3 border-t border-border pt-3 space-y-1">
-          {/* System status */}
-          <NavLink
-            to="/settings"
-            aria-label={collapsed ? "Settings" : undefined}
-            title={collapsed ? "Settings" : undefined}
-            className={cn(
-              "flex items-center gap-3 px-3 py-2 rounded-xl text-sm text-muted-foreground hover:text-foreground hover:bg-surface-2 transition-colors",
-              collapsed && "justify-center px-0",
-            )}
-          >
-            <Settings className="w-4 h-4 shrink-0" />
-            {!collapsed && <span>Settings</span>}
-          </NavLink>
           <a
             href="https://cordum.io/docs"
             target="_blank"

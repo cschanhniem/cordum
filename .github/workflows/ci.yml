@@ -23,14 +23,6 @@ jobs:
         go-version: ${{ matrix.go-version }}
         cache: false
 
-    - name: Cache Go modules
-      uses: actions/cache@v4
-      with:
-        path: ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
-
     - name: Drop local replace directives (CI uses published modules)
       run: |
         go mod edit -dropreplace github.com/cordum-io/cap/v2
@@ -97,14 +89,6 @@ jobs:
         go-version: '1.25'
         cache: false
 
-    - name: Cache Go modules
-      uses: actions/cache@v4
-      with:
-        path: ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
-
     - name: Drop local replace directives (CI uses published modules)
       run: |
         go mod edit -dropreplace github.com/cordum-io/cap/v2
@@ -126,14 +110,6 @@ jobs:
         go-version: '1.25'
         cache: false
 
-    - name: Cache Go modules
-      uses: actions/cache@v4
-      with:
-        path: ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
-
     - name: Drop local replace directives (CI uses published modules)
       run: |
         go mod edit -dropreplace github.com/cordum-io/cap/v2
@@ -152,6 +128,13 @@ jobs:
     name: Dashboard Tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
+
+    permissions:
+      contents: read
+      # Required for the Phase 5d (task-50bbfd7d) bundle-size PR comment.
+      # Comment is posted only on pull_request events; main pushes still
+      # build + run the size parser but skip the comment step.
+      pull-requests: write
 
     steps:
     - uses: actions/checkout@v4
@@ -176,6 +159,18 @@ jobs:
       working-directory: dashboard
       run: pnpm install --frozen-lockfile
 
+    - name: Check API codegen drift
+      working-directory: dashboard
+      run: pnpm run check-api-codegen
+
+    - name: Lint dashboard
+      working-directory: dashboard
+      run: pnpm run lint
+
+    - name: Lint dashboard accessibility
+      working-directory: dashboard
+      run: pnpm run lint:a11y
+
     - name: Typecheck dashboard (noUnusedLocals + noUnusedParameters gate, task-dd1a5934)
       working-directory: dashboard
       run: pnpm exec tsc --noEmit
@@ -193,6 +188,141 @@ jobs:
         name: dashboard-vitest-results
         path: dashboard/test-results/vitest.xml
 
+    # Phase 5d (task-50bbfd7d) — production build + bundle-size soft gate.
+    # Build runs AFTER vitest so build failures don't mask test failures.
+    - name: Build dashboard
+      working-directory: dashboard
+      run: pnpm run build
+
+    - name: Compute bundle-size report
+      working-directory: dashboard
+      run: node scripts/parse-bundle-stats.mjs > "$RUNNER_TEMP/bundle-stats.md"
+
+    - name: Upload bundle visualizer artifact
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: dashboard-bundle-stats
+        path: |
+          dashboard/dist/stats.html
+          ${{ runner.temp }}/bundle-stats.md
+        retention-days: 14
+
+    - name: Find existing bundle-size comment
+      if: github.event_name == 'pull_request'
+      id: find-bundle-size-comment
+      uses: peter-evans/find-comment@v3
+      with:
+        issue-number: ${{ github.event.pull_request.number }}
+        comment-author: "github-actions[bot]"
+        body-includes: "<!-- bundle-size-report -->"
+
+    - name: Post bundle-size comment to PR
+      if: github.event_name == 'pull_request'
+      uses: peter-evans/create-or-update-comment@v4
+      with:
+        issue-number: ${{ github.event.pull_request.number }}
+        comment-id: ${{ steps.find-bundle-size-comment.outputs.comment-id }}
+        body-path: ${{ runner.temp }}/bundle-stats.md
+        edit-mode: replace
+
+  lhci-login:
+    name: Lighthouse CI (/login)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: 9.15.9
+        run_install: false
+
+    - name: Set up Node
+      uses: actions/setup-node@v5
+      with:
+        node-version-file: dashboard/.nvmrc
+        cache: pnpm
+        cache-dependency-path: dashboard/pnpm-lock.yaml
+
+    - name: Install dashboard dependencies
+      working-directory: dashboard
+      run: pnpm install --frozen-lockfile
+
+    - name: Build dashboard for preview
+      working-directory: dashboard
+      run: pnpm run build
+
+    - name: Run Lighthouse CI against /login (warn-only)
+      id: lhci
+      working-directory: dashboard
+      continue-on-error: true
+      run: pnpm run lhci
+
+    - name: Comment Lighthouse scores on PR
+      if: always() && steps.lhci.outcome != 'skipped'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+          const lhciDir = '.lighthouseci';
+          const dashboardDir = 'dashboard';
+          const marker = '<!-- lighthouse-login-report -->';
+          let body = `${marker}\n### Lighthouse CI — \`/login\`\n\n`;
+          try {
+            const manifestPath = path.join(dashboardDir, lhciDir, 'manifest.json');
+            const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+            const median = manifest.find(m => m.isRepresentativeRun) || manifest[0];
+            if (!median) {
+              body += '_No representative run found in manifest._\n';
+            } else {
+              const summary = median.summary || {};
+              const fmt = v => (v == null ? 'n/a' : Math.round(v * 100));
+              body += '| Category | Score |\n|---|---|\n';
+              body += `| Performance | ${fmt(summary.performance)} |\n`;
+              body += `| Accessibility | ${fmt(summary.accessibility)} |\n`;
+              body += `| Best Practices | ${fmt(summary['best-practices'])} |\n`;
+              body += `| SEO | ${fmt(summary.seo)} |\n\n`;
+              if (median.url) body += `Run URL: ${median.url}\n`;
+            }
+            body += `\n_Soft thresholds (warn-only): perf ≥ 70, a11y ≥ 90, best-practices ≥ 85. Authenticated-flow lhci is filed as a follow-up task._`;
+          } catch (e) {
+            body += `_Lighthouse CI artifacts unavailable: ${e.message}_`;
+          }
+          const { owner, repo } = context.repo;
+          const issue_number = context.payload.pull_request.number;
+          const comments = await github.paginate(github.rest.issues.listComments, {
+            owner,
+            repo,
+            issue_number,
+            per_page: 100,
+          });
+          const existing = comments.find(comment => comment.body?.includes(marker));
+          if (existing) {
+            await github.rest.issues.updateComment({
+              owner,
+              repo,
+              comment_id: existing.id,
+              body,
+            });
+          } else {
+            await github.rest.issues.createComment({ owner, repo, issue_number, body });
+          }
+
+    - name: Upload lhci artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: lhci-login-results
+        path: dashboard/.lighthouseci/
+
   security:
     name: Security Scan
     runs-on: ubuntu-latest
@@ -206,14 +336,6 @@ jobs:
       with:
         go-version: '1.25'
         cache: false
-
-    - name: Cache Go modules
-      uses: actions/cache@v4
-      with:
-        path: ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
 
     - name: Drop local replace directives (CI uses published modules)
       run: |
@@ -231,10 +353,10 @@ jobs:
     - name: Sanitize SARIF
       run: |
         jq '
-          (.runs[].tool.driver.rules[] |= del(.relationships))
-          | (.runs[].results |= map(select(
+          (.runs[]?.tool.driver.rules[]? |= del(.relationships))
+          | (.runs[]?.results |= ((. // []) | map(select(
               ([.locations[]?.physicalLocation.artifactLocation.uri // ""] | any(endswith(".pb.go"))) | not
-            )))
+            ))))
         ' results.sarif > results.cleaned.sarif
 
     - name: Upload SARIF file
@@ -289,14 +411,6 @@ jobs:
       with:
         go-version: '1.25'
 
-    - name: Cache Go modules
-      uses: actions/cache@v4
-      with:
-        path: ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
-
     - name: Generate TLS certificates
       run: |
         go run ./cmd/cordumctl generate-certs --dir ./certs
@@ -347,14 +461,6 @@ jobs:
       with:
         go-version: '1.25'
         cache: false
-
-    - name: Cache Go modules
-      uses: actions/cache@v4
-      with:
-        path: ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
 
     - name: Install oasdiff
       run: go install github.com/oasdiff/oasdiff@v1.11.7

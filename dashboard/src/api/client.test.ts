@@ -38,13 +38,26 @@ vi.mock("../lib/logger", () => ({
   logger: loggerMock,
 }));
 
-import { ApiError, del, get, patch, post, put } from "./client";
+import { ApiError, apiClient, del, get, patch, post, put } from "./client";
 
 function jsonResponse(status: number, body: unknown, statusText = "OK"): Response {
   return new Response(JSON.stringify(body), {
     status,
     statusText,
     headers: { "Content-Type": "application/json" },
+  });
+}
+
+function textResponse(
+  status: number,
+  body: string,
+  contentType: string,
+  statusText = "OK",
+): Response {
+  return new Response(body, {
+    status,
+    statusText,
+    headers: { "Content-Type": contentType },
   });
 }
 
@@ -486,3 +499,259 @@ describe("api client - baseUrl and auth header edge cases", () => {
   });
 });
 
+describe("apiClient (orval mutator adapter)", () => {
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    mockConfigState = {
+      apiBaseUrl: "https://api.example.test/api/v1/",
+      apiKey: "api-key-1",
+      tenantId: "tenant-1",
+      principalId: "principal-1",
+      principalRole: "admin",
+      user: { id: "user-1" },
+      isLoggingOut: false,
+      logout: vi.fn(),
+    };
+    getStateMock.mockImplementation(() => mockConfigState);
+
+    randomUUIDSpy = vi
+      .spyOn(globalThis.crypto, "randomUUID")
+      .mockReturnValue("00000000-0000-0000-0000-000000000123");
+    performanceNowSpy = vi
+      .spyOn(performance, "now")
+      .mockImplementation(() => 100);
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    randomUUIDSpy.mockRestore();
+    performanceNowSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  it("translates JSON data into a stringified body and forwards method + headers", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { ok: true }));
+
+    await apiClient<{ ok: boolean }>({
+      url: "/jobs",
+      method: "post",
+      data: { topic: "demo", payload: { n: 1 } },
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://api.example.test/api/v1/jobs");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ topic: "demo", payload: { n: 1 } }));
+    expect((init.headers as Record<string, string>)["Content-Type"]).toBe(
+      "application/json",
+    );
+  });
+
+  it("preserves FormData bodies and does NOT force Content-Type (lets the runtime set the multipart boundary)", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { id: "pack-1" }));
+
+    const fd = new FormData();
+    fd.append("bundle", new Blob(["zip-bytes"], { type: "application/zip" }), "pack.tgz");
+
+    await apiClient<{ id: string }>({
+      url: "/packs/install",
+      method: "POST",
+      data: fd,
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.body).toBe(fd);
+    const headers = init.headers as Record<string, string>;
+    expect(headers["Content-Type"]).toBeUndefined();
+    // Auth headers must still be applied — only Content-Type is dropped.
+    expect(headers["X-API-Key"]).toBe("api-key-1");
+    expect(headers["X-Tenant-ID"]).toBe("tenant-1");
+  });
+
+  it("serializes params into a URL query string, repeating array values per key", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [] }));
+
+    await apiClient({
+      url: "/jobs",
+      method: "GET",
+      params: { status: "running", tags: ["a", "b"], skip: undefined },
+    });
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(
+      "https://api.example.test/api/v1/jobs?status=running&tags=a&tags=b",
+    );
+  });
+
+  it("forwards the provided AbortSignal so React Query cancellation propagates", async () => {
+    const controller = new AbortController();
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { ok: true }));
+
+    await apiClient({
+      url: "/health",
+      method: "GET",
+      signal: controller.signal,
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    // The internal request() composes our signal with a 30s timeout signal,
+    // so init.signal will be a different (composite) AbortSignal — but it
+    // must be defined and follow our controller's abort.
+    expect(init.signal).toBeDefined();
+    expect(init.signal!.aborted).toBe(false);
+    controller.abort();
+    expect(init.signal!.aborted).toBe(true);
+  });
+
+  it("strips the leading /api/v1 from orval-emitted URLs so the final fetch is single-prefixed", async () => {
+    // Reproduces QA reopen finding (msg-580c1422 / task-7cde446c rejectionDetails):
+    // generated hooks pass `url: "/api/v1/jobs"` but request() prepends baseUrl()
+    // (`/api/v1/`), so without normalization the fetch URL would be
+    // `https://api.example.test/api/v1/api/v1/jobs` and 404 in production.
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [] }));
+
+    await apiClient<{ items: unknown[] }>({
+      url: "/api/v1/jobs",
+      method: "GET",
+    });
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://api.example.test/api/v1/jobs");
+    expect(url).not.toMatch(/\/api\/v1\/api\/v1\//);
+  });
+
+  it("parses successful text/csv responses as text by content type", async () => {
+    fetchMock.mockResolvedValueOnce(
+      textResponse(200, "id,status\njob-1,succeeded\n", "text/csv"),
+    );
+
+    const result = await apiClient<string>({
+      url: "/audit/export",
+      method: "GET",
+    });
+
+    expect(result).toBe("id,status\njob-1,succeeded\n");
+  });
+
+  it("parses successful NDJSON responses as text by content type", async () => {
+    const ndjson = "{\"id\":\"evt-1\"}\n{\"id\":\"evt-2\"}\n";
+    fetchMock.mockResolvedValueOnce(
+      textResponse(200, ndjson, "application/x-ndjson"),
+    );
+
+    const result = await apiClient<string>({
+      url: "/audit/export",
+      method: "GET",
+    });
+
+    expect(result).toBe(ndjson);
+  });
+
+  it("honors explicit responseType=text even when the server marks the body as JSON", async () => {
+    fetchMock.mockResolvedValueOnce(
+      textResponse(200, "{\"raw\":true}", "application/json"),
+    );
+
+    const result = await apiClient<string>({
+      url: "/raw-json-text",
+      method: "GET",
+      responseType: "text",
+    });
+
+    expect(result).toBe("{\"raw\":true}");
+  });
+
+  it("honors explicit responseType=blob", async () => {
+    fetchMock.mockResolvedValueOnce(
+      textResponse(200, "binary-ish", "application/octet-stream"),
+    );
+
+    const result = await apiClient<Blob>({
+      url: "/artifact",
+      method: "GET",
+      responseType: "blob",
+    });
+
+    // Response.blob() may return a Blob from a different JS realm in CI
+    // (undici/jsdom), so avoid instanceof and assert the Blob contract instead.
+    expect(Object.prototype.toString.call(result)).toBe("[object Blob]");
+    expect(result.size).toBe("binary-ish".length);
+    expect(result.type).toBe("application/octet-stream");
+    await expect(result.text()).resolves.toBe("binary-ish");
+  });
+
+  it("honors explicit responseType=arraybuffer", async () => {
+    fetchMock.mockResolvedValueOnce(
+      textResponse(200, "buffer-ish", "application/octet-stream"),
+    );
+
+    const result = await apiClient<ArrayBuffer>({
+      url: "/artifact",
+      method: "GET",
+      responseType: "arraybuffer",
+    });
+
+    expect(new TextDecoder().decode(result)).toBe("buffer-ish");
+  });
+});
+
+describe("apiClient — generated hook integration", () => {
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    mockConfigState = {
+      apiBaseUrl: "https://api.example.test/api/v1/",
+      apiKey: "api-key-1",
+      tenantId: "tenant-1",
+      principalId: "principal-1",
+      principalRole: "admin",
+      user: { id: "user-1" },
+      isLoggingOut: false,
+      logout: vi.fn(),
+    };
+    getStateMock.mockImplementation(() => mockConfigState);
+
+    randomUUIDSpy = vi
+      .spyOn(globalThis.crypto, "randomUUID")
+      .mockReturnValue("00000000-0000-0000-0000-000000000123");
+    performanceNowSpy = vi
+      .spyOn(performance, "now")
+      .mockImplementation(() => 100);
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    randomUUIDSpy.mockRestore();
+    performanceNowSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  it("invokes a real generated function (listJobs) without double-prefixing /api/v1", async () => {
+    // Imports a real orval-emitted hook so this regression cannot be bypassed
+    // by future refactors of the apiClient adapter that stop normalizing URLs.
+    const { listJobs } = await import("./generated/jobs/jobs");
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [] }));
+
+    await listJobs();
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://api.example.test/api/v1/jobs");
+    expect(url).not.toMatch(/\/api\/v1\/api\/v1\//);
+  });
+
+  it("invokes generated audit export and returns CSV/NDJSON text instead of forcing JSON parse", async () => {
+    const { exportAuditCompliance } = await import("./generated/audit-export/audit-export");
+    fetchMock.mockResolvedValueOnce(
+      textResponse(200, "sequence,hash\n1,abc\n", "text/csv"),
+    );
+
+    const result = await exportAuditCompliance({ format: "csv" });
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://api.example.test/api/v1/audit/export?format=csv");
+    expect(result).toBe("sequence,hash\n1,abc\n");
+  });
+});

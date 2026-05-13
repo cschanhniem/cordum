@@ -3,7 +3,7 @@
  * Narrative-driven: what the agent tried → what the platform decided → why.
  * Story in 5 seconds. Bloomberg terminal precision, Apple Keynote clarity.
  */
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { get } from "@/api/client";
@@ -22,8 +22,8 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { InfoBanner } from "@/components/ui/InfoBanner";
 import { Skeleton } from "@/components/ui/Skeleton";
 import {
-  ArrowLeft, Copy, Check, Clock, Shield, ShieldCheck, ShieldX, ShieldAlert,
-  AlertTriangle, Eye, Tag, Zap, CheckCircle2, XCircle, Timer,
+  ArrowLeft, Copy, Clock, Shield, ShieldCheck, ShieldX, ShieldAlert,
+  AlertTriangle, Eye, ExternalLink, Tag, Zap, CheckCircle2, XCircle, Timer,
   Store, Package, Users, Building2, CreditCard, ChevronRight, Workflow, MessageSquare, ArrowRight,
 } from "lucide-react";
 import { cn, formatRelativeTime, formatDuration } from "@/lib/utils";
@@ -39,6 +39,22 @@ import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { Tabs } from "@/components/ui/Tabs";
 import { GovernanceTimeline } from "@/components/governance/GovernanceTimeline";
 import { AgentExecutionsPanel } from "@/components/edge/AgentExecutionsPanel";
+
+const JOB_DETAIL_TABS = [
+  "overview",
+  "audit-chain",
+  "inputs",
+  "outputs",
+  "policy-trace",
+] as const;
+
+type JobDetailTab = (typeof JOB_DETAIL_TABS)[number];
+
+function resolveJobDetailTab(value: string | null): JobDetailTab {
+  return JOB_DETAIL_TABS.includes(value as JobDetailTab)
+    ? (value as JobDetailTab)
+    : "overview";
+}
 
 // ---------------------------------------------------------------------------
 // Status configuration — colors, icons, labels for each outcome
@@ -185,17 +201,6 @@ function HeroBanner({ job, elapsed, isActive }: { job: Job; elapsed: string; isA
   const Icon = config.icon;
   const summary = generateJobSummary(job);
   const rule = job.safetyDecision?.matchedRule;
-  const [copied, setCopied] = useState(false);
-
-  const handleCopyJobId = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(job.id);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      toast.error("Copy failed");
-    }
-  }, [job.id]);
 
   return (
     <motion.div
@@ -264,20 +269,19 @@ function HeroBanner({ job, elapsed, isActive }: { job: Job; elapsed: string; isA
           <span className="text-xs font-mono text-muted-foreground" title={job.createdAt}>
             {formatRelativeTime(job.createdAt)}
           </span>
-          <div className="flex items-center gap-1.5">
-            <span className="text-[10px] font-mono text-muted-foreground/60 tracking-tight">
-              {job.id.slice(0, 12)}\u2026
-            </span>
-            <Button
-              onClick={handleCopyJobId}
-              variant="ghost"
-              size="icon"
-              aria-label="Copy job ID"
-              className="h-7 w-7"
-            >
-              {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-            </Button>
-          </div>
+          {/* Job ID \u2014 shared CodeBlock inline chip with copy-on-click. The
+              click writes the FULL id to clipboard; preview is the first
+              12 chars to match the previous truncation. */}
+          <CodeBlock
+            inline
+            copyable
+            inlineMaxLength={12}
+            ariaLabel={`Copy job ID ${job.id}`}
+            inlineTitle={`Job ID ${job.id} \u2014 click to copy`}
+            className="text-[10px] tracking-tight text-muted-foreground/80"
+          >
+            {job.id}
+          </CodeBlock>
         </div>
       </div>
     </motion.div>
@@ -306,10 +310,23 @@ export function ParentContextBanner({ job }: { job: Job }) {
             <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest mb-1">
               Part of {runId ? "Workflow Run" : "Copilot Session"}
             </p>
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold text-foreground truncate">
-                {runId ? `Run: ${runId.slice(0, 12)}...` : `Session: ${sessionId?.slice(0, 12) ?? ""}...`}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm font-semibold text-foreground">
+                {runId ? "Run:" : "Session:"}
               </span>
+              {/* Parent ID — copy-on-click via shared CodeBlock primitive
+                  per task-90bb5ef3 reopen #2. The ID is also navigable via
+                  the View Parent button below; this chip exposes the
+                  copy-the-ID action that was previously missing. */}
+              <CodeBlock
+                inline
+                copyable
+                inlineMaxLength={12}
+                ariaLabel={`Copy ${runId ? "Run ID" : "Session ID"} ${runId ?? sessionId ?? ""}`}
+                inlineTitle={`${runId ?? sessionId ?? ""} — click to copy`}
+              >
+                {runId ?? sessionId ?? ""}
+              </CodeBlock>
               {untrustedPrompt && (
                 <span className="text-xs text-muted-foreground border-l border-border pl-2 italic truncate max-w-md hidden sm:inline">
                   &ldquo;{untrustedPrompt}&rdquo;
@@ -417,7 +434,18 @@ function PaymentContext({ ctx }: { ctx: Record<string, unknown> }) {
         {agent && (
           <div className="space-y-1">
             <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Agent</p>
-            <p className="text-sm font-mono text-foreground">{String(agent.id)}</p>
+            {/* SmartContext agent ID — copy-on-click via shared CodeBlock
+                primitive per task-90bb5ef3 reopen #2 / Phase 4c plan note. */}
+            <CodeBlock
+              inline
+              copyable
+              inlineMaxLength={48}
+              ariaLabel={`Copy Agent ID ${String(agent.id)}`}
+              inlineTitle={`${String(agent.id)} — click to copy`}
+              className="text-sm"
+            >
+              {String(agent.id)}
+            </CodeBlock>
             {!!agent.tap_verified && <StatusBadge variant="cordum">TAP Verified</StatusBadge>}
           </div>
         )}
@@ -846,9 +874,22 @@ function BlobViewer({ label, pointer, data, emptyText }: {
     <div className="space-y-3">
       {pointer && (
         <div className="surface-inset p-4 font-mono text-xs flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <span className="text-muted-foreground">{label} pointer: </span>
-            <span className="text-foreground break-all">{pointer}</span>
+          <div className="min-w-0 flex items-center gap-2">
+            <span className="text-muted-foreground">{label} pointer:</span>
+            {/* Pointer is a hash-like reference (e.g. s3://bucket/key); render
+                via shared CodeBlock inline chip with copy-on-click. The full
+                pointer is what gets copied; the visible chip is truncated at
+                48 chars (covers most ptr formats without overflow). */}
+            <CodeBlock
+              inline
+              copyable
+              inlineMaxLength={48}
+              ariaLabel={`Copy ${label} pointer ${pointer}`}
+              inlineTitle={`${pointer} — click to copy`}
+              className="break-all"
+            >
+              {pointer}
+            </CodeBlock>
           </div>
           {formatted && (
             <Button variant="outline" size="sm" className="shrink-0" onClick={() => setExpanded(!expanded)}>
@@ -948,21 +989,54 @@ function MetadataBar({ job, navigate }: { job: Job; navigate: (path: string) => 
   const active = fields.filter(([, v]) => !!v);
   if (active.length === 0) return null;
 
+  // Identity-style fields whose values are hash-like IDs and should render
+  // via the shared CodeBlock inline chip (copy-on-click). Topic/Tenant are
+  // free-form labels (not IDs) and Attempts is a number — those stay inline.
+  const ID_LABELS = new Set(["Workflow", "Run", "Session", "Trace"]);
+
   return (
     <div className="flex flex-wrap gap-x-5 gap-y-1.5 px-1">
       {active.map(([label, value, onClick]) => (
         <div key={label} className="flex items-center gap-1.5">
           <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">{label}</span>
           {onClick ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-auto px-0 font-mono text-cordum hover:bg-transparent hover:text-cordum hover:underline"
-              onClick={onClick}
+            // Navigable IDs: render the value as a CodeBlock inline chip
+            // (copy-on-click) PLUS a small navigate link beside it. The chip
+            // primary action is copy; the arrow link is navigate. This keeps
+            // both DoD goals satisfied — every ID is copyable AND navigation
+            // remains discoverable. Per task-90bb5ef3 reopen #1 fix.
+            <span className="flex items-center gap-1">
+              <CodeBlock
+                inline
+                copyable
+                inlineMaxLength={24}
+                ariaLabel={`Copy ${label} ID ${value}`}
+                inlineTitle={`${value} — click to copy`}
+                className="text-cordum"
+              >
+                {value!}
+              </CodeBlock>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-5 w-5"
+                onClick={onClick}
+                aria-label={`Open ${label}`}
+              >
+                <ExternalLink className="h-3 w-3" />
+              </Button>
+            </span>
+          ) : ID_LABELS.has(label) ? (
+            <CodeBlock
+              inline
+              copyable
+              inlineMaxLength={24}
+              ariaLabel={`Copy ${label} ID ${value}`}
+              inlineTitle={`${value} — click to copy`}
             >
-              {value}
-            </Button>
+              {value!}
+            </CodeBlock>
           ) : (
             <span className="text-xs font-mono text-foreground">{value}</span>
           )}
@@ -997,6 +1071,7 @@ const item = {
 export default function JobDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const { data: job, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["job", id],
@@ -1017,7 +1092,25 @@ export default function JobDetailPage() {
   const copyId = () => {
     if (id) { navigator.clipboard.writeText(id); toast.success("Job ID copied"); }
   };
-  const [activeTab, setActiveTab] = useState("overview");
+  const activeTab = resolveJobDetailTab(searchParams.get("tab"));
+  const setActiveTab = useCallback(
+    (tab: string) => {
+      const nextTab = resolveJobDetailTab(tab);
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (nextTab === "overview") {
+            next.delete("tab");
+          } else {
+            next.set("tab", nextTab);
+          }
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
 
   // --- Error state ---
   if (isError) {
@@ -1108,9 +1201,10 @@ export default function JobDetailPage() {
           <Tabs
             tabs={[
               { id: "overview", label: "Overview" },
-              { id: "payload", label: "Payload" },
-              { id: "activity", label: "Activity" },
-              { id: "governance", label: "Governance" },
+              { id: "audit-chain", label: "Audit Chain" },
+              { id: "inputs", label: "Inputs" },
+              { id: "outputs", label: "Outputs" },
+              { id: "policy-trace", label: "Policy Trace" },
             ]}
             activeTab={activeTab}
             onChange={setActiveTab}
@@ -1166,9 +1260,9 @@ export default function JobDetailPage() {
             </motion.div>
           )}
 
-          {activeTab === "activity" && (
+          {activeTab === "audit-chain" && (
             <motion.div
-              key="activity"
+              key="audit-chain"
               variants={container}
               initial="hidden"
               animate="visible"
@@ -1179,8 +1273,15 @@ export default function JobDetailPage() {
                 <div className="instrument-card">
                   <div className="flex items-center gap-2 mb-4">
                     <Clock className="w-4 h-4 text-cordum" />
-                    <h2 className="font-display font-semibold text-sm text-foreground">Activity Timeline</h2>
+                    <h2 className="font-display font-semibold text-sm text-foreground">Audit Chain</h2>
                   </div>
+                  {job.output_safety && (
+                    <div className="mb-4">
+                      <CodeBlock title="Output safety record" language="json" copyable>
+                        {JSON.stringify(job.output_safety, null, 2)}
+                      </CodeBlock>
+                    </div>
+                  )}
                   <CompactTimeline job={job} />
                 </div>
               </motion.div>
@@ -1198,9 +1299,9 @@ export default function JobDetailPage() {
             </motion.div>
           )}
 
-          {activeTab === "payload" && (
+          {activeTab === "inputs" && (
             <motion.div
-              key="payload"
+              key="inputs"
               variants={container}
               initial="hidden"
               animate="visible"
@@ -1214,7 +1315,18 @@ export default function JobDetailPage() {
                   </div>
                 </CollapsibleSection>
               </motion.div>
+            </motion.div>
+          )}
 
+          {activeTab === "outputs" && (
+            <motion.div
+              key="outputs"
+              variants={container}
+              initial="hidden"
+              animate="visible"
+              exit={{ opacity: 0, y: -8 }}
+              className="space-y-6"
+            >
               <motion.div variants={item}>
                 <CollapsibleSection title="Raw output" defaultOpen={true}>
                   <div className="instrument-card">
@@ -1230,9 +1342,9 @@ export default function JobDetailPage() {
             </motion.div>
           )}
 
-          {activeTab === "governance" && (
+          {activeTab === "policy-trace" && (
             <motion.div
-              key="governance"
+              key="policy-trace"
               variants={item}
               initial="hidden"
               animate="visible"

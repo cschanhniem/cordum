@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { APP_SHELL_G_KEY_MAP, APP_SHELL_NAV_SECTIONS, deriveSystemStatus, statusColorMap } from "./AppShell";
+import {
+  APP_SHELL_G_KEY_MAP,
+  APP_SHELL_NAV_SECTIONS,
+  aggregateBadgeClassMap,
+  aggregateSectionBadgeSeverity,
+  deriveSystemStatus,
+  findActiveSection,
+  statusColorMap,
+} from "./AppShell";
 
 describe("AppShell systemStatus derivation", () => {
   it("returns 'loading' with grey indicator when status data is undefined and still loading", () => {
@@ -86,6 +94,102 @@ describe("AppShell GOVERN navigation", () => {
   });
 });
 
+describe("AppShell findActiveSection", () => {
+  it("matches root '/' to Run via the end-flagged Dashboard item", () => {
+    expect(findActiveSection("/", APP_SHELL_NAV_SECTIONS)).toBe("Run");
+  });
+
+  it("does NOT match /agents-foo to Run (avoids /agents prefix collision)", () => {
+    expect(findActiveSection("/agents-foo", APP_SHELL_NAV_SECTIONS)).toBe(null);
+  });
+
+  it("matches /agents/abc to Run via /agents prefix", () => {
+    expect(findActiveSection("/agents/abc", APP_SHELL_NAV_SECTIONS)).toBe("Run");
+  });
+
+  it("matches /edge/sessions to Run", () => {
+    expect(findActiveSection("/edge/sessions", APP_SHELL_NAV_SECTIONS)).toBe("Run");
+  });
+
+  it("matches /edge/sessions/abc detail path to Run", () => {
+    expect(findActiveSection("/edge/sessions/abc", APP_SHELL_NAV_SECTIONS)).toBe("Run");
+  });
+
+  it("matches /govern/overview to Govern", () => {
+    expect(findActiveSection("/govern/overview", APP_SHELL_NAV_SECTIONS)).toBe("Govern");
+  });
+
+  it("matches non-visible /govern deep links to Govern", () => {
+    expect(findActiveSection("/govern/bundles/bundle-1", APP_SHELL_NAV_SECTIONS)).toBe("Govern");
+    expect(findActiveSection("/govern/replay", APP_SHELL_NAV_SECTIONS)).toBe("Govern");
+    expect(findActiveSection("/govern/tenants/tenant-1", APP_SHELL_NAV_SECTIONS)).toBe("Govern");
+  });
+
+  it("does NOT match /governance to Govern (avoids /govern prefix collision)", () => {
+    expect(findActiveSection("/governance", APP_SHELL_NAV_SECTIONS)).toBe(null);
+  });
+
+  it("matches /govern/quarantine to Govern (badge route)", () => {
+    expect(findActiveSection("/govern/quarantine", APP_SHELL_NAV_SECTIONS)).toBe("Govern");
+  });
+
+  it("matches /packs/abc to Catalog", () => {
+    expect(findActiveSection("/packs/abc", APP_SHELL_NAV_SECTIONS)).toBe("Catalog");
+  });
+
+  it("matches /audit to Audit", () => {
+    expect(findActiveSection("/audit", APP_SHELL_NAV_SECTIONS)).toBe("Audit");
+  });
+
+  it("matches /dlq to Audit", () => {
+    expect(findActiveSection("/dlq", APP_SHELL_NAV_SECTIONS)).toBe("Audit");
+  });
+
+  it("matches /settings/* sub-routes to Settings", () => {
+    expect(findActiveSection("/settings", APP_SHELL_NAV_SECTIONS)).toBe("Settings");
+    expect(findActiveSection("/settings/users", APP_SHELL_NAV_SECTIONS)).toBe("Settings");
+    expect(findActiveSection("/settings/audit-export", APP_SHELL_NAV_SECTIONS)).toBe("Settings");
+  });
+
+  it("returns null for unknown routes (e.g. /not-a-real-route)", () => {
+    expect(findActiveSection("/not-a-real-route", APP_SHELL_NAV_SECTIONS)).toBe(null);
+  });
+});
+
+describe("AppShell sidebar accordion structure", () => {
+  it("groups items into 5 customer-language sections", () => {
+    expect(APP_SHELL_NAV_SECTIONS.map((s) => s.label)).toEqual([
+      "Run",
+      "Govern",
+      "Catalog",
+      "Audit",
+      "Settings",
+    ]);
+  });
+
+  it("Run section absorbs Workflows and Approvals", () => {
+    const run = APP_SHELL_NAV_SECTIONS.find((s) => s.label === "Run");
+    expect(run?.items.map((i) => i.label)).toEqual([
+      "Dashboard",
+      "Agents",
+      "Jobs",
+      "Edge Sessions",
+      "Workflows",
+      "Approvals",
+    ]);
+  });
+
+  it("Settings section has the Hub item with end:true to avoid prefix-matching sub-routes", () => {
+    const settings = APP_SHELL_NAV_SECTIONS.find((s) => s.label === "Settings");
+    expect(settings).toBeDefined();
+    expect(settings?.items[0]).toMatchObject({
+      path: "/settings",
+      label: "Hub",
+      end: true,
+    });
+  });
+});
+
 describe("AppShell g-key map completeness", () => {
   it("does NOT contain stale /traces route", () => {
     expect(Object.values(APP_SHELL_G_KEY_MAP)).not.toContain("/traces");
@@ -99,5 +203,86 @@ describe("AppShell g-key map completeness", () => {
   it("maps both h and o to home", () => {
     expect(APP_SHELL_G_KEY_MAP.h).toBe("/");
     expect(APP_SHELL_G_KEY_MAP.o).toBe("/");
+  });
+});
+
+describe("aggregateSectionBadgeSeverity", () => {
+  const counts: Record<string, number> = {
+    approvals: 0,
+    dlq: 0,
+    quarantine: 0,
+  };
+  const getCount = (badge?: string) => (badge ? (counts[badge] ?? 0) : 0);
+
+  it("returns 'warning' for an approvals-only section with non-zero count", () => {
+    counts.approvals = 3;
+    counts.dlq = 0;
+    counts.quarantine = 0;
+    const severity = aggregateSectionBadgeSeverity(
+      [{ badge: "approvals" }],
+      getCount,
+    );
+    expect(severity).toBe("warning");
+    expect(aggregateBadgeClassMap.warning).toBe("bg-status-warning/20 text-status-warning");
+  });
+
+  it("returns 'error' for a quarantine-only section with non-zero count", () => {
+    counts.approvals = 0;
+    counts.dlq = 0;
+    counts.quarantine = 5;
+    const severity = aggregateSectionBadgeSeverity(
+      [{ badge: "quarantine" }],
+      getCount,
+    );
+    expect(severity).toBe("error");
+    expect(aggregateBadgeClassMap.error).toBe("bg-status-error/20 text-status-error");
+  });
+
+  it("returns 'error' (highest tier) for a mixed approvals + dlq section", () => {
+    counts.approvals = 2;
+    counts.dlq = 4;
+    counts.quarantine = 0;
+    const severity = aggregateSectionBadgeSeverity(
+      [{ badge: "approvals" }, { badge: "dlq" }],
+      getCount,
+    );
+    expect(severity).toBe("error");
+  });
+
+  it("returns null when items have badges but all counts are zero", () => {
+    counts.approvals = 0;
+    counts.dlq = 0;
+    counts.quarantine = 0;
+    const severity = aggregateSectionBadgeSeverity(
+      [{ badge: "dlq" }, { badge: "approvals" }],
+      getCount,
+    );
+    expect(severity).toBeNull();
+  });
+
+  it("returns null when no items carry a badge prop", () => {
+    counts.approvals = 99;
+    const severity = aggregateSectionBadgeSeverity(
+      [{}, { badge: undefined }],
+      getCount,
+    );
+    expect(severity).toBeNull();
+  });
+
+  it("ignores items whose badge type is outside the known severity map", () => {
+    // A future caller could pass a string outside the NavItem union (e.g.
+    // via raw cast). The helper must NOT promote unknown badges to a
+    // severity tier — the type system already covers the closed union, so
+    // this guards against runtime drift.
+    counts.approvals = 0;
+    counts.dlq = 0;
+    counts.quarantine = 0;
+    const unknownBadge = "info" as unknown as NonNullable<{ badge?: "approvals" | "dlq" | "quarantine" }["badge"]>;
+    const getInfoCount = (badge?: string) => (badge === "info" ? 7 : 0);
+    const severity = aggregateSectionBadgeSeverity(
+      [{ badge: unknownBadge }],
+      getInfoCount,
+    );
+    expect(severity).toBeNull();
   });
 });

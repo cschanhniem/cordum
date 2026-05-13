@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	wf "github.com/cordum/cordum/core/workflow"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -137,13 +139,13 @@ func TestNATSAuditConsumer_ChainFailPermissiveExports(t *testing.T) {
 func TestParseChainFailMode(t *testing.T) {
 	t.Parallel()
 	cases := map[string]ChainFailMode{
-		"":            ChainFailStrict,
-		"strict":      ChainFailStrict,
-		"STRICT":      ChainFailStrict,
-		"permissive":  ChainFailPermissive,
-		"Permissive":  ChainFailPermissive,
+		"":             ChainFailStrict,
+		"strict":       ChainFailStrict,
+		"STRICT":       ChainFailStrict,
+		"permissive":   ChainFailPermissive,
+		"Permissive":   ChainFailPermissive,
 		" permissive ": ChainFailPermissive,
-		"garbage":     ChainFailStrict,
+		"garbage":      ChainFailStrict,
 	}
 	for input, want := range cases {
 		if got := ParseChainFailMode(input); got != want {
@@ -164,6 +166,272 @@ func TestNATSAuditConsumer_EnvDrivesFailMode(t *testing.T) {
 	}
 	if c.failMode != ChainFailPermissive {
 		t.Errorf("failMode = %v, want permissive", c.failMode)
+	}
+}
+
+// realRecordingSink captures every UpdateAuditHash invocation so tests
+// can assert the audit consumer's Option A write-back fires exactly when
+// the chain Append succeeds and never on Append-failure or no-job paths.
+type realRecordingSink struct {
+	calls     []recordedSinkCall
+	returnErr error
+}
+
+type recordedSinkCall struct {
+	jobID     string
+	auditHash string
+}
+
+func (r *realRecordingSink) UpdateAuditHash(_ context.Context, jobID, auditHash string) error {
+	r.calls = append(r.calls, recordedSinkCall{jobID: jobID, auditHash: auditHash})
+	return r.returnErr
+}
+
+// TestNATSAuditConsumer_StepHashSinkReceivesPostAppendHash verifies the
+// Option A write-back per task-a45b8eb1 (architect msg-dc9ac33d): after a
+// successful chainer.Append the consumer hands the populated EventHash +
+// JobID to a wired sink so the workflow store can back-fill StepRun.AuditHash.
+func TestNATSAuditConsumer_StepHashSinkReceivesPostAppendHash(t *testing.T) {
+	bus := &mockAuditBus{}
+	mock := &mockExporter{}
+	chainer, _ := newConsumerChainer(t)
+	sink := &realRecordingSink{}
+
+	_, err := NewNATSAuditConsumer(bus, mock, WithChainer(chainer), WithStepHashSink(sink))
+	if err != nil {
+		t.Fatalf("NewNATSAuditConsumer: %v", err)
+	}
+
+	bus.mu.Lock()
+	handler := bus.handler
+	bus.mu.Unlock()
+
+	ev := testEvent()
+	if err := handler(packetFor(t, ev)); err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+
+	if len(sink.calls) != 1 {
+		t.Fatalf("UpdateAuditHash calls = %d, want 1", len(sink.calls))
+	}
+	if sink.calls[0].jobID != ev.JobID {
+		t.Errorf("UpdateAuditHash jobID = %q, want %q", sink.calls[0].jobID, ev.JobID)
+	}
+	if len(sink.calls[0].auditHash) != chainHashHexLen {
+		t.Errorf("UpdateAuditHash auditHash length = %d, want %d", len(sink.calls[0].auditHash), chainHashHexLen)
+	}
+}
+
+// TestNATSAuditConsumer_StepHashSinkSkippedWhenNoJobID verifies that
+// SIEMEvents without a JobID (tenant-level events like SSO login) do
+// NOT invoke the sink — there's no workflow step to back-fill.
+func TestNATSAuditConsumer_StepHashSinkSkippedWhenNoJobID(t *testing.T) {
+	bus := &mockAuditBus{}
+	mock := &mockExporter{}
+	chainer, _ := newConsumerChainer(t)
+	sink := &realRecordingSink{}
+
+	_, err := NewNATSAuditConsumer(bus, mock, WithChainer(chainer), WithStepHashSink(sink))
+	if err != nil {
+		t.Fatalf("NewNATSAuditConsumer: %v", err)
+	}
+
+	bus.mu.Lock()
+	handler := bus.handler
+	bus.mu.Unlock()
+
+	ev := testEvent()
+	ev.JobID = "" // tenant-level event, not workflow-scoped
+	if err := handler(packetFor(t, ev)); err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+
+	if len(sink.calls) != 0 {
+		t.Errorf("UpdateAuditHash calls = %d, want 0 for empty-JobID event", len(sink.calls))
+	}
+}
+
+// TestNATSAuditConsumer_StepHashSinkErrorIsNonFatal verifies that a sink
+// failure (e.g. transient Redis error during write-back) does NOT break
+// the export pipeline — the event still reaches the exporter and the
+// audit chain entry is durable. Error logged + swallowed.
+func TestNATSAuditConsumer_StepHashSinkErrorIsNonFatal(t *testing.T) {
+	bus := &mockAuditBus{}
+	mock := &mockExporter{}
+	chainer, _ := newConsumerChainer(t)
+	sink := &realRecordingSink{returnErr: fmt.Errorf("redis: connection refused")}
+
+	_, err := NewNATSAuditConsumer(bus, mock, WithChainer(chainer), WithStepHashSink(sink))
+	if err != nil {
+		t.Fatalf("NewNATSAuditConsumer: %v", err)
+	}
+
+	bus.mu.Lock()
+	handler := bus.handler
+	bus.mu.Unlock()
+
+	if err := handler(packetFor(t, testEvent())); err != nil {
+		t.Fatalf("handler: %v (sink error must not propagate)", err)
+	}
+	if got := mock.totalEvents(); got != 1 {
+		t.Errorf("exported events = %d, want 1 (sink error must not block export)", got)
+	}
+	if len(sink.calls) != 1 {
+		t.Errorf("UpdateAuditHash calls = %d, want 1 (must still attempt the write-back)", len(sink.calls))
+	}
+}
+
+func TestNATSAuditConsumer_PopulatesWorkflowRunStepAuditHash(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(mr.Close)
+
+	workflowStore, err := wf.NewRedisWorkflowStore("redis://" + mr.Addr())
+	if err != nil {
+		t.Fatalf("workflow store: %v", err)
+	}
+	t.Cleanup(func() { _ = workflowStore.Close() })
+
+	chainClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = chainClient.Close() })
+	chainer := NewChainer(chainClient, "consumer:workflow-chain:")
+
+	run := &wf.WorkflowRun{
+		ID:         "run-consumer-audit",
+		WorkflowID: "wf-consumer-audit",
+		Status:     wf.RunStatusRunning,
+		Steps: map[string]*wf.StepRun{
+			"step-1":  {StepID: "step-1", Status: wf.StepStatusRunning, JobID: "run-consumer-audit:step-1@1"},
+			"skipped": {StepID: "skipped", Status: wf.StepStatusSkipped, SkipReason: "upstream failed"},
+			"noevent": {StepID: "noevent", Status: wf.StepStatusRunning, JobID: "run-consumer-audit:noevent@1"},
+		},
+	}
+	if err := workflowStore.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	bus := &mockAuditBus{}
+	mock := &mockExporter{}
+	_, err = NewNATSAuditConsumer(bus, mock, WithChainer(chainer), WithStepHashSink(workflowStore))
+	if err != nil {
+		t.Fatalf("NewNATSAuditConsumer: %v", err)
+	}
+	handler := subscribedHandler(t, bus)
+
+	ev := testEvent()
+	ev.JobID = run.Steps["step-1"].JobID
+	if err := handler(packetFor(t, ev)); err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	exported := exportedEvent(t, mock, 0)
+
+	got, err := workflowStore.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if got.Steps["step-1"].AuditHash != exported.EventHash {
+		t.Fatalf("audit hash = %q, want exported event hash %q", got.Steps["step-1"].AuditHash, exported.EventHash)
+	}
+	if got.Steps["skipped"].AuditHash != "" {
+		t.Fatalf("skipped step audit hash = %q, want empty", got.Steps["skipped"].AuditHash)
+	}
+	if got.Steps["noevent"].AuditHash != "" {
+		t.Fatalf("no-event step audit hash = %q, want empty", got.Steps["noevent"].AuditHash)
+	}
+}
+
+func TestNATSAuditConsumer_StepHashSinkNoMatchAndReplayAreNonFatal(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(mr.Close)
+
+	workflowStore, err := wf.NewRedisWorkflowStore("redis://" + mr.Addr())
+	if err != nil {
+		t.Fatalf("workflow store: %v", err)
+	}
+	t.Cleanup(func() { _ = workflowStore.Close() })
+	chainClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = chainClient.Close() })
+
+	run := &wf.WorkflowRun{
+		ID:         "run-consumer-replay",
+		WorkflowID: "wf-consumer-audit",
+		Status:     wf.RunStatusRunning,
+		Steps: map[string]*wf.StepRun{
+			"step-1": {StepID: "step-1", Status: wf.StepStatusRunning, JobID: "run-consumer-replay:step-1@1"},
+		},
+	}
+	if err := workflowStore.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	bus := &mockAuditBus{}
+	mock := &mockExporter{}
+	_, err = NewNATSAuditConsumer(bus, mock,
+		WithChainer(NewChainer(chainClient, "consumer:workflow-replay-chain:")),
+		WithStepHashSink(workflowStore),
+	)
+	if err != nil {
+		t.Fatalf("NewNATSAuditConsumer: %v", err)
+	}
+	handler := subscribedHandler(t, bus)
+
+	missing := testEvent()
+	missing.JobID = "run-consumer-replay:missing@1"
+	if err := handler(packetFor(t, missing)); err != nil {
+		t.Fatalf("missing-step handler: %v", err)
+	}
+	assertWorkflowAuditHash(t, workflowStore, run.ID, "step-1", "")
+
+	ev := testEvent()
+	ev.JobID = run.Steps["step-1"].JobID
+	if err := handler(packetFor(t, ev)); err != nil {
+		t.Fatalf("first handler: %v", err)
+	}
+	first := exportedEvent(t, mock, 1)
+	assertWorkflowAuditHash(t, workflowStore, run.ID, "step-1", first.EventHash)
+
+	if err := handler(packetFor(t, ev)); err != nil {
+		t.Fatalf("replay handler: %v", err)
+	}
+	assertWorkflowAuditHash(t, workflowStore, run.ID, "step-1", first.EventHash)
+	if got := mock.totalEvents(); got != 3 {
+		t.Fatalf("exported events = %d, want 3", got)
+	}
+}
+
+func subscribedHandler(t *testing.T, bus *mockAuditBus) func(*pb.BusPacket) error {
+	t.Helper()
+	bus.mu.Lock()
+	defer bus.mu.Unlock()
+	if bus.handler == nil {
+		t.Fatal("expected subscribed audit handler")
+	}
+	return bus.handler
+}
+
+func exportedEvent(t *testing.T, mock *mockExporter, index int) SIEMEvent {
+	t.Helper()
+	mock.mu.Lock()
+	defer mock.mu.Unlock()
+	if len(mock.batches) <= index || len(mock.batches[index]) == 0 {
+		t.Fatalf("missing exported event at batch %d", index)
+	}
+	return mock.batches[index][0]
+}
+
+func assertWorkflowAuditHash(t *testing.T, store *wf.RedisStore, runID, stepID, want string) {
+	t.Helper()
+	got, err := store.GetRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("get run %s: %v", runID, err)
+	}
+	if got.Steps[stepID].AuditHash != want {
+		t.Fatalf("step %s audit hash = %q, want %q", stepID, got.Steps[stepID].AuditHash, want)
 	}
 }
 

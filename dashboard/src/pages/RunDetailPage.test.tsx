@@ -2,6 +2,7 @@ import React, { act } from "react";
 import { screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkflowRun } from "@/api/types";
+import { mapWorkflowRun } from "@/api/transform";
 import { renderWithProviders } from "@/test-utils/render";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -318,6 +319,137 @@ describe("WorkflowRunDetailPage step list accessibility", () => {
       expect(options[0]?.className).toContain("focus-visible:ring-cordum");
       expect(options[0]?.className).toContain("focus-visible:ring-offset-2");
       expect(options[0]?.className).toContain("focus-visible:outline-none");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// Regression for task-dd5e1d8f reopen #2: QA's DoD #3 finding was that
+// RunDetailPage rendered the governance overlay but never read the
+// canonical `step.output.safetyDecision.type` source path that
+// graphBridge.ts already uses. Result: real run records always showed
+// the muted "decision pending" placeholder. Fixed in commit <next>.
+describe("WorkflowRunDetailPage governance overlay runtime data path", () => {
+  beforeEach(() => {
+    workflowState.run = {
+      data: makeRun({
+        steps: [
+          {
+            id: "step-deny",
+            name: "Denied step",
+            type: "worker",
+            status: "denied",
+            // Canonical run-time decision path — what graphBridge reads.
+            output: { safetyDecision: { type: "deny" } } as Record<
+              string,
+              unknown
+            >,
+            // policyGate from cordum-core task-913b6c6c — design-time hint.
+            policyGate: "require_approval",
+            // auditHash from cordum-core task-913b6c6c — runtime hash.
+            auditHash: "f".repeat(64),
+          },
+        ],
+      }),
+      isLoading: false,
+      error: null,
+    };
+  });
+
+  it("renders the governance overlay for worker-type steps", () => {
+    const { container, cleanup } = renderPage();
+    try {
+      // The shared WorkflowNodeGovernanceOverlay component marks itself
+      // with data-governance-overlay so consumers (WorkflowStudio nodes
+      // + RunDetailPage step list) can be smoke-tested at this surface.
+      const overlay = container.querySelector("[data-governance-overlay]");
+      expect(overlay).not.toBeNull();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("colors the safety-decision slot from step.output.safetyDecision.type (the canonical path graphBridge uses)", () => {
+    const { container, cleanup } = renderPage();
+    try {
+      // The safety-decision slot inside the overlay carries the decision
+      // type via its aria-label so a colored badge is present even in
+      // jsdom where computed styles are unreliable.
+      const slot = container.querySelector("[data-slot='safety-decision']");
+      expect(slot).not.toBeNull();
+      expect(slot?.getAttribute("aria-label")).toBe("Safety decision: deny");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("renders the audit hash chip from backend-shaped audit_hash after the transform", () => {
+    workflowState.run = {
+      data: mapWorkflowRun({
+        id: "run-backend",
+        workflow_id: "wf-1",
+        status: "succeeded",
+        steps: {
+          "step-audit": {
+            step_id: "step-audit",
+            status: "succeeded",
+            output: { safetyDecision: { type: "allow" } },
+            audit_hash: "abcdef0123456789deadbeefcafebabe",
+          },
+        },
+      }),
+      isLoading: false,
+      error: null,
+    };
+
+    const { container, cleanup } = renderPage();
+    try {
+      const auditSlot = container.querySelector("[data-slot='audit-hash']");
+      expect(auditSlot).not.toBeNull();
+      expect(auditSlot?.textContent).toBe("abcdef01");
+      // The aria-label lives on the inner CodeBlock button (post-task-6fccc637
+      // reopen — chip migrated to the shared CodeBlock primitive).
+      const chip = auditSlot?.querySelector("button");
+      expect(chip).not.toBeNull();
+      expect(chip?.getAttribute("aria-label")).toBe(
+        "Copy audit hash abcdef0123456789deadbeefcafebabe",
+      );
+      expect(auditSlot?.getAttribute("data-pending-api")).toBeNull();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("renders the policy-gate Shield with the runtime tone from step.policyGate (DoD #3 — task-6fccc637 reopen RunDetail smoke)", () => {
+    // Already seeded by parent beforeEach: policyGate = "require_approval".
+    const { container, cleanup } = renderPage();
+    try {
+      const policySlot = container.querySelector("[data-slot='policy-gate']");
+      expect(policySlot).not.toBeNull();
+      expect(policySlot?.getAttribute("data-policy-gate")).toBe("require_approval");
+      // No data-pending-api marker because the value flowed through the
+      // transform.ts mapping (task-6fccc637 commit 85f0f1e3) and reached the
+      // overlay populated.
+      expect(policySlot?.getAttribute("data-pending-api")).toBeNull();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("renders the audit hash chip from the parent-beforeEach seed (DoD #3 — page-level smoke proves end-to-end wiring)", () => {
+    // Parent beforeEach seeds auditHash = "f".repeat(64). The chip should
+    // render the 8-char prefix and carry the full hash in aria-label.
+    const { container, cleanup } = renderPage();
+    try {
+      const auditSlot = container.querySelector("[data-slot='audit-hash']");
+      expect(auditSlot).not.toBeNull();
+      expect(auditSlot?.textContent).toBe("ffffffff");
+      const chip = auditSlot?.querySelector<HTMLButtonElement>("button");
+      expect(chip?.getAttribute("aria-label")).toBe(
+        `Copy audit hash ${"f".repeat(64)}`,
+      );
+      expect(auditSlot?.getAttribute("data-pending-api")).toBeNull();
     } finally {
       cleanup();
     }

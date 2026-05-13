@@ -28,6 +28,7 @@ import {
   mapWorkflow,
   mapWorkflowRun,
   mapWorkflowRunStep,
+  mapWorkflowStep,
   microsToISO,
   normalizeGovernanceVerdict,
   normalizeDecisionType,
@@ -695,6 +696,52 @@ describe("transform contract hardening", () => {
       const step = mapWorkflowRunStep({}, "fallback-id");
       expect(step.id).toBe("fallback-id");
     });
+
+    it("carries audit_hash from the backend run-step into auditHash (task-913b6c6c)", () => {
+      const step = mapWorkflowRunStep(
+        { step_id: "s1", status: "succeeded", audit_hash: "abcdef0123456789deadbeefcafebabe" },
+        "f",
+      );
+      expect(step.auditHash).toBe("abcdef0123456789deadbeefcafebabe");
+    });
+
+    it("collapses null audit_hash to undefined so the overlay falls back to the muted placeholder", () => {
+      const step = mapWorkflowRunStep(
+        { step_id: "s1", status: "succeeded", audit_hash: null },
+        "f",
+      );
+      expect(step.auditHash).toBeUndefined();
+    });
+
+    it("leaves auditHash undefined when the backend omits the field entirely", () => {
+      const step = mapWorkflowRunStep({ step_id: "s1", status: "pending" }, "f");
+      expect(step.auditHash).toBeUndefined();
+    });
+  });
+
+  describe("mapWorkflowStep policy gate threading (task-913b6c6c)", () => {
+    it("carries policy_gate=allow from the backend def-step into policyGate", () => {
+      const step = mapWorkflowStep({ id: "s1", name: "step", type: "job", policy_gate: "allow" }, "f");
+      expect(step.policyGate).toBe("allow");
+    });
+
+    it("carries policy_gate=deny from the backend def-step into policyGate", () => {
+      const step = mapWorkflowStep({ id: "s1", name: "step", type: "job", policy_gate: "deny" }, "f");
+      expect(step.policyGate).toBe("deny");
+    });
+
+    it("carries policy_gate=require_approval from the backend def-step into policyGate", () => {
+      const step = mapWorkflowStep(
+        { id: "s1", name: "step", type: "job", policy_gate: "require_approval" },
+        "f",
+      );
+      expect(step.policyGate).toBe("require_approval");
+    });
+
+    it("leaves policyGate undefined when the backend omits the field", () => {
+      const step = mapWorkflowStep({ id: "s1", name: "step", type: "job" }, "f");
+      expect(step.policyGate).toBeUndefined();
+    });
   });
 
   describe("microsToISO edge cases", () => {
@@ -755,12 +802,20 @@ describe("transform contract hardening", () => {
   });
 
   describe("governance decision hardening", () => {
-    it("falls back to deny and warns for unknown verdicts", () => {
-      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    it("falls back to deny and warns for unknown verdicts", async () => {
+      // task-1acf9c07 Pass C: production warn paths now go through the
+      // structured logger at src/lib/logger.ts (component + msg + fields)
+      // rather than a free-form console.warn template string. The test
+      // asserts that contract directly so future migrations to the logger
+      // module's wire format don't silently break observability.
+      const { logger } = await import("../lib/logger");
+      const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
 
       expect(normalizeGovernanceVerdict("ESCALATE_LATER")).toBe("deny");
       expect(warn).toHaveBeenCalledWith(
-        '[transform] Unknown governance verdict "ESCALATE_LATER", defaulting to deny',
+        "transform",
+        "unknown governance verdict, defaulting to deny",
+        { raw: "ESCALATE_LATER" },
       );
 
       warn.mockRestore();

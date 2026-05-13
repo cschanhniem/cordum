@@ -1116,9 +1116,12 @@ func validateWorkflowStepMap(steps map[string]any) error {
 }
 
 func validateWorkflowSteps(steps map[string]wf.Step) error {
-	for id := range steps {
+	for id, step := range steps {
 		if err := validation.WorkflowStepID(id); err != nil {
 			return err
+		}
+		if step.PolicyGate != "" && !wf.IsValidPolicyGate(step.PolicyGate) {
+			return fmt.Errorf("workflow step %q: policy_gate %q must be one of allow|deny|require_approval", id, step.PolicyGate)
 		}
 	}
 	return nil

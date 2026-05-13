@@ -7,6 +7,97 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+#### Dashboard Phase 5e — per-route error boundaries with route-scoped fallback (2026-05-09, task-adc04293)
+
+- `dashboard/src/components/RouteErrorFallback.tsx`: route-scoped error UI composed from existing `ErrorBanner` primitive plus a Bug-icon mailto "Report bug" link. The mailto body URL-encodes the route name, error message, full stack, and user-agent so the bug report is actionable on first read.
+- `dashboard/src/components/RouteBoundary.tsx`: thin wrapper that pairs `ErrorBoundary` with `RouteErrorFallback`, using `useLocation().pathname` as the boundary's `resetKey` so the user navigating away from a broken route auto-clears the boundary state.
+- `dashboard/src/components/ErrorBoundary.tsx`: extended with an optional `fallback?: (props: { error, reset }) => ReactNode` render prop. When supplied, the boundary defers to the consumer's UI instead of rendering its built-in "Something went wrong" full-page card. Public type `ErrorBoundaryFallbackProps` is exported for downstream typings.
+- `dashboard/src/App.tsx`: every leaf-page route is now wrapped in `<RouteBoundary name="…">`, surfacing a route-specific error UI instead of the generic fallback. Pure-redirect routes (`<Navigate>`-returning components) are not wrapped — they don't render UI. The outermost `ErrorBoundaryWrapper` is retained as the last-resort safety net for AppShell-/Suspense-level render failures that bypass any specific Route.
+- Tests: 12 new tests added (5 covering the ErrorBoundary primitive's fallback + reset behavior; 3 integration tests exercising RouteBoundary for throw/navigate-clears/Retry semantics; 4 covering RouteErrorFallback's title + Retry + mailto + generic-message fallback). One pre-existing `App.copilot-session-route.test.tsx` registration-guard regex was loosened from `/element=\{<CopilotSessionPage\b/` to `/<CopilotSessionPage\b/` so the per-route boundary wrap doesn't break a future-friendly drift check.
+- DoD #1 (designed empty states across 9 list pages) was fully met by existing code per the inventory in step-1: AgentsPage / JobsPage / ApprovalsPage / AuditLogPage / EdgeSessionsPage / TopicsPage / SchemasPage / PacksPage / govern/QuarantinePage all already render `<EmptyState icon=… title=… description=… action=…>` from `components/ui/EmptyState`. No page redesign needed; the audit table is captured in the task's complete_step note for step-2.
+
+#### Dashboard 5 — Bundles surface: list + detail-with-tabs (2026-05-09, task-220d263a)
+
+- `dashboard/src/pages/policies/BundlesPage.tsx`: filter bar + DataTable list at `/policies/bundles` with scope/search nuqs URL state, status dot, "+ New bundle" CTA. Row-click navigates to detail page. (Step 3, by worker-6b22 commit `22da3212`.)
+- `dashboard/src/pages/policies/BundleDetailPage.tsx`: detail page at `/policies/bundles/:id` with the unified `Tabs` primitive and 4 panels — Rules / Versions / Deployments / Diff. Active tab in URL via nuqs (`?tab=rules|versions|deployments|diff`). Each tab is a separate lazy-loaded chunk. Per-tab status badge + back link in PageHeader. (Step 4, worker-6b22 `f064a55b`.)
+- `BundleRulesTab.tsx`: rules-in-bundle list reusing the Rules surface row format; "Add rule…" + "+ New rule in this bundle" affordances. (Step 5, worker-6b22 `f064a55b`.)
+- `BundleVersionsTab.tsx`: vertical timeline of versions newest-first with author + commit hash + rule-count delta; per-row "Compare with…" picker that sets `?tab=diff&from=...&to=...`. (Step 6, worker-6b22 `f064a55b`.)
+- `BundleDeploymentsTab.tsx`: scope×version matrix consuming Backend 2's `GetActiveDeployment` grouping. Click-to-Promote (empty cells) / click-to-Rollback (active cells) gated by `ConfirmDialog`. New `useDeployBundle` + `useRollbackBundle` mutations call Backend 2's `POST /policy/bundles/:id/deploy` + `/rollback`. a11y: row/columnheader scoping + per-cell aria-labels naming the action verb + scope. (Step 7 by worker-c1cf, commit `fa13f3ad`.)
+- `BundleDiffTab.tsx`: read-only Monaco DiffEditor side-by-side comparison of two version snapshots' YAML-serialized rule sets, with a summary row "X added · Y removed · Z modified" computed from id-keyed comparison. nuqs URL state `?from=&to=` for deep-link compatibility with the Versions-tab "Compare with…" picker; pickers when unset. DiffEditor lazy-loaded so monaco-editor only ships when the Diff tab is activated. (Step 8 by worker-c1cf, commit `6e3d5a72`.)
+- New `dashboard/src/hooks/useBundle.ts` exporting `useBundle/useBundleVersions/useBundleDeployments`; `dashboard/src/hooks/useBundleVersion.ts` (single-version fetch); `useDeployBundle.ts` + `useRollbackBundle.ts` (mutations with cache-invalidation + toast wiring).
+- New MSW defaults in `dashboard/src/test-utils/handlers.ts` for every Backend 2 endpoint the new tabs consume (`/policy/bundles`, `/:id`, `/:id/versions`, `/:id/versions/:version`, `/:id/deployments`, `/:id/deploy`, `/:id/rollback`).
+- Page tests covering DoD #5: `BundlesPage.test.tsx` (list + filter URL), `BundleDetailPage.test.tsx` (tab navigation), `BundleDeploymentsTab.test.tsx` (matrix + ConfirmDialog wiring), `BundleDiffTab.test.tsx` (Monaco props + summary). DASHBOARD VERIFICATION RAIL: tsc 0 / vitest 238 files / 2052 tests / build 0.
+- Note: deployment-timeline Gantt visualization is task Dashboard 6 (`task-7b2862f8`); the matrix is the v1 view.
+
+#### Dashboard verification rail finalization (2026-05-09, task-347388c0 reopen #1)
+
+- Updated `dashboard/docs/process/rail-vitest-green-verification.md` with the approved-rail excerpts post Yaron 2026-05-09 sign-off. Three rails now live in `project.globalRails.customRules` (verbatim text in the doc): DASHBOARD VERIFICATION RAIL (prop-8cc95268), DASHBOARD QA REJECTION FORMAT (prop-5a162a16), and PRE-SUBMIT DOD CHECKLIST (Yaron-2026-05-09). PENDING block annotated with the resolution; original placeholder retained as audit trail. Field-correction note added: rails live in `project.globalRails.customRules`, NOT `allRails.global` (the latter is empty in fetched contexts; the prior reopen mistakenly cited that field).
+- Closes the task-347388c0 reopen #1 from QA: DoD #1 (rail exists) + #3 (visible to architects via moe.get_context) verified directly by architect-697e (chat msg-223382a3).
+
+#### Dashboard 1 — Policy Studio foundation routes + type adapters (2026-05-09, task-5d354964)
+
+- Three new lazy-loaded routes wire up the Policy Studio v3 IA per epic-d9a6c0a1 spec: `/policies` (PoliciesPage — Rules surface), `/policies/bundles` (BundlesPage), `/policies/decisions` (DecisionsPage). Each shell renders only `PageHeader` + `EmptyState` from existing primitives — Dashboards 2/5/8 fill the bodies.
+- `/govern/overview` becomes a redirect handler (`GovernOverviewRedirect` inline in App.tsx). Reads `?tab=` + `?mode=` and navigates to the new IA: input/output/velocity → `/policies?type=…`; bundles → `/policies/bundles`; scope → `/policies/bundles?view=scope`; evaluation → `/policies/decisions` (preserves `mode`); unknown/missing → `/policies` (Rules default). The existing `/govern/<tab>` PolicyTabRedirect chains through here, so all legacy bookmarks stay valid.
+- New `src/lib/policy-studio/` package adds 4 type adapters used across the unified shapes: `ruleTypeLabel` + `ruleTypeIcon` (lucide), `decisionTypeLabel`, `decisionTone` (5-tone palette), `edgeModeLabel`. Co-located test exhaustively iterates every `Object.values(Enum)` variant so missing enum values fail at test time.
+- Stale `GovernPolicyOverviewPage` lazy import dropped (TS6133); component file retained on disk for Dashboard 11 cut-over deletion.
+- No new shared primitives. No new colors. Routing remains on `react-router-dom` per v2.5 rail.
+
+#### Phase 5d — bundle-size visualizer + soft CI gate (2026-05-09, task-50bbfd7d)
+
+- Installed `rollup-plugin-visualizer@7.0.1` and wired it into `dashboard/vite.config.ts` so every `pnpm run build` emits `dist/stats.html` (treemap, raw + gzip + brotli). `emitFile: true` keeps the file inside `dist/`.
+- New `dashboard/scripts/parse-bundle-stats.mjs` reads `dist/assets/*.js` and prints a per-chunk markdown table (raw + gzip + brotli) with totals and the initial-chunk highlight. Soft thresholds (warn-only; always exits 0): initial ≤ 400 KB raw / 120 KB gzip, total ≤ 3100 KB raw / 950 KB gzip — sized ~25-30% above the 2026-05-09 baseline (initial 305 KB / 92 KB gzip; total 2533 KB / 759 KB gzip captured in `dashboard/docs/code-hygiene-sweep.md`).
+- `.github/workflows/ci.yml` `dashboard-test` job now: (a) declares `pull-requests: write` permission, (b) runs `pnpm run build` after vitest, (c) computes the bundle-size markdown via the parser, (d) uploads `dist/stats.html` + the markdown as the `dashboard-bundle-stats` artifact (14-day retention), (e) on `pull_request` events posts the markdown via `peter-evans/create-or-update-comment@v4` with `body-includes: "<!-- bundle-size-report -->"` so subsequent pushes update the same comment instead of appending. Main pushes still build + parse but skip the comment step.
+- `dashboard/CLAUDE.md` "Bundle size (Phase 5d)" section documents the threshold values, how to read `dist/stats.html` locally, and where to find the baseline.
+
+#### Backend 1.5 — policy-studio yaml additions on dashboard branch + regenerated dashboard TS (2026-05-09, task-e38d99a5)
+
+- `docs/api/openapi/cordum-api.yaml`: surgically extracted Backend 1's 14 unified Rule/Decision/Bundle schemas (lines 10989–11256 of `origin/policy-studio-backend`) and appended them to dashboard branch's yaml so the orval pipeline can regenerate dashboard TS for downstream Dashboard 1+ tasks. Bumped `info.version` `2026-05-09.2` → `2026-05-09.3` (next-after worker-dac4's /policy/audit enrichment .2). worker-dac4's existing /policy/audit edits at lines 1, 3266, 9876, 9883 untouched (disjoint regions).
+- `dashboard/src/api/generated/`: regenerated via `pnpm run generate-api`. 17 new TS files surface the unified shapes — `model/{rule,ruleType,ruleStatus,ruleScope,ruleScopeKind,decision,decisionType,decisionSource,bundle,bundleVersion,bundleMetadata,edgeMode,auditMetadata,traceStep}.ts` plus 3 sub-schemas (`ruleMatch`, `ruleDecide`, `traceStepConstraints`). 502 existing files received only the `OpenAPI spec version` comment bump (no semantic changes).
+- Bridges Backend 1 (`origin/policy-studio-backend` PR) → Dashboard 1+ track. Per Yaron 2026-05-09 directive (commit/push, no merge until full epic done), the PR opens against `dashboard` and stays in REVIEW; the regenerated types live as commits on dashboard branch and are consumable immediately by parallel Dashboard tasks.
+
+#### Phase 5c command palette recent jobs/agents (2026-05-09, task-095927f8)
+
+- `dashboard/src/components/CommandPalette.tsx` now appends two dynamic groups to the `cmd+k` palette: **Recent Jobs** (top 50, label `${topic} · ${id-prefix}`, deep-link `/jobs/:id`, keywords include id/topic/status/capabilities) and **Recent Agents** (top 50, label `name||id`, deep-link `/agents/:id`, keywords include id/name/pool/status/capabilities). Data sourced from existing `useJobs({ limit: 50 })` and `useWorkers()` React Query hooks; cache-aware so palette open shows last-known recent without an extra fetch.
+- Existing static commands (Navigate / Govern / Settings) render unchanged; new sections render below them.
+- Fuzzy keyword match is now case-insensitive (`k.toLowerCase().includes(q)`) so mixed-case dynamic keywords (job ids, names) match consistently with the lowercase static keywords.
+- `?` keybind to open `KeyboardShortcutsHelp` modal already wired via `dashboard/src/hooks/useKeyboardShortcuts.ts:102-108` with `isEditableTarget` guard at L77-83 (skips when target is INPUT/TEXTAREA/SELECT/contentEditable). Confirmed during inventory; no code change needed for that DoD item.
+- New tests: 3 render-based cases in `CommandPalette.recent.test.tsx` covering the two dynamic groups + the empty-state path.
+
+#### Phase 4 drift sweep follow-up #2 closure (2026-05-09, task-82593815)
+
+- `dashboard/src/pages/DesignSystemConvergence.test.ts` extended with a comprehensive sweep test using `import.meta.glob('./**/*.tsx', { query: '?raw', import: 'default', eager: true })` (test files excluded at the glob level). Asserts `RAW_CONTROL_RE` (/<(input|select|textarea)\b/) does not match across `src/pages/**/*.tsx` outside the documented carve-out set. Forward-compatible — catches new pages that introduce raw native form controls without manual list maintenance.
+- Companion regression detector: `carve-out pages still hold raw controls` test asserts `LoginPage` + `RunDetailPage` continue to contain raw controls; if a future migration accidentally rewrites them, this test fails forcing a coordinated docs + carve-out-set update rather than silent drift.
+- Carve-outs documented inline (linking to `mem-df8a90aa` and `dashboard/docs/design-system-audit.md`): `LoginPage` (native HTML form for browser autofill / password manager interop on auth surface) + `RunDetailPage` (workflow-run console exempted, DoD-3 register).
+- DoD #1 (23 pages migrated) confirmed by re-grep at HEAD: zero pages outside the carve-outs contain raw controls — the migration completed via parallel-worker activity (commits prior to claim). No code changes required for batch migration steps.
+
+#### Phase 5a a11y test gate (2026-05-09, task-bf55ddbd; reopen #1 fix)
+
+- `renderWithProviders` (`dashboard/src/test-utils/render.tsx`) accepts an opt-in `runAxe: true` option that returns a `Promise<RenderWithProvidersResult>` and asserts **zero WCAG 2 A/AA violations of any impact** on the rendered container. Strict gate per DoD: only `color-contrast` is disabled (jsdom can't composite backdrop-filter; Lighthouse CI / Phase 5b owns color-contrast). Existing callers without `runAxe` stay synchronous and unchanged. Optional `axeMode: "light" | "dark"` selects the theme axe runs against.
+- New `dashboard/src/pages/NotFoundPage.test.tsx` page test opts in via `runAxe: true` to demonstrate the strict gate at the page level — NotFoundPage renders fully synchronously (no async data) so the post-render axe pass exercises the actual customer DOM, not a loading skeleton.
+- `dashboard/src/components/UserMenu.test.tsx` first test also opted in (additional component-level coverage; UserMenu's idle render is axe-clean).
+- New `dashboard/eslint.a11y.config.mjs` — narrow flat config that escalates the gate-relevant jsx-a11y rules (alt-text, ARIA correctness, heading-has-content, anchor-has-content, iframe-has-title) to `error`. `pnpm run lint:a11y` rewritten to point at this config; cross-platform safe (replaces the broken JSON-arg form that failed under PowerShell shell-quoting).
+- `dashboard/src/components/ui/Card.tsx` `CardTitle` refactored to render `<h3>{children}</h3>` (was self-closing with spread props) so `jsx-a11y/heading-has-content` can statically verify content. No behavior change.
+
+#### Workflow governance overlay fields (2026-05-08, task-913b6c6c)
+
+- `WorkflowStep.policy_gate?: "allow" | "deny" | "require_approval"` — optional design-time policy hint surfaced on the WorkflowStudio governance overlay before any run. Validated at workflow-save time; unset means "no hint" (overlay defers to runtime safety decision).
+- `WorkflowRunStep.audit_hash?: string` — optional 64-char hex audit-chain event hash for the step's job. Populated by run-record builders that join `StepRun.JobID → SIEMEvent.JobID → SIEMEvent.EventHash`. Populate-strategy left to producers; unset for skipped/upstream-failed steps.
+- OpenAPI: `info.version` bumped `2026-04-21.2` → `2026-05-08.2` (reopen #1: `2026-05-08.1` shipped only `WorkflowStep.policy_gate`; `2026-05-08.2` adds `RunStepStatus.audit_hash` so the dashboard governance overlay's audit-hash chip data path is fully contracted). `WorkflowStep.policy_gate` enum + description added under `components/schemas/WorkflowStep`. `RunStepStatus.audit_hash` (nullable string, audit-chain event hash) added under `components/schemas/RunStepStatus`.
+
+#### Runtime WorkflowRunStep.AuditHash population (2026-05-08, task-a45b8eb1)
+
+- New `audit.StepHashSink` interface + `audit.WithStepHashSink` ConsumerOption: optional dependency the audit consumer uses to back-fill `StepRun.AuditHash` after a successful `chainer.Append`. Architectural choice per Option A scope-split (eventual-consistency write-back from the audit-consumer goroutine; the workflow engine cannot synchronously compute the chain hash because `PrevHash` depends on the chain head held by the chainer).
+- Post-Append hook in `core/audit/consumer.go handle()`: when chain Append succeeds AND a sink is wired AND the SIEMEvent has both `EventHash` and `JobID`, the consumer calls `sink.UpdateAuditHash(ctx, jobID, eventHash)`. Sink errors are non-fatal (logged + swallowed) — the audit chain entry is durable; the workflow store can be back-filled offline if the sink misses transiently.
+- `workflow.RedisStore` now implements the sink: run writes maintain a `StepRun.JobID → run/step` Redis lookup, `UpdateAuditHash` idempotently persists the first audit-chain hash on matching top-level and nested step records, and pending hashes are applied on the next run write if the audit event arrives before the step's JobID index.
+- Gateway audit pipeline wiring passes the workflow store into both NATS consumer mode (`audit.WithStepHashSink`) and direct/chain-only senders, so new workflow runs populate the dashboard governance overlay's audit-hash chip as soon as their SIEMEvent is appended to the chain. Skipped/upstream-failed/no-entry steps remain unset.
+
+### Fixed
+
+#### UpdateRun lost-update race for concurrent AuditHash writes (2026-05-09, task-a45b8eb1 reopen #2)
+
+- `core/workflow/store_redis.go`: replaced the legacy two-phase Lua-then-Go-merge `UpdateRun` body with an atomic Lua script that performs GET-merge-SET as a single Redis command. The script walks the persisted run's StepRuns (recursively, including `children`) and forwards any populated `audit_hash` into the new payload's StepRuns whose `audit_hash` is empty for the same `job_id`, then SETs the merged payload. This closes the lost-update race the previous reopen left open: a stale UpdateRun whose caller marshaled before a concurrent `UpdateAuditHash` succeeded would otherwise have erased the just-written hash on its SET. With merge baked into the Lua, the GET inside the script always sees the current persisted state, so the race window collapses to zero. Index updates remain in a separate idempotent pipeline (cluster-safe, eventual-consistency tolerant). Removed the now-redundant Go-side `mergePersistedAuditHashes` helper and its tree-walk subroutines; pending-hash recovery (via `wf:run:pending_audit_hash:<jobID>` keys) still runs Go-side for the case where the audit event lands before the run/step is persisted at all.
+- `core/workflow/store_redis_test.go`: added two regressions. `TestRedisStoreUpdateRunPreservesAuditHashAcrossInFlightRace` reproduces the exact race state — the audit consumer wrote the hash atomically while the caller's UpdateRun payload was built without it — and asserts that the SET preserves the hash and lands the caller's status mutation. `TestRedisStoreUpdateRunPreservesAuditHashUnderConcurrentInFlightAuditWrite` exercises 200 iterations of concurrent `UpdateRun + UpdateAuditHash` goroutines on the same run/job and asserts the hash survives in every iteration regardless of goroutine ordering. Both tests fail deterministically on a Lua-merge-disabled control implementation, proving they catch the lost-update path.
+
 #### Backend 6 — pack `metadata.aliases` + safety-policy `constraints` extensions (2026-05-10, task-e4e9489c)
 
 - **Pack manifest**: `metadata.aliases: []string` is now optional and additive. When set, topic / pools-patch / timeouts-patch namespace checks accept `job.<id>.*` AND `job.<alias>.*` for each declared alias. Regex `^[a-z][a-z0-9_-]{1,30}$`, max 8 entries, duplicates rejected. Unblocks the CordClaw pack owning `job.openclaw.*` topics under `metadata.id: cordclaw` (task-1e446868). Existing packs without aliases keep validating under the strict prefix rule. See `docs/operations/pack-aliases.md`.
@@ -74,6 +165,56 @@ under EDGE-032 on 2026-04-30; product, API, CLI, and demo docs are at
 - EDGE-030: Demo polish and operator runbook
 - EDGE-031: Security review and threat-model closure for P0
 - EDGE-032: P0 final acceptance, demo signoff, and release readiness
+
+#### Lighthouse CI gate for /login (epic-252d2c07 Phase 5b)
+
+CI now runs Lighthouse against the unauth `/login` surface on every PR
+and posts performance / accessibility / best-practices / SEO scores as a
+PR comment.
+
+- **`@lhci/cli` 0.15.1** added to `dashboard/devDependencies`.
+- **`dashboard/lighthouserc.json`** — desktop preset, 3 runs averaged,
+  `temporary-public-storage` upload target. All assertions `warn`-mode
+  (perf ≥ 0.7, a11y ≥ 0.9, best-practices ≥ 0.85, SEO off) — no
+  PR-blocking yet.
+- **`.github/workflows/ci.yml` new `lhci-login` job** — PR-only,
+  `continue-on-error: true`, `pull-requests: write` permission for
+  comment posting. Reads `.lighthouseci/manifest.json` to format a
+  markdown score table via `actions/github-script@v7`.
+- **Local run**: `pnpm run lhci` from `dashboard/` (uses
+  `start-server-and-test` to boot `vite preview` and tear it down
+  cleanly after `lhci autorun`).
+
+Authenticated-surface lhci (HomePage / JobsPage / AuditLogPage / etc.)
+deferred to follow-up task **task-63603c2e** (cookie-bridge + test
+credentials required).
+
+#### OpenAPI /policy/audit enrichment (epic-252d2c07 follow-up to task-55f813b3)
+
+Closes the spec drift between the gateway handler and the OpenAPI spec for
+`GET /api/v1/policy/audit`:
+
+- 9 query params declared (`limit`, `offset`, `action`, `agent_id`,
+  `after`, `before`, `search`, `rule_id`, `type`) matching the
+  gateway handler at
+  `core/controlplane/gateway/handlers_policy_bundles.go:805`.
+- Response shape changed from bare `PolicyAuditEntry[]` to a typed
+  `PolicyAuditEnvelope` (`{items, total, has_more, offset}`) matching
+  the actual handler payload.
+- `PolicyAuditEntry` schema enriched from 7 fields to 25 fields
+  (existing 7 stay; 4 of them now `deprecated: true` since the backend
+  doesn't populate them; 18 backend-only fields added — `resource_*`,
+  `actor_id`, `role`, `auth_source` (new `AuthSource` enum),
+  `agent_*`, `bundle_ids` plural, `reason`, `decision`,
+  `matched_rule`, `policy_version`, `extra`, `snapshot_before` /
+  `snapshot_after`, `created_at`).
+- `info.version` bumped to `2026-05-09.2`.
+
+Dashboard: `dashboard/src/pages/AuditLogPage.tsx` swapped from a manual
+`get<AuditResponse>('/policy/audit?...')` call to the regenerated
+`useGetPolicyAudit` hook. The previous `PolicyAuditEntry &
+Record<string, unknown>` bridge intersection (added in task-55f813b3
+step-7) is removed; the page now consumes the typed shape directly.
 
 #### Cordum Edge P0 cleanup (2026-05-03)
 

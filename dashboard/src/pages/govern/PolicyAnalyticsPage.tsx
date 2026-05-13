@@ -30,6 +30,8 @@ import { SkeletonCard } from "@/components/ui/Skeleton";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { InfoBanner } from "@/components/ui/InfoBanner";
 import { InstrumentCard } from "@/components/ui/InstrumentCard";
+import { Input } from "@/components/ui/Input";
+import { LabeledField } from "@/components/ui/LabeledField";
 import { ChartTooltipCompact as ChartTooltip } from "@/components/ui/ChartTooltip";
 import { usePolicyAnalytics } from "@/hooks/usePolicies";
 import type {
@@ -120,7 +122,7 @@ function Sparkline({ data }: { data: number[] }) {
             width={4}
             height={h}
             rx={1}
-            className="fill-[var(--color-cordum)]"
+            className="fill-cordum"
             opacity={0.7 + 0.3 * (v / max)}
           />
         );
@@ -187,11 +189,10 @@ function RuleTable({ rules }: { rules: RuleAnalytics[] }) {
   return (
     <div className="space-y-3">
       <div className="relative max-w-sm">
-        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-        <input
+        <Input
           type="text"
+          icon={<Search className="h-3.5 w-3.5" />}
           placeholder="Search rule ID..."
-          className="w-full rounded-xl border border-border bg-background pl-8 pr-3 py-1.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           aria-label="Search rules"
@@ -236,13 +237,13 @@ function RuleTable({ rules }: { rules: RuleAnalytics[] }) {
                 <tr
                   key={rule.rule_id}
                   className={`border-b border-border/20 last:border-0 hover:bg-muted/10 ${
-                    highOverride ? "bg-[var(--color-warning)]/5" : ""
+                    highOverride ? "bg-warning/5" : ""
                   }`}
                 >
                   <td className="py-2 px-3 font-mono text-xs text-foreground/90">
                     {rule.rule_id}
                     {highOverride && (
-                      <AlertTriangle className="inline h-3 w-3 ml-1.5 text-[var(--color-warning)]" />
+                      <AlertTriangle className="inline h-3 w-3 ml-1.5 text-warning" />
                     )}
                   </td>
                   <td className="py-2 px-3 tabular-nums">{rule.hit_count}</td>
@@ -270,7 +271,7 @@ function RuleTable({ rules }: { rules: RuleAnalytics[] }) {
                   <td className="py-2 px-3 text-right">
                     <Link
                       to={REPLAY_COMPARE_LINK}
-                      className="inline-flex items-center gap-1 text-xs text-[var(--color-cordum)] hover:underline"
+                      className="inline-flex items-center gap-1 text-xs text-cordum hover:underline"
                     >
                       What-if
                       <ExternalLink className="h-3 w-3" />
@@ -363,11 +364,11 @@ function FalsePositiveHighlights({ rules }: { rules: RuleAnalytics[] }) {
       {fpRules.map((rule) => (
         <div
           key={rule.rule_id}
-          className="rounded-xl border border-[var(--color-warning)]/30 bg-[var(--color-warning)]/5 p-4 space-y-2"
+          className="rounded-xl border border-warning/30 bg-warning/5 p-4 space-y-2"
         >
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4 text-[var(--color-warning)] shrink-0" />
+              <AlertTriangle className="h-4 w-4 text-warning shrink-0" />
               <span className="font-mono text-sm font-medium">{rule.rule_id}</span>
               <StatusBadge variant="warning">
                 {formatRate(rule.override_rate)} override rate
@@ -375,7 +376,7 @@ function FalsePositiveHighlights({ rules }: { rules: RuleAnalytics[] }) {
             </div>
             <Link
               to={REPLAY_COMPARE_LINK}
-              className="text-xs text-[var(--color-cordum)] hover:underline shrink-0"
+              className="text-xs text-cordum hover:underline shrink-0"
             >
               Test with replay &rarr;
             </Link>
@@ -424,30 +425,22 @@ export default function PolicyAnalyticsPage({
         {/* Controls */}
         <InstrumentCard accent="info" className="p-5">
           <div className="flex flex-wrap items-end gap-4">
-            <div className="space-y-1">
-              <label htmlFor="analytics-from" className="text-[11px] text-muted-foreground">
-                From
-              </label>
-              <input
+            <LabeledField label="From">
+              <Input
                 id="analytics-from"
                 type="datetime-local"
-                className="rounded-xl border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 value={from}
                 onChange={(e) => setFrom(e.target.value)}
               />
-            </div>
-            <div className="space-y-1">
-              <label htmlFor="analytics-to" className="text-[11px] text-muted-foreground">
-                To
-              </label>
-              <input
+            </LabeledField>
+            <LabeledField label="To">
+              <Input
                 id="analytics-to"
                 type="datetime-local"
-                className="rounded-xl border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 value={to}
                 onChange={(e) => setTo(e.target.value)}
               />
-            </div>
+            </LabeledField>
             <Button
               variant="default"
               size="sm"
