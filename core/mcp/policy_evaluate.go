@@ -1,0 +1,853 @@
+package mcp
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"regexp"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/cordum/cordum/core/edge"
+	"github.com/cordum/cordum/core/infra/config"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+)
+
+// upstreamErrorRedactPatterns defines URL/token regex rules applied to
+// upstream error messages before they reach a Redis-persisted event.
+// Order matters: URL redaction runs first so token-extraction patterns
+// don't re-leak the URL substring.
+var upstreamErrorRedactPatterns = []struct {
+	pattern     *regexp.Regexp
+	replacement string
+}{
+	// Full URLs (http/https with optional userinfo + query string).
+	{regexp.MustCompile(`https?://[^\s]+`), "[REDACTED:url]"},
+	// Bearer tokens.
+	{regexp.MustCompile(`(?i)bearer\s+[A-Za-z0-9._\-+/=]+`), "[REDACTED:bearer]"},
+	// API key tokens by common prefix (Anthropic sk-, GitHub ghp_, AWS AKIA).
+	{regexp.MustCompile(`\bsk-[A-Za-z0-9_\-]{4,}\b`), "[REDACTED:api_key]"},
+	{regexp.MustCompile(`\bghp_[A-Za-z0-9]{8,}\b`), "[REDACTED:github_token]"},
+	{regexp.MustCompile(`\bAKIA[0-9A-Z]{12,}\b`), "[REDACTED:aws_key]"},
+}
+
+// redactionCompletenessPatterns is the post-redaction sentinel set: if
+// any of these still match a Redactor's output, the redactor either has
+// a bug or was misconfigured by policy. We refuse to emit the event so
+// no raw credential lands in a Redis-persisted audit row. This is the
+// defense-in-depth backstop required by EDGE-102 DoD #3.
+//
+// Keep this list in lockstep with DefaultRedactionRules' regex set —
+// every high-severity heuristic in the redactor needs an equivalent
+// guardrail check here so a partial drop in either layer still trips
+// the closed-fail path.
+var redactionCompletenessPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`AKIA[0-9A-Z]{16}`),
+	regexp.MustCompile(`sk_live_[a-zA-Z0-9]{24,}`),
+	regexp.MustCompile(`sk-[A-Za-z0-9_\-]{16,}`),
+	regexp.MustCompile(`gh[opusr]_[A-Za-z0-9]{16,}`),
+	regexp.MustCompile(`eyJ[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+`),
+	regexp.MustCompile(`-----BEGIN [A-Z ]+PRIVATE KEY-----`),
+}
+
+// highSeverityFindingMarkers is the set of [REDACTED:...] family tags
+// whose presence — even in a small payload — promotes the event to
+// artifact storage. Investigators get the full redacted context for
+// any credential-touching call without inflating the inline event.
+var highSeverityFindingMarkers = []string{
+	"[REDACTED:api_key]",
+	"[REDACTED:token]",
+	"[REDACTED:secret]",
+	"[REDACTED:password]",
+	"[REDACTED:private_key]",
+	"[REDACTED:pem_private_key]",
+	"[REDACTED:jwt]",
+	"[REDACTED:aws_access_key]",
+	"[REDACTED:aws_key]",
+	"[REDACTED:github_token]",
+	"[REDACTED:stripe_secret]",
+	"[REDACTED:bearer]",
+	"[REDACTED:authorization]",
+}
+
+// targetPathArgKeys lists the JSON property names the descriptor builder
+// consults to populate ActionDescriptor.TargetPath from tools/call args.
+// Order matters — the first match wins. Keeps the canonical action hash
+// stable when callers use any of the common naming conventions.
+var targetPathArgKeys = []string{"path", "file_path", "target_path", "filepath"}
+
+// MaxToolCallArgsBytes is the hard limit on serialized tool-call args
+// before BuildActionDescriptorFromToolCall returns an `args_too_large`
+// error. Set to 1 MiB: any payload over that should never reach the
+// gate pipeline as a structured descriptor — it belongs in artifact
+// storage, not in a hot policy-evaluate path that runs on every call.
+const MaxToolCallArgsBytes = 1 * 1024 * 1024
+
+// inlineRedactedSummaryBytes is the inline budget retained on the
+// AgentActionEvent.InputRedacted map when the redacted payload exceeds
+// edge.MaxInputRedactedBytes. We keep a 4 KiB summary visible inline so
+// triagers see the shape of the request without paging through the
+// artifact store, then rely on the artifact pointer for full forensics.
+const inlineRedactedSummaryBytes = 4 * 1024
+
+// approvalClaimArgKey is the JSON property name on tool-call arguments
+// that callers may use to declare a human-approval claim. The string
+// is read verbatim into ActionDescriptor.ApprovalClaim.ClaimText — it
+// is treated as UNTRUSTED ("approved by CFO" never grants); the
+// provenance gate verifies the claim against backend records.
+const approvalClaimArgKey = "approval_claim"
+
+// CallMetadata carries the request-scoped identity + session linkage
+// the MCP tool-call policy path needs. The gateway's HTTP middleware
+// stashes this in context before dispatching tools/call into core/mcp.
+//
+// SessionID and ExecutionID let edge-event consumers correlate a
+// tool-call's pre/post/failed events with the AgentExecution they
+// belong to; without them, the audit row is unattributed and the
+// EvaluateToolCall path fails closed.
+//
+// This type is the mcp-package mirror of the gateway's
+// gateway.MCPCallMetadata. Both exist because core/policy/actiongates
+// already imports core/mcp (for mcp.AgentIdentity); a core/mcp →
+// gateway import would close the cycle. The gateway middleware writes
+// both contexts so either accessor works at the call site.
+type CallMetadata struct {
+	Tenant      string
+	Principal   string
+	AgentID     string
+	SessionID   string
+	ExecutionID string
+}
+
+type callMetadataKey struct{}
+
+// WithCallMetadata returns a context carrying the supplied metadata.
+// Callers MUST use this helper instead of context.WithValue with a
+// raw string key so the lookup contract stays type-safe.
+func WithCallMetadata(ctx context.Context, meta CallMetadata) context.Context {
+	return context.WithValue(ctx, callMetadataKey{}, meta)
+}
+
+// CallMetadataFromContext returns the metadata the gateway stashed.
+// The second return distinguishes "not stashed" from "stashed with
+// zero fields": callers MUST fail closed when ok=false.
+func CallMetadataFromContext(ctx context.Context) (CallMetadata, bool) {
+	if ctx == nil {
+		return CallMetadata{}, false
+	}
+	m, ok := ctx.Value(callMetadataKey{}).(CallMetadata)
+	return m, ok
+}
+
+// PolicyDecision is the mcp-package mirror of
+// actiongates.ActionGateDecision. Defined here to break the
+// import cycle (core/policy/actiongates already imports core/mcp).
+// The gateway adapter converts between the two types so this layer
+// stays free of an actiongates dependency.
+type PolicyDecision struct {
+	Decision  pb.DecisionType
+	GateID    string
+	Code      string
+	Reason    string
+	SubReason string
+	Extra     map[string]string
+}
+
+// PolicyDispatcher dispatches an MCP tool-call against the production
+// action-gate pipeline. The gateway provides the implementation that
+// wraps actiongates.Pipeline.Run; tests inject a fake.
+//
+// The second return distinguishes "no gate fired" (fired=false) from
+// "a gate fired with the zero decision". Callers treat fired=false as
+// implicit ALLOW.
+type PolicyDispatcher interface {
+	Dispatch(ctx context.Context, in *config.PolicyInput) (PolicyDecision, bool)
+}
+
+// EventEmitter is the narrow contract this layer needs from the edge
+// event recorder. The gateway provides an implementation backed by
+// edge.RedisStore; tests use an in-memory recorder.
+type EventEmitter interface {
+	Emit(ctx context.Context, event *edge.AgentActionEvent) error
+}
+
+// ArtifactStore writes oversized redacted payloads to evidence
+// storage and returns a pointer the calling event embeds. Production
+// wires this to the gateway's edge.ArtifactStater adapter; tests
+// supply an in-memory fake.
+type ArtifactStore interface {
+	Put(ctx context.Context, req ArtifactPutRequest) (*edge.ArtifactPointer, error)
+}
+
+// ArtifactPutRequest carries the metadata an artifact-store backend
+// needs to scope the payload by tenant + session + execution. Type
+// distinguishes request vs response evidence; the event records the
+// resulting pointer with the same type so dashboard exports can
+// pivot on it.
+type ArtifactPutRequest struct {
+	Type        edge.ArtifactType
+	Payload     []byte
+	TenantID    string
+	SessionID   string
+	ExecutionID string
+	EventID     string
+	ContentType string
+}
+
+// UpstreamToolCaller invokes the underlying tool the bridge wraps.
+// Production wires this to the per-tool handler registered in
+// ToolRegistry; tests supply a recording fake.
+type UpstreamToolCaller interface {
+	Invoke(ctx context.Context, params ToolCallParams) (*ToolCallResult, error)
+}
+
+// ApprovalHandoff routes a REQUIRE_HUMAN gate decision into the
+// gateway's existing MCPApprovalStore lifecycle. The gateway-side
+// adapter (gatewayApprovalGate.ConsumeActionGateDecision) returns
+// the approval reference the caller surfaces to the client.
+type ApprovalHandoff interface {
+	ConsumeActionGateDecision(ctx context.Context, dec PolicyDecision, ctxData ToolCallApprovalContext) (string, error)
+}
+
+// ToolCallApprovalContext carries the non-descriptor metadata the
+// approval-store adapter needs to find or create the pending
+// EdgeApproval. The ActionHash is the canonical hash the gate
+// already computed; reusing it (instead of recomputing) keeps the
+// gate and approval lifecycle bound to the same key.
+type ToolCallApprovalContext struct {
+	Tenant     string
+	AgentID    string
+	Server     string
+	Tool       string
+	ActionHash string
+}
+
+// ToolCallDeps bundles the production wiring EvaluateToolCall and
+// InvokeToolWithPolicy consume. Every field is interface-typed so
+// tests inject fakes without touching the real Redis/audit stores.
+//
+// Clock defaults to time.Now.UTC when zero. EventIDFactory defaults
+// to a uuid-shaped random helper when zero. Other deps are required:
+// callers receive a clear "deps.X is nil" error rather than a panic.
+type ToolCallDeps struct {
+	Pipeline        PolicyDispatcher
+	EventEmitter    EventEmitter
+	Redactor        ArgumentRedactor
+	ArtifactStore   ArtifactStore
+	Upstream        UpstreamToolCaller
+	ApprovalHandoff ApprovalHandoff
+	Clock           func() time.Time
+	EventIDFactory  func() string
+	// DedupeState scopes retry dedupe to a single caller (HTTP server,
+	// test fixture) instead of a global map. Production wires this to a
+	// per-server map keyed by (server, tool, EventID); tests inject a
+	// fresh map per fixture so -count=3 re-runs see a clean state. A
+	// nil map disables retry dedupe.
+	DedupeState *sync.Map
+}
+
+// EvaluateToolCallResult bundles the artifacts a caller might want
+// after pre-dispatch evaluation: the gate decision, the emitted pre
+// event (so the caller can attach more metadata before post emission),
+// and the artifact pointer when the request was oversized.
+type EvaluateToolCallResult struct {
+	Decision    PolicyDecision
+	PreEvent    *edge.AgentActionEvent
+	ArtifactPtr *edge.ArtifactPointer
+}
+
+// errMissingMCPMetadata is returned when the calling middleware did
+// not stash CallMetadata in context. The sentinel-string is part of
+// the contract — tests grep for it.
+var errMissingMCPMetadata = errors.New("missing_mcp_metadata: CallMetadata not in context")
+
+// BuildActionDescriptorFromToolCall maps an MCP tools/call into the
+// structured descriptor the action-gate pipeline consumes.
+//
+// The build is server-side: Kind is forced to ActionKindMCPCall,
+// Verb stays zero (the mutation gate classifies via its destructive-
+// verb set), and RiskTags stays empty (gates derive their own). The
+// optional approval_claim arg-field is copied verbatim into
+// ApprovalClaim.ClaimText so the provenance gate can refuse it later.
+// A path-like arg (path/file_path/target_path/filepath) is extracted
+// and normalized into desc.TargetPath so canonical hashing is stable
+// across Windows-style backslash and POSIX-style forward-slash spellings.
+//
+// Payloads >MaxToolCallArgsBytes return an `args_too_large` error so
+// callers handle the size violation explicitly instead of seeing a
+// silently-stripped descriptor. The cap is byte-length: multibyte UTF-8
+// content does not get a quiet pass.
+func BuildActionDescriptorFromToolCall(meta CallMetadata, params ToolCallParams, server string) (*config.ActionDescriptor, error) {
+	if len(params.Arguments) > MaxToolCallArgsBytes {
+		return nil, fmt.Errorf("args_too_large: %d > %d", len(params.Arguments), MaxToolCallArgsBytes)
+	}
+	desc := &config.ActionDescriptor{
+		Kind:   config.ActionKindMCPCall,
+		Server: server,
+		Tool:   params.Name,
+	}
+	if len(params.Arguments) > 0 {
+		parsedArgs, claimText := parseArgsForDescriptor(params.Arguments)
+		if parsedArgs != nil {
+			desc.Args = parsedArgs
+			if p := extractTargetPathFromArgs(parsedArgs); p != "" {
+				desc.TargetPath = normalizeTargetPath(p)
+			}
+		}
+		if claimText != "" {
+			desc.ApprovalClaim = &config.ActionApprovalClaim{ClaimText: claimText}
+		}
+	}
+	return desc, nil
+}
+
+// extractTargetPathFromArgs returns the first string-valued path-like
+// arg, scanning targetPathArgKeys in declaration order. Non-string
+// values are ignored so a numeric or object collision in args["path"]
+// doesn't poison TargetPath.
+func extractTargetPathFromArgs(args map[string]any) string {
+	for _, key := range targetPathArgKeys {
+		if v, ok := args[key].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// normalizeTargetPath converts a filesystem path into a canonical form
+// suitable for hashing and approval-lifecycle keying. Backslash-style
+// separators (Windows callers, hand-rolled JSON) collapse to forward
+// slash so the same logical file produces a single canonical hash
+// regardless of platform.
+func normalizeTargetPath(p string) string {
+	if p == "" {
+		return ""
+	}
+	return strings.ReplaceAll(p, `\`, `/`)
+}
+
+// CanonicalActionHash returns the stable SHA-256 over the tuple that
+// identifies an MCP tool call for approval-lifecycle binding. Inputs
+// MUST be the normalized forms: tenant ID, server, tool name, and the
+// already-normalized TargetPath (or empty when no path-like arg
+// applies). Keeping the hash exported lets the gateway adapter and the
+// approval store derive the same key without re-implementing the
+// canonicalization.
+func CanonicalActionHash(tenant, server, tool, targetPath string) string {
+	canonical := fmt.Sprintf("%s|%s|%s|%s", tenant, server, tool, normalizeTargetPath(targetPath))
+	sum := sha256.Sum256([]byte(canonical))
+	return hex.EncodeToString(sum[:])
+}
+
+// verifyRedactionCompleteness is the defense-in-depth backstop the
+// EvaluateToolCall path runs against the redactor's output. If a known
+// sensitive shape survived the redactor (rules misconfig, partial
+// match, or hostile stub), the function returns an error so the caller
+// fails closed and no event is emitted. The contract is that no raw
+// credential ever lands in a Redis-persisted audit row, even if the
+// argument_redactor rule set was incomplete.
+func verifyRedactionCompleteness(payload []byte) error {
+	if len(payload) == 0 {
+		return nil
+	}
+	for _, pat := range redactionCompletenessPatterns {
+		if pat.Match(payload) {
+			return fmt.Errorf("redaction_failed: sensitive pattern %q survived redaction", pat.String())
+		}
+	}
+	return nil
+}
+
+// hasHighSeverityFinding reports whether the redacted payload contains
+// any high-severity [REDACTED:...] marker. Used to promote a small
+// event into artifact storage so investigators get the full redacted
+// context for any credential-touching call. The artifact payload is
+// already the redactor's output — no raw credential is persisted.
+func hasHighSeverityFinding(payload []byte) bool {
+	if len(payload) == 0 {
+		return false
+	}
+	for _, marker := range highSeverityFindingMarkers {
+		if bytes.Contains(payload, []byte(marker)) {
+			return true
+		}
+	}
+	return false
+}
+
+// parseArgsForDescriptor unmarshals tool args into a map[string]any
+// and extracts the optional approval_claim string. Returns (nil, "")
+// on parse failure or non-object roots so the gate sees a benign
+// empty Args set instead of malformed input.
+func parseArgsForDescriptor(args json.RawMessage) (map[string]any, string) {
+	var parsed any
+	if err := json.Unmarshal(args, &parsed); err != nil {
+		return nil, ""
+	}
+	asMap, ok := parsed.(map[string]any)
+	if !ok {
+		return nil, ""
+	}
+	var claim string
+	if v, ok := asMap[approvalClaimArgKey].(string); ok {
+		claim = v
+	}
+	return asMap, claim
+}
+
+// EvaluateToolCall runs the pre-dispatch policy gate against a
+// tool-call request. On gate ALLOW (or implicit allow via fired=false)
+// the function emits an mcp.tool.pre event and returns the decision;
+// the caller (the bridge wrapper) is responsible for invoking upstream
+// and emitting the matching post/failed event.
+//
+// Errors fail closed: missing metadata, redactor outage, oversized
+// descriptor — all propagate as errors and emit NO event (avoiding
+// unattributed audit rows). The artifact-store outage path is the
+// exception: it emits a failed event with reason=service_unavailable
+// so the audit trail records the policy-side failure.
+func EvaluateToolCall(ctx context.Context, deps ToolCallDeps, params ToolCallParams, server string) (EvaluateToolCallResult, error) {
+	meta, ok := CallMetadataFromContext(ctx)
+	if !ok || meta.Tenant == "" {
+		return EvaluateToolCallResult{}, errMissingMCPMetadata
+	}
+	// Reject oversized args before running the redactor so a 10 MB
+	// payload from a hostile caller cannot waste CPU on regex/JSON
+	// passes whose only outcome is args_too_large. The same cap is
+	// re-enforced inside BuildActionDescriptorFromToolCall so any
+	// future caller that bypasses EvaluateToolCall still fails closed.
+	if len(params.Arguments) > MaxToolCallArgsBytes {
+		return EvaluateToolCallResult{}, fmt.Errorf("args_too_large: %d > %d", len(params.Arguments), MaxToolCallArgsBytes)
+	}
+	if deps.Redactor == nil {
+		deps.Redactor = DefaultRedactor()
+	}
+	if deps.Clock == nil {
+		deps.Clock = func() time.Time { return time.Now().UTC() }
+	}
+	if deps.EventIDFactory == nil {
+		deps.EventIDFactory = defaultEventIDFactory
+	}
+
+	redactedArgs := deps.Redactor.Redact(params.Arguments)
+	if err := verifyRedactionCompleteness(redactedArgs); err != nil {
+		return EvaluateToolCallResult{}, err
+	}
+	descriptorParams := ToolCallParams{Name: params.Name, Arguments: redactedArgs}
+	descriptor, err := BuildActionDescriptorFromToolCall(meta, descriptorParams, server)
+	if err != nil {
+		return EvaluateToolCallResult{}, err
+	}
+
+	event := &edge.AgentActionEvent{
+		EventID:     deps.EventIDFactory(),
+		SessionID:   meta.SessionID,
+		ExecutionID: meta.ExecutionID,
+		TenantID:    meta.Tenant,
+		PrincipalID: meta.Principal,
+		Timestamp:   deps.Clock(),
+		Layer:       edge.LayerMCP,
+		Kind:        edge.EventKindMCPToolPre,
+		ToolName:    params.Name,
+		ActionName:  params.Name,
+	}
+
+	inlineRedacted, artifactPtr, err := materializeRedactedPayload(ctx, deps, redactedArgs, event, edge.ArtifactTypeMCPRequest)
+	if err != nil {
+		return EvaluateToolCallResult{}, err
+	}
+	event.InputRedacted = inlineRedacted
+	if artifactPtr != nil {
+		event.ArtifactPointers = append(event.ArtifactPointers, *artifactPtr)
+	}
+
+	var decision PolicyDecision
+	if deps.Pipeline != nil {
+		decision, _ = deps.Pipeline.Dispatch(ctx, &config.PolicyInput{
+			Tenant: meta.Tenant,
+			Action: descriptor,
+			Meta:   config.PolicyMeta{ActorID: meta.Principal, AgentID: meta.AgentID},
+		})
+	}
+	event.Decision = mapPolicyDecisionToEdge(decision)
+	// DENY / THROTTLE flip the kind to failed because the call will not
+	// reach upstream. REQUIRE_HUMAN keeps kind=pre because the call is
+	// awaiting an approval decision; the matching post or failed will
+	// be emitted later when the approval lifecycle resolves. ALLOW /
+	// ALLOW_WITH_CONSTRAINTS keep kind=pre — upstream forwarding emits
+	// the matching post in the InvokeToolWithPolicy wrapper.
+	if !decision.Allowed() && !decision.requiresHuman() && decision.Decision != pb.DecisionType_DECISION_TYPE_UNSPECIFIED {
+		event.Kind = edge.EventKindMCPToolFailed
+		event.DecisionReason = decision.Reason
+	} else if decision.Reason != "" {
+		event.DecisionReason = decision.Reason
+	}
+
+	if deps.EventEmitter == nil {
+		return EvaluateToolCallResult{}, errors.New("deps.EventEmitter is required")
+	}
+	if err := deps.EventEmitter.Emit(ctx, event); err != nil {
+		return EvaluateToolCallResult{}, fmt.Errorf("emit pre event: %w", err)
+	}
+	logToolCallDecision(ctx, event, descriptor, decision)
+
+	return EvaluateToolCallResult{
+		Decision:    decision,
+		PreEvent:    event,
+		ArtifactPtr: artifactPtr,
+	}, nil
+}
+
+// logToolCallDecision emits one structured line per gate decision into
+// the package's slog handler. Fields are operator-facing identifiers and
+// the decision outcome — no argument values, redaction summaries, or
+// approval claim text. The redacted-payload inline map already lives on
+// the event for the audit trail; the log line is for live observability
+// (greppable decision stream, alert wiring on deny spikes).
+func logToolCallDecision(ctx context.Context, event *edge.AgentActionEvent, desc *config.ActionDescriptor, dec PolicyDecision) {
+	if event == nil || desc == nil {
+		return
+	}
+	level := slog.LevelInfo
+	switch dec.Decision {
+	case pb.DecisionType_DECISION_TYPE_DENY,
+		pb.DecisionType_DECISION_TYPE_THROTTLE:
+		level = slog.LevelWarn
+	case pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN:
+		level = slog.LevelInfo
+	}
+	slog.Default().LogAttrs(ctx, level, "mcp.tool.policy_decision",
+		slog.String("tenant", event.TenantID),
+		slog.String("principal", event.PrincipalID),
+		slog.String("session_id", event.SessionID),
+		slog.String("execution_id", event.ExecutionID),
+		slog.String("event_id", event.EventID),
+		slog.String("server", desc.Server),
+		slog.String("tool", desc.Tool),
+		slog.String("verb", string(desc.Verb)),
+		slog.String("decision", string(event.Decision)),
+		slog.String("gate_id", dec.GateID),
+		slog.String("code", dec.Code),
+	)
+}
+
+// materializeRedactedPayload returns the inline-safe redacted map and
+// an optional artifact pointer the caller embeds on the event. The
+// artifact path triggers when EITHER the inline serialization exceeds
+// MaxInputRedactedBytes (capacity bound) OR the redacted payload
+// contains a high-severity finding marker (forensics bound: every
+// credential-touching call gets preserved evidence even when small).
+//
+// Failures of the artifact store propagate as errors so the caller can
+// fail closed; we never inline-truncate without preserving the full
+// payload elsewhere.
+func materializeRedactedPayload(ctx context.Context, deps ToolCallDeps, payload []byte, event *edge.AgentActionEvent, artType edge.ArtifactType) (map[string]any, *edge.ArtifactPointer, error) {
+	if len(payload) == 0 {
+		return nil, nil, nil
+	}
+	var inlineMap map[string]any
+	if err := json.Unmarshal(payload, &inlineMap); err != nil {
+		inlineMap = map[string]any{"_redacted": "[REDACTED:unparseable_args]"}
+	}
+	inlineBytes, _ := json.Marshal(inlineMap)
+	oversized := len(inlineBytes) > edge.MaxInputRedactedBytes
+	highSeverity := hasHighSeverityFinding(payload)
+	if !oversized && !highSeverity {
+		return inlineMap, nil, nil
+	}
+	if deps.ArtifactStore == nil {
+		return nil, nil, errors.New("redacted payload requires artifact storage but no artifact store wired")
+	}
+	ptr, err := deps.ArtifactStore.Put(ctx, ArtifactPutRequest{
+		Type:        artType,
+		Payload:     payload,
+		TenantID:    event.TenantID,
+		SessionID:   event.SessionID,
+		ExecutionID: event.ExecutionID,
+		EventID:     event.EventID,
+		ContentType: "application/json",
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("artifact store put: %w", err)
+	}
+	// Small payloads with high-severity findings keep their inline map
+	// (no value in truncating a 200-byte event); large payloads collapse
+	// to a 4 KiB summary so the inline event stays within the cap.
+	if !oversized {
+		inlineMap["_artifact_pointer"] = ptr.URI
+		inlineMap["_artifact_sha256"] = ptr.SHA256
+		inlineMap["_high_severity_finding"] = true
+		return inlineMap, ptr, nil
+	}
+	summary := map[string]any{
+		"_redacted_summary":      truncateForSummary(payload, inlineRedactedSummaryBytes),
+		"_artifact_pointer":      ptr.URI,
+		"_artifact_sha256":       ptr.SHA256,
+		"_inline_bytes_cap":      inlineRedactedSummaryBytes,
+		"_full_size":             len(payload),
+		"_high_severity_finding": highSeverity,
+	}
+	return summary, ptr, nil
+}
+
+// truncateForSummary returns the first n bytes of payload (or all of
+// payload if shorter). The summary is a marker for triagers: full
+// fidelity is in the artifact store.
+func truncateForSummary(payload []byte, n int) string {
+	if len(payload) <= n {
+		return string(payload)
+	}
+	return string(payload[:n]) + "...[truncated]"
+}
+
+// mapPolicyDecisionToEdge translates a gate decision into the edge
+// event's EdgeDecision enum. Unfired/UNSPECIFIED maps to ALLOW so the
+// downstream pre event records what actually happened (the call was
+// allowed to proceed).
+func mapPolicyDecisionToEdge(dec PolicyDecision) edge.EdgeDecision {
+	switch dec.Decision {
+	case pb.DecisionType_DECISION_TYPE_DENY:
+		return edge.DecisionDeny
+	case pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN:
+		return edge.DecisionRequireApproval
+	case pb.DecisionType_DECISION_TYPE_THROTTLE:
+		return edge.DecisionThrottle
+	case pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS:
+		return edge.DecisionConstrain
+	default:
+		return edge.DecisionAllow
+	}
+}
+
+// Allowed reports whether the decision passed the gate. AWC counts
+// as allowed (the constraints apply at the upstream call, not at
+// pipeline exit). Unfired/UNSPECIFIED also passes.
+func (d PolicyDecision) Allowed() bool {
+	switch d.Decision {
+	case pb.DecisionType_DECISION_TYPE_UNSPECIFIED,
+		pb.DecisionType_DECISION_TYPE_ALLOW,
+		pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS:
+		return true
+	}
+	return false
+}
+
+// requiresHuman reports whether the decision requires a handoff to
+// the approval-store adapter.
+func (d PolicyDecision) requiresHuman() bool {
+	return d.Decision == pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN
+}
+
+// defaultEventIDFactory returns a uuid-shaped 32-hex-char ID seeded
+// from crypto/rand. Compact + collision-resistant enough for retry
+// dedupe; not a security boundary.
+func defaultEventIDFactory() string {
+	var buf [16]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		// crypto/rand should never fail in practice; if it does, fall
+		// back to a timestamp-shaped ID so dedupe stays consistent
+		// within a process even if collision probability rises.
+		ns := time.Now().UTC().UnixNano()
+		sum := sha256.Sum256([]byte(fmt.Sprintf("evt-%d", ns)))
+		return hex.EncodeToString(sum[:16])
+	}
+	return hex.EncodeToString(buf[:])
+}
+
+// InvokeToolWithPolicy wraps a tool dispatch with full pre/post/failed
+// policy semantics. The flow:
+//  1. EvaluateToolCall — emits pre event with decision.
+//  2. On DENY: return early with IsError result; failed event already
+//     emitted (EvaluateToolCall flipped kind to mcp.tool.failed).
+//  3. On REQUIRE_HUMAN: hand off to ApprovalHandoff; return
+//     approval-pending result; NO upstream call yet.
+//  4. On ALLOW/ALLOW_WITH_CONSTRAINTS: forward to deps.Upstream; emit
+//     post event on success, failed event on upstream error. Both
+//     paths redact the result before emission to preserve the
+//     no-raw-secrets contract.
+//
+// Idempotency: when the caller supplies a stable EventID via
+// deps.EventIDFactory, the bridge dedupes via per-EventID sync.Once
+// state so retrying the same request produces exactly one pre+post
+// (or pre+failed) pair in the emitter.
+func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCallParams, server string) (*ToolCallResult, error) {
+	// Apply zero-value defaults consistently across InvokeToolWithPolicy
+	// and EvaluateToolCall so downstream helpers (newPostEvent,
+	// sanitizeUpstreamError) never see a nil Clock or Redactor.
+	if deps.Clock == nil {
+		deps.Clock = func() time.Time { return time.Now().UTC() }
+	}
+	if deps.Redactor == nil {
+		deps.Redactor = DefaultRedactor()
+	}
+	if deps.EventIDFactory == nil {
+		deps.EventIDFactory = defaultEventIDFactory
+	}
+	if dedupedResult, hit, err := dedupeLookup(ctx, deps, params, server); hit {
+		return dedupedResult, err
+	}
+	evalResult, err := EvaluateToolCall(ctx, deps, params, server)
+	if err != nil {
+		return nil, err
+	}
+	dec := evalResult.Decision
+	switch {
+	case dec.requiresHuman():
+		ref := ""
+		if deps.ApprovalHandoff != nil {
+			actionHash := canonicalActionHashFromEvent(evalResult.PreEvent, params, server)
+			r, herr := deps.ApprovalHandoff.ConsumeActionGateDecision(ctx, dec, ToolCallApprovalContext{
+				Tenant:     evalResult.PreEvent.TenantID,
+				AgentID:    evalResult.PreEvent.PrincipalID,
+				Server:     server,
+				Tool:       params.Name,
+				ActionHash: actionHash,
+			})
+			if herr != nil {
+				return nil, fmt.Errorf("approval handoff: %w", herr)
+			}
+			ref = r
+		}
+		return &ToolCallResult{
+			Content: []ContentItem{{
+				Type: "text",
+				Text: fmt.Sprintf("approval pending: %s", ref),
+			}},
+			IsError: false,
+		}, dedupeStore(deps, params, server, nil, nil)
+	case !dec.Allowed():
+		// EvaluateToolCall already emitted mcp.tool.failed for the deny.
+		result := &ToolCallResult{
+			Content: []ContentItem{{Type: "text", Text: dec.Reason}},
+			IsError: true,
+		}
+		return result, dedupeStore(deps, params, server, result, nil)
+	}
+	if deps.Upstream == nil {
+		return nil, errors.New("deps.Upstream is required for ALLOW decisions")
+	}
+	upstreamResult, upstreamErr := deps.Upstream.Invoke(ctx, params)
+	if upstreamErr != nil {
+		failed := newPostEvent(evalResult.PreEvent, deps.Clock, edge.EventKindMCPToolFailed, edge.DecisionAllow)
+		failed.ErrorMessage = sanitizeUpstreamError(deps.Redactor, upstreamErr)
+		if emitErr := deps.EventEmitter.Emit(ctx, failed); emitErr != nil {
+			return nil, fmt.Errorf("emit failed event: %w", emitErr)
+		}
+		return nil, upstreamErr
+	}
+	post := newPostEvent(evalResult.PreEvent, deps.Clock, edge.EventKindMCPToolPost, edge.DecisionAllow)
+	if err := deps.EventEmitter.Emit(ctx, post); err != nil {
+		return nil, fmt.Errorf("emit post event: %w", err)
+	}
+	return upstreamResult, dedupeStore(deps, params, server, upstreamResult, nil)
+}
+
+// newPostEvent clones the identity/session fields from the pre event
+// onto the post/failed event. EventID is reused so retry dedupe via
+// EventID-keyed state stays consistent across the pre/post pair.
+func newPostEvent(pre *edge.AgentActionEvent, clock func() time.Time, kind edge.EventKind, dec edge.EdgeDecision) *edge.AgentActionEvent {
+	return &edge.AgentActionEvent{
+		EventID:     pre.EventID,
+		SessionID:   pre.SessionID,
+		ExecutionID: pre.ExecutionID,
+		TenantID:    pre.TenantID,
+		PrincipalID: pre.PrincipalID,
+		Timestamp:   clock(),
+		Layer:       edge.LayerMCP,
+		Kind:        kind,
+		ToolName:    pre.ToolName,
+		ActionName:  pre.ActionName,
+		Decision:    dec,
+	}
+}
+
+// canonicalActionHashFromEvent computes a stable hash over the tool
+// invocation so the approval-store lifecycle binds to the same key
+// the gate used. The key is tenant+server+tool+normalized-target-path
+// (CanonicalActionHash). Same logical file produces one key regardless
+// of whether the caller spelled the path with backslashes or forward
+// slashes — Windows and POSIX callers cannot race to create two
+// pending approvals for the same action.
+func canonicalActionHashFromEvent(pre *edge.AgentActionEvent, params ToolCallParams, server string) string {
+	var targetPath string
+	if parsed, _ := parseArgsForDescriptor(params.Arguments); parsed != nil {
+		targetPath = extractTargetPathFromArgs(parsed)
+	}
+	return CanonicalActionHash(pre.TenantID, server, params.Name, targetPath)
+}
+
+// sanitizeUpstreamError redacts URL hosts, query strings, and known
+// credential token shapes from an upstream error message before
+// emitting it on a failed event. Raw transport errors routinely
+// include leak vectors (full URLs with `?token=...` query strings,
+// `Bearer` headers, `sk-*`/`ghp_*`/AWS keys); the contract is that
+// no such substring lands in a Redis event.
+func sanitizeUpstreamError(_ ArgumentRedactor, err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	for _, re := range upstreamErrorRedactPatterns {
+		msg = re.pattern.ReplaceAllString(msg, re.replacement)
+	}
+	if msg == "" {
+		return "[REDACTED:upstream_error]"
+	}
+	return msg
+}
+
+// Retry dedupe: when InvokeToolWithPolicy is called twice with the
+// same EventID (e.g. an HTTP client retries on transient failure),
+// the second call MUST NOT emit a second pre/post pair. The dedupe
+// state lives on ToolCallDeps so each caller scope (test fixture,
+// HTTP server instance) gets isolated tracking — no package-globals
+// that would bleed across -count=N runs.
+type dedupeEntry struct {
+	result *ToolCallResult
+	err    error
+}
+
+func dedupeKey(deps ToolCallDeps, server, tool string) string {
+	id := ""
+	if deps.EventIDFactory != nil {
+		id = deps.EventIDFactory()
+	}
+	return server + "|" + tool + "|" + id
+}
+
+// dedupeLookup returns the cached outcome for a stable EventID. The
+// boolean signals whether the lookup was a hit; on hit the caller
+// short-circuits without re-emitting events.
+func dedupeLookup(_ context.Context, deps ToolCallDeps, params ToolCallParams, server string) (*ToolCallResult, bool, error) {
+	if deps.EventIDFactory == nil || deps.DedupeState == nil {
+		return nil, false, nil
+	}
+	key := dedupeKey(deps, server, params.Name)
+	if entry, ok := deps.DedupeState.Load(key); ok {
+		if e, ok := entry.(dedupeEntry); ok {
+			return e.result, true, e.err
+		}
+	}
+	return nil, false, nil
+}
+
+// dedupeStore records the outcome under the EventID key so the next
+// retry with the same EventID short-circuits via dedupeLookup. Errors
+// from the upstream are NOT cached — a transient failure on attempt
+// N should still allow attempt N+1 to fire if the caller chose to
+// rotate the EventID.
+func dedupeStore(deps ToolCallDeps, params ToolCallParams, server string, result *ToolCallResult, err error) error {
+	if deps.EventIDFactory == nil || deps.DedupeState == nil {
+		return nil
+	}
+	key := dedupeKey(deps, server, params.Name)
+	deps.DedupeState.Store(key, dedupeEntry{result: result, err: err})
+	return nil
+}

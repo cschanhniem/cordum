@@ -78,6 +78,15 @@ type MCPServer struct {
 	// returns produce a mcp.tool_invocation SIEMEvent. Wire via
 	// WithAuditor during gateway boot.
 	auditor ToolInvocationAuditor
+	// policyDeps, when non-nil, routes every tools/call through the
+	// production action-gate pipeline before forwarding to s.tools.Call.
+	// EDGE-102 wires this via WithPolicyGate; absent wiring preserves the
+	// legacy direct-dispatch path for dev/test deploys.
+	policyDeps *ToolCallDeps
+	// policyServerName is the logical MCP server identifier the policy
+	// gate consumes (e.g. "cordum.builtin"). Set by WithPolicyGate so
+	// the descriptor's Server field is server-derived, not client-claimed.
+	policyServerName string
 }
 
 // WithAuditor attaches a ToolInvocationAuditor so the server emits
@@ -88,6 +97,35 @@ func (s *MCPServer) WithAuditor(a ToolInvocationAuditor) *MCPServer {
 		return s
 	}
 	s.auditor = a
+	return s
+}
+
+// WithPolicyGate routes every tools/call through the production action-
+// gate pipeline before forwarding to the registered tool handler. The
+// gateway boots an MCPServer with WithPolicyGate wired against the
+// production ToolCallDeps (gateway-adapted PolicyDispatcher +
+// EventEmitter + ArtifactStore + ApprovalHandoff). Passing a zero-value
+// ToolCallDeps leaves the gate off so the call falls through to the
+// legacy direct-dispatch path — keeping dev/test deploys working
+// without rewiring.
+//
+// serverName is stamped on every ActionDescriptor.Server emitted by the
+// builder so the descriptor never depends on a client-supplied value.
+// An empty serverName degrades the MCP gate's allowlist enforcement
+// (it has nothing to match against) but does not break the call path.
+func (s *MCPServer) WithPolicyGate(serverName string, deps ToolCallDeps) *MCPServer {
+	if s == nil {
+		return s
+	}
+	if deps.Pipeline == nil && deps.EventEmitter == nil {
+		// Treat all-zero deps as "explicitly disabled" so callers can
+		// pass a zero ToolCallDeps to opt out without nil-checking.
+		s.policyDeps = nil
+		s.policyServerName = ""
+		return s
+	}
+	s.policyDeps = &deps
+	s.policyServerName = serverName
 	return s
 }
 
@@ -338,7 +376,7 @@ func (s *MCPServer) handleToolsCall(ctx context.Context, params json.RawMessage)
 		agentID, tenantID := identityForAudit(ctx)
 		ctx, handle = s.auditor.StartInbound(ctx, agentID, tenantID, req.Name, req.Arguments)
 	}
-	result, err := s.tools.Call(ctx, req.Name, req.Arguments)
+	result, err := s.invokeTool(ctx, req)
 	if s.auditor != nil {
 		s.auditor.FinishInbound(handle, result, err)
 	}
@@ -346,6 +384,40 @@ func (s *MCPServer) handleToolsCall(ctx context.Context, params json.RawMessage)
 		return nil, s.mapHandlerError(err)
 	}
 	return result, nil
+}
+
+// invokeTool routes the tools/call through the action-gate policy
+// wrapper when WithPolicyGate has been called, falling back to the
+// direct ToolService.Call path otherwise. The policy path emits
+// mcp.tool.pre/post/failed events, redacts arguments + results,
+// short-circuits on DENY, and hands REQUIRE_HUMAN to the approval
+// store adapter — all per InvokeToolWithPolicy in policy_evaluate.go.
+func (s *MCPServer) invokeTool(ctx context.Context, req ToolCallParams) (*ToolCallResult, error) {
+	if s.policyDeps == nil {
+		return s.tools.Call(ctx, req.Name, req.Arguments)
+	}
+	deps := *s.policyDeps
+	if deps.Upstream == nil {
+		deps.Upstream = toolServiceAdapter{tools: s.tools}
+	}
+	return InvokeToolWithPolicy(ctx, deps, req, s.policyServerName)
+}
+
+// toolServiceAdapter adapts the existing ToolService.Call signature
+// into the UpstreamToolCaller interface so the policy wrapper can
+// forward to the registered handler without changing call sites.
+type toolServiceAdapter struct {
+	tools ToolService
+}
+
+// Invoke implements UpstreamToolCaller by delegating to ToolService.Call.
+// Returns (nil, error) on a nil service so a misconfigured server
+// fails closed instead of nil-deref panicking.
+func (a toolServiceAdapter) Invoke(ctx context.Context, params ToolCallParams) (*ToolCallResult, error) {
+	if a.tools == nil {
+		return nil, errors.New("mcp: tool service unavailable")
+	}
+	return a.tools.Call(ctx, params.Name, params.Arguments)
 }
 
 // identityForAudit returns the (agentID, tenantID) pair the auditor

@@ -36,8 +36,8 @@ func TestDefaultRedactor_RegexHeuristics(t *testing.T) {
 	r := DefaultRedactor()
 
 	cases := []struct {
-		name   string
-		input  string
+		name      string
+		input     string
 		sensitive string
 	}{
 		// Fake test fixtures — assembled from fragments to keep GitHub secret-
@@ -108,6 +108,40 @@ func TestPolicyRedactor_CustomReplacementInDescription(t *testing.T) {
 	out := r.Redact(json.RawMessage(`{"pinCode":"1234"}`))
 	if !strings.Contains(string(out), "[REDACTED:pin]") {
 		t.Errorf("expected [REDACTED:pin], got %s", out)
+	}
+}
+
+// TestDefaultRedactor_ExtendedTokenFamilies covers credential shapes that
+// landed in step-10: Anthropic-style sk- keys and GitHub Personal Access
+// Tokens. Step-7 shipped only the AWS AKIA / Stripe sk_live_ / JWT / PEM
+// heuristics; the broader sk- and ghp_ families slipped past field-name
+// matching when callers smuggle the value into a free-form string field.
+func TestDefaultRedactor_ExtendedTokenFamilies(t *testing.T) {
+	t.Parallel()
+	r := DefaultRedactor()
+	cases := []struct {
+		name      string
+		input     string
+		sensitive string
+	}{
+		// Fake fixtures assembled from fragments to keep GitHub secret-scanning
+		// push protection from flagging the source as a leaked credential.
+		// Runtime semantics unchanged.
+		{"anthropic_sk", `{"note":"use ` + "sk-" + "ant" + "0123456789abcdef0123456789abcdef" + `"}`, "sk-" + "ant" + "0123456789abcdef"},
+		{"github_classic_pat", `{"note":"set TOKEN=` + "ghp_" + "0123456789abcdef0123456789abcdef0123" + `"}`, "ghp_" + "0123456789abcdef"},
+		{"github_oauth_token", `{"note":"oauth ` + "gho_" + "0123456789abcdef0123456789abcdef0123" + `"}`, "gho_" + "0123456789abcdef"},
+		{"github_user_server_token", `{"note":"server ` + "ghs_" + "0123456789abcdef0123456789abcdef0123" + `"}`, "ghs_" + "0123456789abcdef"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := r.Redact(json.RawMessage(tc.input))
+			if strings.Contains(string(out), tc.sensitive) {
+				t.Errorf("secret family %s leaked: %s", tc.name, out)
+			}
+			if !strings.Contains(string(out), "[REDACTED:") {
+				t.Errorf("no redaction marker for %s: %s", tc.name, out)
+			}
+		})
 	}
 }
 

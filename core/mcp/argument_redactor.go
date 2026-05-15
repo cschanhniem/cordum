@@ -72,9 +72,18 @@ func DefaultRedactionRules() []RedactionRule {
 		{FieldName: "private_key", Replacement: "[REDACTED:private_key]", Description: "private_key"},
 		{FieldName: "privateKey", Replacement: "[REDACTED:private_key]", Description: "private_key"},
 		// Regex heuristics — defence in depth for secrets that slipped
-		// into plain string fields.
+		// into plain string fields. Order matters when multiple patterns
+		// could match a substring: a more specific shape (sk_live_,
+		// PEM block) takes precedence over a broader prefix (sk-).
 		{Regex: `AKIA[0-9A-Z]{16}`, Replacement: "[REDACTED:aws_access_key]", Description: "aws_access_key"},
 		{Regex: `sk_live_[a-zA-Z0-9]{24,}`, Replacement: "[REDACTED:stripe_secret]", Description: "stripe_secret"},
+		// Anthropic-style sk- API keys, plus any other vendor that adopted
+		// the `sk-<random>` convention (OpenAI legacy, plain `sk-`).
+		// Requires >= 16 trailing chars to skip benign `sk-` substrings.
+		{Regex: `sk-[A-Za-z0-9_\-]{16,}`, Replacement: "[REDACTED:api_key]", Description: "api_key"},
+		// GitHub token families: classic PAT (ghp_), OAuth (gho_),
+		// user-server (ghu_), server-server (ghs_), refresh (ghr_).
+		{Regex: `gh[opusr]_[A-Za-z0-9]{16,}`, Replacement: "[REDACTED:github_token]", Description: "github_token"},
 		{Regex: `eyJ[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+`, Replacement: "[REDACTED:jwt]", Description: "jwt"},
 		{Regex: `-----BEGIN [A-Z ]+PRIVATE KEY-----[\s\S]+?-----END [A-Z ]+PRIVATE KEY-----`, Replacement: "[REDACTED:pem_private_key]", Description: "pem_private_key"},
 	}
