@@ -111,9 +111,8 @@ func TestStripReservedActionDescriptorLabel_NoOpWhenAbsent(t *testing.T) {
 	in := map[string]string{"normal_key": "v"}
 	out := stripReservedActionDescriptorLabel(in)
 	// No reserved key present -> implementation returns original map
-	// (no allocation cost on hot path).
-	if &out == &in { // map header pointers differ; compare via content
-	}
+	// (no allocation cost on hot path). Content-equality validates
+	// the no-op contract.
 	if len(out) != 1 || out["normal_key"] != "v" {
 		t.Fatalf("strip mutated label set unexpectedly: %v", out)
 	}
