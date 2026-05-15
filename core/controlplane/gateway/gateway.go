@@ -1287,11 +1287,6 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 	s.registerRoute(mux, "GET /api/v1/audit/verify", s.instrumented("/api/v1/audit/verify", s.handleAuditVerify))
 	// 2.7.2 Audit events read surface — the SIEM-feed endpoint backing
 	// the dashboard Audit Log page. Walks the per-tenant Redis Stream
-	// populated by the chainer, so every chained event (MCP, edge,
-	// worker, output policy, delegation, ...) is reachable from one
-	// read. /policy/audit remains for the policy-bundle audit subset;
-	// the two surfaces are intentionally distinct.
-	s.registerRoute(mux, "GET /api/v1/audit/events", s.instrumented("/api/v1/audit/events", s.handleListAuditEvents))
 	s.registerRoute(mux, "GET /api/v1/governance/health", s.instrumented("/api/v1/governance/health", s.handleGovernanceHealth))
 
 	// 2.8 Legal hold management (admin only, entitlement-gated)
