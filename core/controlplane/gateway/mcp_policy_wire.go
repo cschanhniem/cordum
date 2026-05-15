@@ -91,10 +91,10 @@ func (g *gatewayApprovalGate) ConsumeActionGateDecision(ctx context.Context, _ m
 	// EnqueueMCPApproval store API requires an MCPApprovalRequest; we
 	// build it from the context payload + action hash.
 	req := &MCPApprovalRequest{
-		Tenant:    ctxData.Tenant,
-		AgentID:   ctxData.AgentID,
-		ToolName:  ctxData.Tool,
-		ArgsHash:  ctxData.ActionHash,
+		Tenant:   ctxData.Tenant,
+		AgentID:  ctxData.AgentID,
+		ToolName: ctxData.Tool,
+		ArgsHash: ctxData.ActionHash,
 	}
 	rec, err := g.store.EnqueueMCPApproval(ctx, req)
 	if err != nil {

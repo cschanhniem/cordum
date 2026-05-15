@@ -28,10 +28,10 @@ func (f fakeInvariantLookup) InvariantsForMCPTool(_ context.Context) []config.Po
 // (tenant, agent, tool) tuple. Used to assert preapproval HIT
 // short-circuits the approval store consultation.
 type fakePreapprovalLookup struct {
-	tenant     string
-	agentID    string
-	toolName   string
-	calls      int
+	tenant   string
+	agentID  string
+	toolName string
+	calls    int
 }
 
 func (f *fakePreapprovalLookup) IsPreapproved(_ context.Context, tenant, agentID, toolName string) bool {

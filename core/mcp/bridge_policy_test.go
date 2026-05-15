@@ -16,10 +16,10 @@ import (
 // bridge wraps with policy gating. It records each invocation so tests
 // can assert the upstream was (or was not) reached on each decision path.
 type fakeUpstreamToolCaller struct {
-	calls     int
-	result    *ToolCallResult
-	err       error
-	called    []ToolCallParams
+	calls  int
+	result *ToolCallResult
+	err    error
+	called []ToolCallParams
 }
 
 func (f *fakeUpstreamToolCaller) Invoke(_ context.Context, params ToolCallParams) (*ToolCallResult, error) {
