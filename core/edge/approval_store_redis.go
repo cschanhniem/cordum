@@ -53,6 +53,14 @@ func edgeApprovalTupleIndexKey(tenantID, sessionID, executionID, actionHash stri
 	return "edge:approvals:index:tuple:" + strings.TrimSpace(tenantID) + ":" + strings.TrimSpace(sessionID) + ":" + strings.TrimSpace(executionID) + ":" + strings.TrimSpace(actionHash)
 }
 
+// edgeApprovalActionHashIndexKey returns the per-(tenant, actionHash) ZSet
+// key. Members are approval refs; score is approval.CreatedAt.UnixMicro()
+// so ZREVRANGE returns most-recent-first. Populated by EnqueueApproval and
+// consumed by GetApprovalsByActionHash + LookupByActionHash.
+func edgeApprovalActionHashIndexKey(tenantID, actionHash string) string {
+	return "edge:approvals:index:hash:" + strings.TrimSpace(tenantID) + ":" + strings.TrimSpace(actionHash)
+}
+
 func (s *RedisStore) EnqueueApproval(ctx context.Context, req EdgeApprovalRequest) (*EdgeApproval, error) {
 	if err := s.ensureReady(); err != nil {
 		return nil, err
@@ -131,6 +139,14 @@ func (s *RedisStore) EnqueueApproval(ctx context.Context, req EdgeApprovalReques
 			pipe.ZAdd(ctx, edgeApprovalPrincipalIndexKey(req.TenantID, req.PrincipalID), redis.Z{Score: score, Member: ref})
 			pipe.ZAdd(ctx, edgeApprovalPrincipalStatusIndexKey(req.TenantID, req.PrincipalID, ApprovalStatusPending), redis.Z{Score: score, Member: ref})
 			pipe.SAdd(ctx, tupleKey, ref)
+			// Action-hash index: lets actiongates.ProvenanceGate /
+			// MutationGate resolve "give me the most recent approved
+			// approval that authorizes THIS action shape" without
+			// scanning per-principal lists. Skipped when ActionHash is
+			// empty (legacy callers that did not bind a hash).
+			if strings.TrimSpace(req.ActionHash) != "" {
+				pipe.ZAdd(ctx, edgeApprovalActionHashIndexKey(req.TenantID, req.ActionHash), redis.Z{Score: score, Member: ref})
+			}
 			return nil
 		})
 		if err == nil {
@@ -167,6 +183,71 @@ func (s *RedisStore) GetApproval(ctx context.Context, tenantID, approvalRef stri
 		return nil, false, nil
 	}
 	return approval, true, nil
+}
+
+// GetApprovalsByActionHash returns every approval recorded for (tenantID,
+// actionHash), most-recent first. Empty result when either arg is blank
+// or the index is empty — never an error in that case. Used by the
+// action-layer provenance gate to inspect the full history when a single
+// "currently-actionable" lookup is insufficient (e.g. for audit display).
+func (s *RedisStore) GetApprovalsByActionHash(ctx context.Context, tenantID, actionHash string) ([]EdgeApproval, error) {
+	if err := s.ensureReady(); err != nil {
+		return nil, err
+	}
+	tenantID = strings.TrimSpace(tenantID)
+	actionHash = strings.TrimSpace(actionHash)
+	if tenantID == "" || actionHash == "" {
+		return nil, nil
+	}
+	refs, err := s.client.ZRevRange(ctx, edgeApprovalActionHashIndexKey(tenantID, actionHash), 0, -1).Result()
+	if err != nil {
+		return nil, fmt.Errorf("list approvals by action_hash: %w", err)
+	}
+	out := make([]EdgeApproval, 0, len(refs))
+	for _, ref := range refs {
+		approval, ok, err := s.loadApproval(ctx, ref)
+		if err != nil {
+			return nil, err
+		}
+		if !ok || approval.TenantID != tenantID {
+			continue
+		}
+		out = append(out, *approval)
+	}
+	return out, nil
+}
+
+// LookupByActionHash satisfies the actiongates.ApprovalLookup contract by
+// returning the most-recent approved, not-yet-consumed, not-expired
+// approval bound to (tenantID, actionHash). Returns (nil, false, nil) on
+// miss so the caller can map the miss to a not_found-style decision
+// without ambiguity. Pending / rejected / expired / consumed approvals
+// are skipped — the gate considers them "no actionable approval".
+func (s *RedisStore) LookupByActionHash(ctx context.Context, tenantID, actionHash string) (*EdgeApproval, bool, error) {
+	approvals, err := s.GetApprovalsByActionHash(ctx, tenantID, actionHash)
+	if err != nil {
+		return nil, false, err
+	}
+	now := s.now().UTC()
+	for i := range approvals {
+		a := approvals[i]
+		if a.Status != ApprovalStatusApproved {
+			continue
+		}
+		if a.Decision != ApprovalDecisionApprove {
+			continue
+		}
+		if a.ConsumedAt != nil {
+			continue
+		}
+		if a.ExpiresAt != nil && now.After(*a.ExpiresAt) {
+			continue
+		}
+		// Most recent qualifying approval — ZRevRange returns DESC by score.
+		matched := a
+		return &matched, true, nil
+	}
+	return nil, false, nil
 }
 
 func (s *RedisStore) ListApprovals(ctx context.Context, query ListApprovalsQuery) (ApprovalPage, error) {

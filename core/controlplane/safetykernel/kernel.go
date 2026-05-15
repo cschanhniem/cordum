@@ -33,9 +33,11 @@ import (
 	infraHealth "github.com/cordum/cordum/core/infra/health"
 	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	"github.com/cordum/cordum/core/infra/redisutil"
+	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/tlsreload"
 	"github.com/cordum/cordum/core/licensing"
+	"github.com/cordum/cordum/core/policy/actiongates"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/nats-io/nats.go"
@@ -102,7 +104,28 @@ type server struct {
 	// for a topic, it replaces client-supplied risk_tags with authoritative
 	// tags derived from the job content. Prevents risk tag spoofing.
 	tagDeriverRegistry *TagDeriverRegistry
+
+	// actionGatePipeline runs deterministic pre-rule action-layer gates
+	// (tenant / file / url / mcp / mutation / provenance) when an
+	// ActionDescriptor is supplied for a request. Unset = legacy rule
+	// evaluation only.
+	actionGatePipeline *actiongates.Pipeline
+	// actionExtractor maps the gRPC request to an ActionDescriptor.
+	// Wired in-process by the gateway; gRPC clients without an in-process
+	// gateway never trigger action gates.
+	actionExtractor ActionDescriptorExtractor
+	// actionGateAuditSink is invoked when the action-gate pipeline fires
+	// a non-allow decision. Production wires this to a function that
+	// records the SIEMEvent into the BufferedExporter and appends to the
+	// audit Chainer. Nil = log-only.
+	actionGateAuditSink func(ctx context.Context, event audit.SIEMEvent)
 }
+
+// ActionDescriptorExtractor maps a PolicyCheckRequest to the structured
+// ActionDescriptor that the action-layer gates consume. The gateway
+// middleware wires this server-side; clients cannot inject an
+// ActionDescriptor over the wire.
+type ActionDescriptorExtractor func(ctx context.Context, req *pb.PolicyCheckRequest) *config.ActionDescriptor
 
 const (
 	defaultPolicyConfigID           = "policy"
@@ -131,6 +154,34 @@ type cacheEntry struct {
 type agentCacheEntry struct {
 	identity *store.AgentIdentity
 	expires  time.Time
+}
+
+// SetActionGatePipeline installs the action-layer gate pipeline. The
+// pipeline runs before legacy rule evaluation; only requests whose
+// extractor returns a non-nil ActionDescriptor are evaluated by it.
+// nil disables action-gate evaluation.
+func (s *server) SetActionGatePipeline(p *actiongates.Pipeline) {
+	s.mu.Lock()
+	s.actionGatePipeline = p
+	s.mu.Unlock()
+}
+
+// SetActionDescriptorExtractor installs the request→descriptor adapter.
+// Wired in-process by the gateway middleware; never exposed to the wire.
+func (s *server) SetActionDescriptorExtractor(fn ActionDescriptorExtractor) {
+	s.mu.Lock()
+	s.actionExtractor = fn
+	s.mu.Unlock()
+}
+
+// SetActionGateAuditSink installs the audit emission hook. Invoked
+// synchronously when an action-gate pipeline fires a non-allow decision.
+// Production wires this to a function that fans out to the SIEM
+// BufferedExporter and the per-tenant audit Chainer.
+func (s *server) SetActionGateAuditSink(fn func(ctx context.Context, event audit.SIEMEvent)) {
+	s.mu.Lock()
+	s.actionGateAuditSink = fn
+	s.mu.Unlock()
 }
 
 func (s *server) SetShadowEvaluator(eval *ShadowEvaluator) {
@@ -667,6 +718,29 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 
 	input.SecretsPresent = secretsPresent(input.Meta, req.GetLabels())
 	s.enrichAgentContext(ctx, req.GetLabels(), &input)
+
+	// Action-layer gates run BEFORE legacy rule evaluation. The pipeline
+	// short-circuits on the first non-ALLOW decision; an empty result
+	// falls through to the existing evaluator. Both the extractor and the
+	// pipeline are nil for clients running without the in-process gateway
+	// wiring, so the legacy path is unchanged for plain gRPC consumers.
+	s.mu.RLock()
+	gatePipeline := s.actionGatePipeline
+	gateExtractor := s.actionExtractor
+	gateAuditSink := s.actionGateAuditSink
+	s.mu.RUnlock()
+	if gateExtractor != nil {
+		input.Action = gateExtractor(ctx, req)
+	}
+	if gatePipeline != nil && input.Action != nil {
+		if gateDec, fired := gatePipeline.Run(ctx, &input); fired {
+			resp := actionGateResponse(gateDec, snapshot)
+			if gateAuditSink != nil {
+				gateAuditSink(ctx, actionGateAuditEvent(req, &input, gateDec))
+			}
+			return resp, nil
+		}
+	}
 
 	evalTracer := cordumotel.Tracer("cordum-safety-kernel")
 	_, evalSpan := evalTracer.Start(ctx, "safety.evaluate",

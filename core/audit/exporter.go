@@ -128,6 +128,17 @@ const (
 	EventEdgeApprovalRejected  = "edge.approval_rejected"
 	EventEdgeApprovalExpired   = "edge.approval_expired"
 	EventEdgeArtifactExported  = "edge.artifact_exported"
+
+	// EventActionGateDenied is emitted by the Safety Kernel when an
+	// action-layer gate (tenant / file / url / mcp / mutation /
+	// provenance) short-circuits the legacy rule loop with a non-ALLOW
+	// decision. Extra carries gate=<gateID>, sub_reason=<subreason>,
+	// and target_type (when known). Severity is HIGH for cross-tenant
+	// access, credential paths, exfil destinations, and self-approval;
+	// MEDIUM for REQUIRE_HUMAN outcomes. SIEM rules pivot on this
+	// event to surface privilege-escalation probes that never reached
+	// the existing rule evaluator.
+	EventActionGateDenied = "actiongate.denied"
 	EventEdgeAgentdDegraded    = "edge.agentd_degraded"
 	EventEdgeFailClosed        = "edge.fail_closed"
 )

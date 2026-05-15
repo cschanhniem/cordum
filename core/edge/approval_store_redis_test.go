@@ -1510,6 +1510,115 @@ func assertRedisApprovalCannotBeClaimed(t *testing.T, ctx context.Context, store
 	}
 }
 
+// TestRedisStoreLookupByActionHashReturnsMostRecentApproved seeds two
+// approvals against the same (tenant, action_hash), approves the second,
+// and asserts LookupByActionHash returns the approved one. Verifies the
+// action-hash index that backs actiongates.ApprovalLookup wiring.
+func TestRedisStoreLookupByActionHashReturnsMostRecentApproved(t *testing.T) {
+	ctx := context.Background()
+	base := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+	now := base
+	store, _, _, cleanup := newRedisEdgeStore(t, WithClock(func() time.Time { return now }))
+	defer cleanup()
+
+	sharedHash := "sha256:shared-action-payload"
+	tenant := "tenant-hash"
+
+	createApprovalParents(t, ctx, store, tenant, "sess-h1", "exec-h1", "event-h1", base)
+	req1 := validApprovalRequest(tenant, "sess-h1", "exec-h1", "event-h1", base)
+	req1.ActionHash = sharedHash
+	now = base
+	first, err := store.EnqueueApproval(ctx, req1)
+	if err != nil {
+		t.Fatalf("EnqueueApproval first: %v", err)
+	}
+
+	createApprovalParents(t, ctx, store, tenant, "sess-h2", "exec-h2", "event-h2", base.Add(1*time.Minute))
+	req2 := validApprovalRequest(tenant, "sess-h2", "exec-h2", "event-h2", base.Add(1*time.Minute))
+	req2.ActionHash = sharedHash
+	now = base.Add(1 * time.Minute)
+	second, err := store.EnqueueApproval(ctx, req2)
+	if err != nil {
+		t.Fatalf("EnqueueApproval second: %v", err)
+	}
+
+	// Both refs visible in GetApprovalsByActionHash, most-recent first.
+	all, err := store.GetApprovalsByActionHash(ctx, tenant, sharedHash)
+	if err != nil {
+		t.Fatalf("GetApprovalsByActionHash: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("got %d approvals, want 2", len(all))
+	}
+	if all[0].ApprovalRef != second.ApprovalRef || all[1].ApprovalRef != first.ApprovalRef {
+		t.Fatalf("ordering = [%s, %s], want most-recent first [%s, %s]",
+			all[0].ApprovalRef, all[1].ApprovalRef, second.ApprovalRef, first.ApprovalRef)
+	}
+
+	// Cross-tenant returns empty (action-hash index is tenant-scoped).
+	if other, err := store.GetApprovalsByActionHash(ctx, "tenant-other", sharedHash); err != nil || len(other) != 0 {
+		t.Fatalf("cross-tenant GetApprovalsByActionHash = (%d, %v), want 0/nil", len(other), err)
+	}
+
+	// LookupByActionHash before any approval: no actionable approval.
+	got, ok, err := store.LookupByActionHash(ctx, tenant, sharedHash)
+	if err != nil {
+		t.Fatalf("LookupByActionHash pre-approval err: %v", err)
+	}
+	if ok || got != nil {
+		t.Fatalf("pre-approval lookup = (%#v, %v), want nil/false", got, ok)
+	}
+
+	// Approve the most recent (second) approval; lookup must return it.
+	now = base.Add(2 * time.Minute)
+	if _, err := store.ApproveApproval(ctx, ApprovalResolution{
+		TenantID:    tenant,
+		ApprovalRef: second.ApprovalRef,
+		ResolverID:  "principal-reviewer",
+		ResolvedBy:  "reviewer@example.invalid",
+		Reason:      "approved",
+		ResolvedAt:  now,
+	}); err != nil {
+		t.Fatalf("ApproveApproval second: %v", err)
+	}
+
+	got, ok, err = store.LookupByActionHash(ctx, tenant, sharedHash)
+	if err != nil {
+		t.Fatalf("LookupByActionHash post-approval err: %v", err)
+	}
+	if !ok || got == nil || got.ApprovalRef != second.ApprovalRef {
+		t.Fatalf("post-approval lookup = (%#v, %v), want second approval ref %q", got, ok, second.ApprovalRef)
+	}
+
+	// Consume the approval; lookup must return nil (no actionable approval left).
+	now = base.Add(3 * time.Minute)
+	if _, _, err := store.ClaimApproval(ctx, ApprovalClaimRequest{
+		TenantID:       tenant,
+		ApprovalRef:    second.ApprovalRef,
+		SessionID:      req2.SessionID,
+		ExecutionID:    req2.ExecutionID,
+		EventID:        req2.EventID,
+		ActionHash:     sharedHash,
+		InputHash:      req2.InputHash,
+		PolicySnapshot: req2.PolicySnapshot,
+		ConsumedAt:     now,
+	}); err != nil {
+		t.Fatalf("ClaimApproval: %v", err)
+	}
+	got, ok, err = store.LookupByActionHash(ctx, tenant, sharedHash)
+	if err != nil {
+		t.Fatalf("LookupByActionHash post-claim err: %v", err)
+	}
+	if ok || got != nil {
+		t.Fatalf("post-claim lookup = (%#v, %v), want nil/false (consumed)", got, ok)
+	}
+
+	// Empty action hash short-circuits to nil without an index call.
+	if empty, err := store.GetApprovalsByActionHash(ctx, tenant, ""); err != nil || len(empty) != 0 {
+		t.Fatalf("empty action_hash lookup = (%d, %v), want 0/nil", len(empty), err)
+	}
+}
+
 // prewarmRedisClientPool serially pings the redis client enough times to
 // fully populate the connection pool before the test fans out to many
 // concurrent goroutines. It exists to defuse the go-redis v9 lazy-init

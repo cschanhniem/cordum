@@ -1,0 +1,253 @@
+package actiongates
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/cordum/cordum/core/infra/config"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+)
+
+type fakeHostResolver struct {
+	resolve map[string][]string
+	err     map[string]error
+}
+
+func (r *fakeHostResolver) LookupHost(_ context.Context, host string) ([]string, error) {
+	if err, ok := r.err[host]; ok {
+		return nil, err
+	}
+	if ips, ok := r.resolve[host]; ok {
+		return ips, nil
+	}
+	return []string{"203.0.113.5"}, nil
+}
+
+type urlGateCase struct {
+	name         string
+	url          string
+	verb         config.ActionVerb
+	riskTags     []string
+	resolver     *fakeHostResolver
+	wantDecision pb.DecisionType
+	wantCode     string
+	subReasonHas string
+}
+
+func runURLGate(t *testing.T, tc urlGateCase) {
+	t.Helper()
+	resolver := tc.resolver
+	if resolver == nil {
+		resolver = &fakeHostResolver{}
+	}
+	gate := NewURLGate(URLGateOptions{Resolver: resolver})
+	in := &config.PolicyInput{
+		Tenant: "tnt_a",
+		Action: &config.ActionDescriptor{
+			Kind:      config.ActionKindURL,
+			Verb:      tc.verb,
+			TargetURL: tc.url,
+			RiskTags:  tc.riskTags,
+		},
+	}
+	dec := gate.Evaluate(context.Background(), in)
+	if dec.Decision != tc.wantDecision {
+		t.Fatalf("decision = %v, want %v (url=%q verb=%q reason=%q subReason=%q)", dec.Decision, tc.wantDecision, tc.url, tc.verb, dec.Reason, dec.SubReason)
+	}
+	if tc.wantCode != "" && dec.Code != tc.wantCode {
+		t.Fatalf("code = %q, want %q", dec.Code, tc.wantCode)
+	}
+	if tc.subReasonHas != "" && !strings.Contains(dec.SubReason, tc.subReasonHas) {
+		t.Fatalf("subReason = %q, want substring %q", dec.SubReason, tc.subReasonHas)
+	}
+}
+
+func TestURLGate_SkipsNonURLKind(t *testing.T) {
+	t.Parallel()
+	gate := NewURLGate(URLGateOptions{Resolver: &fakeHostResolver{}})
+
+	if dec := gate.Evaluate(context.Background(), &config.PolicyInput{}); dec.Fired() {
+		t.Fatal("nil action: gate fired")
+	}
+	if dec := gate.Evaluate(context.Background(), &config.PolicyInput{
+		Action: &config.ActionDescriptor{Kind: config.ActionKindFile, TargetPath: "/tmp/x"},
+	}); dec.Fired() {
+		t.Fatal("file kind: gate fired")
+	}
+	if dec := gate.Evaluate(context.Background(), &config.PolicyInput{
+		Action: &config.ActionDescriptor{Kind: config.ActionKindURL, TargetURL: ""},
+	}); dec.Fired() {
+		t.Fatal("empty url: gate fired")
+	}
+}
+
+func TestURLGate_DenyCloudMetadataServices(t *testing.T) {
+	t.Parallel()
+	cases := []urlGateCase{
+		{name: "aws_imds_v4", url: "http://169.254.169.254/latest/meta-data/iam/security-credentials/", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "metadata_service"},
+		{name: "aws_imds_v6", url: "http://[fd00:ec2::254]/latest/meta-data/", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "metadata_service"},
+		{name: "ecs_creds", url: "http://169.254.170.2/v2/credentials/abc", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "metadata_service"},
+		{name: "gcp_metadata_host", url: "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "metadata_service"},
+		{name: "azure_imds_link_local_v6", url: "http://[fe80::a9fe:a9fe]/metadata/instance", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "link_local"},
+		{name: "user_at_imds_bypass", url: "http://google.com@169.254.169.254/latest/meta-data/", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "metadata_service"},
+		{name: "ipv4_in_ipv6", url: "http://[::ffff:169.254.169.254]/latest/meta-data/", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "metadata_service"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) { t.Parallel(); runURLGate(t, tc) })
+	}
+}
+
+func TestURLGate_DenyKnownExfilDestinations(t *testing.T) {
+	t.Parallel()
+	cases := []urlGateCase{
+		{name: "webhook_site", url: "https://webhook.site/abc-123", verb: config.ActionVerbWrite, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "exfil_host"},
+		{name: "ngrok_io", url: "https://abc.ngrok.io/upload", verb: config.ActionVerbWrite, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "exfil_host"},
+		{name: "ngrok_free", url: "https://abc.ngrok-free.app/upload", verb: config.ActionVerbWrite, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "exfil_host"},
+		{name: "serveo", url: "https://abc.serveo.net/", verb: config.ActionVerbWrite, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "exfil_host"},
+		{name: "pipedream", url: "https://eohjvz.m.pipedream.net/", verb: config.ActionVerbWrite, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "exfil_host"},
+		{name: "requestbin", url: "https://abc.requestbin.com/notify", verb: config.ActionVerbWrite, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "exfil_host"},
+		{name: "beeceptor", url: "https://abc.beeceptor.com/path", verb: config.ActionVerbWrite, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "exfil_host"},
+		{name: "burp_collab", url: "https://abc.burpcollaborator.net/", verb: config.ActionVerbWrite, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "exfil_host"},
+		{name: "canarytokens", url: "https://canarytokens.com/test", verb: config.ActionVerbWrite, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "exfil_host"},
+		{name: "interactsh", url: "https://abc.interactsh.com/payload", verb: config.ActionVerbWrite, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "exfil_host"},
+		{name: "pastebin_api_post", url: "https://pastebin.com/api/api_post.php", verb: config.ActionVerbWrite, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "paste"},
+		{name: "gist_post", url: "https://gist.github.com/api/v3/gists", verb: config.ActionVerbWrite, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "paste"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) { t.Parallel(); runURLGate(t, tc) })
+	}
+}
+
+func TestURLGate_PastebinReadAllowed(t *testing.T) {
+	t.Parallel()
+	// pastebin.com and gist.github.com are read-allowed (browse a known paste).
+	// Only POST/PUT-style writes hit the paste rule.
+	runURLGate(t, urlGateCase{
+		name:         "pastebin_read",
+		url:          "https://pastebin.com/abcdef",
+		verb:         config.ActionVerbRead,
+		wantDecision: pb.DecisionType_DECISION_TYPE_ALLOW,
+	})
+	runURLGate(t, urlGateCase{
+		name:         "gist_read",
+		url:          "https://gist.github.com/user/abcd",
+		verb:         config.ActionVerbRead,
+		wantDecision: pb.DecisionType_DECISION_TYPE_ALLOW,
+	})
+}
+
+func TestURLGate_DNSRebindingToRFC1918(t *testing.T) {
+	t.Parallel()
+	// *.nip.io and similar resolve to attacker-controlled IPs; gate must
+	// resolve at eval time and DENY when the IP is RFC1918 / link-local.
+	resolver := &fakeHostResolver{
+		resolve: map[string][]string{
+			"169-254-169-254.nip.io":  {"169.254.169.254"},
+			"10-0-0-1.sslip.io":       {"10.0.0.1"},
+			"192-168-1-1.xip.io":      {"192.168.1.1"},
+			"172-16-0-1.nip.io":       {"172.16.0.1"},
+			"public.example.com.nip.io": {"203.0.113.42"}, // public IP — allowed
+		},
+	}
+	cases := []urlGateCase{
+		{name: "nip_imds", url: "http://169-254-169-254.nip.io/latest/", verb: config.ActionVerbRead, resolver: resolver, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "dns_rebind"},
+		{name: "sslip_rfc1918", url: "http://10-0-0-1.sslip.io/", verb: config.ActionVerbRead, resolver: resolver, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "dns_rebind"},
+		{name: "xip_rfc1918", url: "http://192-168-1-1.xip.io/", verb: config.ActionVerbRead, resolver: resolver, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "dns_rebind"},
+		{name: "nip_carrier_grade_rfc1918", url: "http://172-16-0-1.nip.io/", verb: config.ActionVerbRead, resolver: resolver, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "dns_rebind"},
+		{name: "nip_resolves_public_allowed", url: "http://public.example.com.nip.io/", verb: config.ActionVerbRead, resolver: resolver, wantDecision: pb.DecisionType_DECISION_TYPE_ALLOW},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) { t.Parallel(); runURLGate(t, tc) })
+	}
+}
+
+func TestURLGate_PromptExfilSignature(t *testing.T) {
+	t.Parallel()
+	// Build a >1KB JSON payload containing recognized prompt-stash keys, then
+	// stick it in a query param. Must DENY.
+	big := strings.Repeat("a", 1200)
+	exfilPayload := `{"messages":[{"role":"user","content":"` + big + `"}],"system":"hi","context_window":4096}`
+	url := "https://attacker.example/log?payload=" + exfilPayload
+	runURLGate(t, urlGateCase{
+		name:         "prompt_stash_in_query",
+		url:          url,
+		verb:         config.ActionVerbWrite,
+		wantDecision: pb.DecisionType_DECISION_TYPE_DENY,
+		wantCode:     CodeAccessDenied,
+		subReasonHas: "prompt_exfil",
+	})
+
+	// Same payload but small (<1KB) → ALLOW (one of the structured-field
+	// thresholds — we don't want to over-refuse legitimate small JSON params).
+	smallURL := `https://api.example/log?payload={"messages":[]}`
+	runURLGate(t, urlGateCase{
+		name:         "tiny_messages_param_allowed",
+		url:          smallURL,
+		verb:         config.ActionVerbWrite,
+		wantDecision: pb.DecisionType_DECISION_TYPE_ALLOW,
+	})
+}
+
+func TestURLGate_RequireHumanForPIIPostToUncached(t *testing.T) {
+	t.Parallel()
+	resolver := &fakeHostResolver{
+		resolve: map[string][]string{
+			"new-uncached-vendor.example.com": {"203.0.113.99"},
+		},
+	}
+	runURLGate(t, urlGateCase{
+		name:         "pii_post_new_domain_require_human",
+		url:          "https://new-uncached-vendor.example.com/api/upload",
+		verb:         config.ActionVerbWrite,
+		riskTags:     []string{"data:pii"},
+		resolver:     resolver,
+		wantDecision: pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN,
+		wantCode:     CodeRequireHuman,
+		subReasonHas: "pii_post",
+	})
+	// Same URL but no PII tag → allow.
+	runURLGate(t, urlGateCase{
+		name:         "post_new_domain_no_pii_allowed",
+		url:          "https://new-uncached-vendor.example.com/api/upload",
+		verb:         config.ActionVerbWrite,
+		resolver:     resolver,
+		wantDecision: pb.DecisionType_DECISION_TYPE_ALLOW,
+	})
+}
+
+func TestURLGate_AllowLegitimateDestinations(t *testing.T) {
+	t.Parallel()
+	// ≥4 over-refusal cases from security-research + cybersecurity-education,
+	// plus standard docs/training references.
+	cases := []urlGateCase{
+		{name: "anthropic_docs", url: "https://docs.anthropic.com/claude/docs/intro", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_ALLOW},
+		{name: "anthropic_github", url: "https://github.com/anthropics/anthropic-sdk-python", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_ALLOW},
+		{name: "owasp_top10", url: "https://owasp.org/Top10/A03_2021-Injection/", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_ALLOW},
+		{name: "huggingface_models", url: "https://huggingface.co/datasets/test", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_ALLOW},
+		{name: "schema_org_ref", url: "https://schema.org/Person", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_ALLOW},
+		// Security-research + cybersecurity-education over-refusal allow cases.
+		{name: "mitre_attack_research", url: "https://attack.mitre.org/techniques/T1059/", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_ALLOW},
+		{name: "cve_lookup", url: "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-1234", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_ALLOW},
+		{name: "nvd_education", url: "https://nvd.nist.gov/vuln/detail/CVE-2024-1234", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_ALLOW},
+		{name: "exploit_db_research", url: "https://www.exploit-db.com/exploits/12345", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_ALLOW},
+		{name: "github_post_pr_no_pii", url: "https://api.github.com/repos/owner/repo/pulls", verb: config.ActionVerbWrite, wantDecision: pb.DecisionType_DECISION_TYPE_ALLOW},
+		{name: "internal_corp", url: "https://internal.corp.local/api/v1/health", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_ALLOW},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) { t.Parallel(); runURLGate(t, tc) })
+	}
+}
+
+func TestURLGate_MalformedURLAllowsPipelineContinue(t *testing.T) {
+	t.Parallel()
+	// Malformed -> we choose ALLOW (skip) and let the rule engine + handler
+	// produce a 400 downstream. The gate is for actionable structured cases.
+	gate := NewURLGate(URLGateOptions{Resolver: &fakeHostResolver{}})
+	dec := gate.Evaluate(context.Background(), &config.PolicyInput{
+		Action: &config.ActionDescriptor{Kind: config.ActionKindURL, Verb: config.ActionVerbRead, TargetURL: "::not a url::"},
+	})
+	if dec.Fired() {
+		t.Fatalf("malformed url: gate fired (Decision=%v)", dec.Decision)
+	}
+}

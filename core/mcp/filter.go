@@ -12,11 +12,31 @@ type AgentIdentity struct {
 	// for filtering itself.
 	ID string
 
+	// AllowedServers is a list of MCP server-name glob patterns. The
+	// actiongates MCP gate admits an mcp_call action only when its Server
+	// matches at least one pattern. Empty = no servers (fail-closed).
+	// FilterForIdentity does not consult this field; it is enforced at
+	// the action gate layer.
+	AllowedServers []string
+
 	// AllowedTools is a list of tool-name glob patterns. A tool is
 	// admitted only if its Name matches at least one pattern. The empty
 	// slice means "no tools" — operators must opt in to every tool an
 	// identity can use. The pattern "*" admits every tool.
 	AllowedTools []string
+
+	// AllowedResources is a list of cordum:// resource URI glob patterns
+	// the identity may target. Consulted by the actiongates MCP gate when
+	// an action specifies TargetURL. Empty = no resources (fail-closed)
+	// for actions that name one. Actions with no TargetURL skip this
+	// check.
+	AllowedResources []string
+
+	// Entitlements lists license/capability tokens the identity holds
+	// (e.g. "vault.read", "anthropic.claude", "billing.export"). The
+	// actiongates MCP gate denies actions whose RequiredEntitlement is
+	// not present here. Empty = no entitlements granted.
+	Entitlements []string
 
 	// RiskTier is the actor's own risk tier. The filter admits tools
 	// whose required tier is less-than-or-equal to the actor's tier.

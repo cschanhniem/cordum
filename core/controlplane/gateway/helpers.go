@@ -81,21 +81,28 @@ type policyMetaRequest struct {
 }
 
 type policyCheckRequest struct {
-	JobId           string             `json:"job_id"`
-	Topic           string             `json:"topic"`
-	Tenant          string             `json:"tenant"`
-	OrgId           string             `json:"org_id"`
-	TeamId          string             `json:"team_id"`
-	WorkflowId      string             `json:"workflow_id"`
-	StepId          string             `json:"step_id"`
-	PrincipalId     string             `json:"principal_id"`
-	Priority        string             `json:"priority"`
-	EstimatedCost   float64            `json:"estimated_cost"`
-	Budget          *pb.Budget         `json:"budget"`
-	Labels          map[string]string  `json:"labels"`
-	MemoryId        string             `json:"memory_id"`
-	EffectiveConfig any                `json:"effective_config"`
-	Meta            *policyMetaRequest `json:"meta"`
+	JobId           string                    `json:"job_id"`
+	Topic           string                    `json:"topic"`
+	Tenant          string                    `json:"tenant"`
+	OrgId           string                    `json:"org_id"`
+	TeamId          string                    `json:"team_id"`
+	WorkflowId      string                    `json:"workflow_id"`
+	StepId          string                    `json:"step_id"`
+	PrincipalId     string                    `json:"principal_id"`
+	Priority        string                    `json:"priority"`
+	EstimatedCost   float64                   `json:"estimated_cost"`
+	Budget          *pb.Budget                `json:"budget"`
+	Labels          map[string]string         `json:"labels"`
+	MemoryId        string                    `json:"memory_id"`
+	EffectiveConfig any                       `json:"effective_config"`
+	Meta            *policyMetaRequest        `json:"meta"`
+	// Action carries structured request metadata for deterministic
+	// pre-rule action-layer gates (file/url/tenant/mutation/mcp/
+	// provenance). When non-nil and the gateway is wired with a
+	// pipeline, gates run before the kernel call and may short-circuit
+	// with an HTTP error envelope. Existing callers that send no Action
+	// are unaffected.
+	Action *config.ActionDescriptor `json:"action,omitempty"`
 }
 
 func (r *submitJobRequest) applyDefaults(defaultTenant string) {
