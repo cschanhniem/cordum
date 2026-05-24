@@ -98,6 +98,12 @@ const config: Config = {
         },
         {
           type: 'docSidebar',
+          sidebarId: 'edge',
+          position: 'left',
+          label: 'Edge',
+        },
+        {
+          type: 'docSidebar',
           sidebarId: 'tutorials',
           position: 'left',
           label: 'Tutorials',

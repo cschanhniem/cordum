@@ -3064,6 +3064,77 @@ curl -X POST https://gateway:8081/api/v1/pools/gpu-batch/drain \
   -d '{"timeout_seconds": 600}'
 ```
 
+## 19. Edge (Compliance Firewall)
+
+The `/api/v1/edge/*` routes govern AI-agent actions (sessions, executions,
+policy evaluate, approvals, events, evidence export, MCP upstreams, runtime
+ingest, and shadow-agent findings). The operator-oriented reference, including
+request/response shapes, error codes, and write-side caps, lives in the
+**[Edge REST API](/edge/api)** page. Core routes:
+
+| Method | Path |
+|---|---|
+| POST | `/api/v1/edge/sessions` |
+| GET | `/api/v1/edge/sessions` |
+| GET | `/api/v1/edge/sessions/{session_id}` |
+| POST | `/api/v1/edge/sessions/{session_id}/heartbeat` |
+| POST | `/api/v1/edge/sessions/{session_id}/end` |
+| GET | `/api/v1/edge/sessions/{session_id}/events` |
+| POST | `/api/v1/edge/sessions/{session_id}/export` |
+| POST | `/api/v1/edge/executions` |
+| GET | `/api/v1/edge/executions/{execution_id}` |
+| POST | `/api/v1/edge/executions/{execution_id}/end` |
+| GET | `/api/v1/edge/executions/{execution_id}/events` |
+| POST | `/api/v1/edge/evaluate` |
+| POST | `/api/v1/edge/events` |
+| POST | `/api/v1/edge/events/batch` |
+| GET | `/api/v1/edge/approvals` |
+| GET | `/api/v1/edge/approvals/{approval_ref}` |
+| POST | `/api/v1/edge/approvals/{approval_ref}/approve` |
+| POST | `/api/v1/edge/approvals/{approval_ref}/reject` |
+| POST | `/api/v1/edge/approvals/{approval_ref}/wait` |
+| POST | `/api/v1/edge/runtime/events` |
+| GET/POST | `/api/v1/edge/mcp/upstreams` (+ `/list`, `/{name}`, `/{name}/enable`, `/{name}/disable`) |
+| GET | `/api/v1/edge/shadow-agents` (+ `/{finding_id}` and `/ignore`, `/suppress`, `/resolve`, `/remediation`) |
+| GET/POST | `/api/v1/edge/shadow/exception(s)` |
+| POST | `/api/v1/edge/binary-integrity/events` |
+
+## 20. Governance
+
+| Method | Path | Summary |
+|---|---|---|
+| GET | `/api/v1/governance/decisions` | Query the governance decision log. |
+| GET | `/api/v1/governance/approvals/analytics` | Approval analytics (time-to-approve, auto vs. manual, bottlenecks). |
+| GET | `/api/v1/governance/health` | Composite governance health score per tenant. |
+
+## 21. Evals
+
+| Method | Path | Summary |
+|---|---|---|
+| GET/POST | `/api/v1/evals/datasets` | List / create curated eval datasets. |
+| GET/PUT/DELETE | `/api/v1/evals/datasets/{id}` | Get / version / delete an eval dataset. |
+| GET | `/api/v1/evals/datasets/by-name/{name}` | List versions for a dataset family. |
+| GET | `/api/v1/evals/datasets/by-name/{name}/versions/{version}` | Get a dataset by name and version. |
+| POST | `/api/v1/evals/datasets/from-incidents` | Derive a dataset from governance incidents. |
+| POST | `/api/v1/evals/datasets/{id}/run` | Run a dataset against the active or candidate policy. |
+| GET | `/api/v1/evals/datasets/{id}/runs` | List historical runs for a dataset. |
+| GET/DELETE | `/api/v1/evals/runs/{run_id}` | Get / delete a historical eval run. |
+
+## 22. Delegations
+
+| Method | Path | Summary |
+|---|---|---|
+| GET | `/api/v1/delegations` | List delegation tokens for the current tenant. |
+
+## 23. Copilot
+
+| Method | Path | Summary |
+|---|---|---|
+| GET | `/api/v1/copilot/sessions/{sessionId}` | Get Copilot session detail. |
+
+> `GET /api/v1/health` is the health check through the API namespace (in
+> addition to the public `GET /health` listed above).
+
 ## Endpoint Index (Registered Routes)
 
 The following routes are registered in gateway route setup.

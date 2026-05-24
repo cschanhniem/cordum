@@ -1113,6 +1113,26 @@ The consumer calls the configured SIEM exporter (`CORDUM_AUDIT_EXPORT_TYPE`) for
 | `COMPOSE_HTTP_TIMEOUT` | — | Docker Compose HTTP timeout |
 | `DOCKER_CLIENT_TIMEOUT` | — | Docker client timeout |
 
+### Edge (Compliance Firewall)
+
+Edge env vars are documented in full on the [Edge Configuration](/edge/configuration)
+page. The most common Gateway-side knobs:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CORDUM_EDGE_POLICY_MODE` | `observe` (agentd) / `enforce` (`edge claude`) | `observe`, `enforce`, or `enterprise-strict`. |
+| `CORDUM_EDGE_HEARTBEAT_TTL` | `30s` | Gateway heartbeat TTL for active Edge sessions. |
+| `CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION` | `100` | Max executions per session before `429 max_executions_exceeded`. |
+| `CORDUM_EDGE_SESSION_RETENTION_TTL` | `720h` (30d) | Retention-sweeper TTL for Edge sessions. |
+| `CORDUM_EDGE_SESSION_SWEEP_INTERVAL` | `1h` | Retention sweep cadence. |
+| `CORDUM_EDGE_EXPORT_MAX_BYTES` | `10485760` (10 MiB) | Max serialized evidence-export response. |
+| `CORDUM_EDGE_RUNTIME_INGEST_ENABLED` | unset (disabled) | Set `true` to expose `POST /api/v1/edge/runtime/events`. |
+| `CORDUM_EDGE_MANAGED_POLICY_MODE` | unset | `enterprise-strict` pins hook policy mode ahead of any local override. |
+
+Agentd/hook transport and nonce variables (`CORDUM_AGENTD_*`,
+`CORDUM_HOOK_*`) are documented on the [Edge Configuration](/edge/configuration)
+page.
+
 ---
 
 ## Cross-References

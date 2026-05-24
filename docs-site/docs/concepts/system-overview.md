@@ -91,6 +91,10 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
 - MCP Server (`cmd/cordum-mcp`; binary `cordum-mcp`)
   - Model Context Protocol bridge that exposes Cordum capabilities (jobs, workflows, policy) as MCP tools and resources.
 
+- Cordum Edge (`core/edge`, `cmd/cordum-agentd`, `cmd/cordum-hook`; binaries `cordum-agentd`, `cordum-hook`)
+  - Compliance firewall for AI agents on the Claude Code command-hook path. `cordum-hook` maps a Claude hook payload to a local `cordum-agentd`, which calls Gateway `/api/v1/edge/*` for tenant-aware policy evaluate, approvals, and action-gate enforcement.
+  - Records `EdgeSession → AgentExecution → AgentActionEvent` evidence (not Cordum Jobs) with redacted summaries, hashes, and artifact pointers. See the [Edge docs](/edge).
+
 - Licensing (`core/licensing/`)
   - Ed25519-signed license loading and validation with three tiers (Community/Team/Enterprise).
   - Entitlement enforcement across services: gateway rate limits, scheduler concurrency caps, workflow step limits, safety kernel policy bundle quotas, audit retention periods.
@@ -203,6 +207,8 @@ JetStream (optional):
 - `cordum-context-engine`
 - `cordumctl` (CLI)
 - `cordum-mcp` (MCP server)
+- `cordum-agentd` (Edge local daemon)
+- `cordum-hook` (Edge Claude command hook)
 
 ## Repo layout
 

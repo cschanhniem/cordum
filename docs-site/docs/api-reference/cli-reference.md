@@ -65,6 +65,10 @@ cordumctl status --gateway https://prod:8081 --api-key $KEY --cacert ./certs/ca/
 | `pack list` | List installed packs |
 | `pack show` | Show pack details |
 | `pack verify` | Run pack policy simulation tests |
+| `edge init` | Scaffold local Edge config (and optional Claude wrapper) |
+| `edge claude` | Launch a governed Claude Code session |
+| `edge doctor` | Run observe-only local Edge diagnostics |
+| `edge managed-settings` | Render/verify enterprise managed-settings payloads |
 
 ---
 
@@ -690,6 +694,51 @@ Remove a topic-to-pool mapping.
 ```bash
 cordumctl pool topic remove gpu-batch job.ml.train
 ```
+
+---
+
+## Edge (Compliance Firewall)
+
+`cordumctl edge` governs AI-agent actions locally. Full flag tables and behavior
+are documented in the **[Edge CLI reference](/edge/cli)**.
+
+### `edge init`
+
+```bash
+cordumctl edge init [--cwd path] [--force] [--gateway URL] [--tenant id] \
+  [--principal id] [--api-key-env NAME] [--no-wrapper] [--non-interactive]
+```
+
+Scaffold local Edge configuration in the target directory.
+
+### `edge claude`
+
+```bash
+cordumctl edge claude [--policy-mode enforce] [--dry-run|--no-launch] \
+  [--settings-output path|-] [--claude-path path] [-- --claude-args]
+```
+
+Launch a governed Claude Code session. Cordum flags go before `--`; Claude
+arguments after it.
+
+### `edge doctor`
+
+```bash
+cordumctl edge doctor [--json] [--policy-mode enforce] [--settings-path path] [--claude-path path]
+```
+
+Observe-only diagnostics. Exit `0` = pass/skip, `1` = at least one failure,
+`2` = warnings only.
+
+### `edge managed-settings`
+
+```bash
+cordumctl edge managed-settings <export|verify|rollback-template> [flags]
+```
+
+Render or verify enterprise managed-settings payloads. See the
+[Edge CLI reference](/edge/cli#cordumctl-edge-managed-settings) for flags and
+exit codes.
 
 ---
 
