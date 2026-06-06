@@ -187,23 +187,35 @@ func (s *server) EvaluateOutput(ctx context.Context, req *OutputEvaluateRequest)
 		req.OutputContent, contentTruncated = truncateOutputContent(req.OutputContent)
 	}
 
+	hasSensitiveScanners := outputRulesUseSensitiveScanners(rules)
 	for _, rule := range rules {
 		matched, findings := evaluateOutputRule(rule, req, scanners)
-		if contentTruncated {
-			findings = append(findings, outputFinding{
-				Type:     "content_truncated",
-				Severity: "info",
-				Detail:   fmt.Sprintf("content exceeded max regex input size (%d bytes), truncated", maxOutputScanBytes),
-				Scanner:  "size_check",
-			})
-		}
 		if !matched {
 			continue
+		}
+		// Truncated content with sensitive scanners fails closed: a REDACT
+		// decision can only cover the scanned head, not the unscanned tail.
+		if contentTruncated && hasSensitiveScanners && outputDecisionWeakerThanQuarantine(rule.decision) {
+			findings = append(findings, outputTruncatedFailClosedFinding())
+			resp.Decision = "quarantine"
+			resp.Reason = outputTruncatedFailClosedReason
+			resp.RuleID = rule.id
+			resp.Findings = findings
+			return resp, nil
+		}
+		if contentTruncated {
+			findings = append(findings, outputTruncatedInfoFinding())
 		}
 		resp.Decision = outputDecisionString(rule.decision)
 		resp.Reason = outputRuleReason(rule, findings)
 		resp.RuleID = rule.id
 		resp.Findings = findings
+		return resp, nil
+	}
+	if contentTruncated && hasSensitiveScanners {
+		resp.Decision = "quarantine"
+		resp.Reason = outputTruncatedFailClosedReason
+		resp.Findings = []outputFinding{outputTruncatedFailClosedFinding()}
 		return resp, nil
 	}
 
@@ -272,25 +284,49 @@ func (s *server) CheckOutput(ctx context.Context, req *pb.OutputCheckRequest) (*
 		return resp, nil
 	}
 
-	content, contentTruncated := s.contentForScan(ctx, req)
+	content, contentTruncated, contentErr := s.contentForScan(ctx, req)
+	if contentErr != nil {
+		// Fail closed like EvaluateOutput, but return nil gRPC error so callers persist a quarantine decision.
+		resp.Decision = pb.OutputDecision_OUTPUT_DECISION_QUARANTINE
+		resp.Reason = "result pointer unreadable"
+		resp.Findings = toProtoOutputFindings([]outputFinding{{
+			Type:     "pointer_unreadable",
+			Severity: "critical",
+			Detail:   contentErr.Error(),
+			Scanner:  "result_pointer",
+		}})
+		return resp, nil
+	}
 	evalReq := outputEvaluateRequestFromProto(req, content)
+	hasSensitiveScanners := outputRulesUseSensitiveScanners(rules)
 	for _, rule := range rules {
 		matched, findings := evaluateOutputRule(rule, evalReq, scanners)
 		if !matched {
 			continue
 		}
+		// Truncated content with sensitive scanners fails closed: a REDACT
+		// decision can only cover the scanned head, not the unscanned tail.
+		if contentTruncated && hasSensitiveScanners && outputDecisionWeakerThanQuarantine(rule.decision) {
+			findings = append(findings, outputTruncatedFailClosedFinding())
+			resp.Decision = pb.OutputDecision_OUTPUT_DECISION_QUARANTINE
+			resp.Reason = outputTruncatedFailClosedReason
+			resp.RuleId = rule.id
+			resp.Findings = toProtoOutputFindings(findings)
+			return resp, nil
+		}
 		if contentTruncated {
-			findings = append(findings, outputFinding{
-				Type:     "content_truncated",
-				Severity: "info",
-				Detail:   fmt.Sprintf("content exceeded max regex input size (%d bytes), truncated", maxOutputScanBytes),
-				Scanner:  "size_check",
-			})
+			findings = append(findings, outputTruncatedInfoFinding())
 		}
 		resp.Decision = rule.decision
 		resp.Reason = outputRuleReason(rule, findings)
 		resp.RuleId = rule.id
 		resp.Findings = toProtoOutputFindings(findings)
+		return resp, nil
+	}
+	if contentTruncated && hasSensitiveScanners {
+		resp.Decision = pb.OutputDecision_OUTPUT_DECISION_QUARANTINE
+		resp.Reason = outputTruncatedFailClosedReason
+		resp.Findings = toProtoOutputFindings([]outputFinding{outputTruncatedFailClosedFinding()})
 		return resp, nil
 	}
 
@@ -307,6 +343,57 @@ func outputPolicyEnabled(policy *config.SafetyPolicy, rules []compiledOutputRule
 	// Backward compatibility: if output_rules exist but output_policy block is absent,
 	// keep legacy enabled behavior.
 	return strings.TrimSpace(policy.OutputPolicy.FailMode) == ""
+}
+
+const outputTruncatedFailClosedReason = "content truncated; escalating to quarantine for sensitive output scanners"
+
+func outputTruncatedInfoFinding() outputFinding {
+	return outputFinding{
+		Type:     "content_truncated",
+		Severity: "info",
+		Detail:   fmt.Sprintf("content exceeded max regex input size (%d bytes), truncated", maxOutputScanBytes),
+		Scanner:  "size_check",
+	}
+}
+
+func outputTruncatedFailClosedFinding() outputFinding {
+	return outputFinding{
+		Type:     "content_truncated",
+		Severity: "high",
+		Detail:   "content exceeded max scan size (2 MiB); unscanned tail may contain secrets — failing closed",
+		Scanner:  "size_check",
+	}
+}
+
+func outputRulesUseSensitiveScanners(rules []compiledOutputRule) bool {
+	for _, rule := range rules {
+		if outputRuleUsesSensitiveScanner(rule) {
+			return true
+		}
+	}
+	return false
+}
+
+func outputRuleUsesSensitiveScanner(rule compiledOutputRule) bool {
+	for _, scanner := range rule.scanners {
+		if isSensitiveOutputScanner(scanner) {
+			return true
+		}
+	}
+	return false
+}
+
+func isSensitiveOutputScanner(scanner string) bool {
+	switch normalizeScannerName(scanner) {
+	case "secret", "pii", "injection", "prompt_injection":
+		return true
+	default:
+		return false
+	}
+}
+
+func outputDecisionWeakerThanQuarantine(decision pb.OutputDecision) bool {
+	return decision != pb.OutputDecision_OUTPUT_DECISION_QUARANTINE
 }
 
 func outputRuleReason(rule compiledOutputRule, findings []outputFinding) string {
@@ -433,10 +520,11 @@ func outputEvaluateRequestFromProto(req *pb.OutputCheckRequest, content []byte) 
 	return out
 }
 
-func (s *server) contentForScan(ctx context.Context, req *pb.OutputCheckRequest) ([]byte, bool) {
-	content := req.GetOutputContent()
+func (s *server) contentForScan(ctx context.Context, req *pb.OutputCheckRequest) (content []byte, truncated bool, err error) {
+	content = req.GetOutputContent()
 	if len(content) > 0 {
-		return truncateOutputContent(content)
+		content, truncated := truncateOutputContent(content)
+		return content, truncated, nil
 	}
 	ptr := strings.TrimSpace(req.GetResultPtr())
 	if ptr != "" && s.resultClient == nil {
@@ -453,10 +541,12 @@ func (s *server) contentForScan(ctx context.Context, req *pb.OutputCheckRequest)
 			defer cancel()
 			data, err := s.resultClient.Get(rctx, key).Bytes()
 			if err == nil {
-				return truncateOutputContent(data)
+				content, truncated := truncateOutputContent(data)
+				return content, truncated, nil
 			}
 			if !errors.Is(err, redis.Nil) {
 				slog.Warn("safety-kernel: output pointer fetch failed", "err", err)
+				return nil, false, err
 			}
 		} else {
 			slog.Warn("safety-kernel: invalid output pointer", "err", err)
@@ -464,9 +554,10 @@ func (s *server) contentForScan(ctx context.Context, req *pb.OutputCheckRequest)
 	}
 	msg := strings.TrimSpace(req.GetErrorMessage())
 	if msg == "" {
-		return nil, false
+		return nil, false, nil
 	}
-	return truncateOutputContent([]byte(msg))
+	content, truncated = truncateOutputContent([]byte(msg))
+	return content, truncated, nil
 }
 
 func truncateOutputContent(content []byte) ([]byte, bool) {
